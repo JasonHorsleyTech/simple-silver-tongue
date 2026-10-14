@@ -131,17 +131,19 @@ export function Scrollback({
     if (pendingPlayer !== null || pendingRoll || live?.origin === "turn") toBottom();
   }, [pendingPlayer, pendingRoll, live?.origin, toBottom]);
 
-  // New text while pinned: stay pinned. Runs after every render that changes what is shown.
+  // New text while pinned: stay pinned. Runs after every render that changes what is shown. Not while you type
+  // in the scrollback itself (T14): there the box moves only as any textarea's box would, to keep the caret in view.
   useLayoutEffect(() => {
-    if (stuck.current) box.current?.scrollTo({ top: box.current.scrollHeight });
+    if (stuck.current && !typingIn(box.current)) box.current?.scrollTo({ top: box.current.scrollHeight });
   });
 
-  // Content can also grow without a render of ours (a code block's font loading, the window narrowing).
+  // Content can also grow without a render of ours (a code block's font loading, the window narrowing, an editor
+  // growing as you type in it, which is why the same exception applies).
   useEffect(() => {
     const el = box.current;
     const inner = el?.firstElementChild;
     if (!el || !inner) return;
-    const ro = new ResizeObserver(() => stuck.current && el.scrollTo({ top: el.scrollHeight }));
+    const ro = new ResizeObserver(() => stuck.current && !typingIn(el) && el.scrollTo({ top: el.scrollHeight }));
     ro.observe(inner);
     return () => ro.disconnect();
   }, []);
@@ -262,6 +264,15 @@ export function Scrollback({
       </div>
     </div>
   );
+}
+
+/**
+ * A text field in the scrollback has the focus (a message's editor, the steer box). The pin to the bottom then holds
+ * still: following the editor's growth, or a reply below it, would move the line you are typing on (T14).
+ */
+function typingIn(box: HTMLElement | null): boolean {
+  const a = document.activeElement;
+  return !!box && !!a && box.contains(a) && a.matches("textarea, input");
 }
 
 /** Where a message is, seen from the scroll box: at least partly on screen, or above or below it. */

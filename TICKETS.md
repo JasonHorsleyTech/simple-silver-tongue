@@ -464,3 +464,12 @@ Jason, 2026-10-14, done directly (no four-pass loop, at his request). Setup mess
 - **Assembly:** each setup message is sent with its own role, verbatim, in order, as its own message. A `system` one is a second system message, never merged into the brain's system prompt. An `assistant` one is every brain's own words. A body ending with one is refused like any other (`nothing_to_answer`).
 - **Commands:** `setup.add --role`, `setup.update --role`; `setup.list` shows each role. **Browser:** a "Sent as" dropdown on each setup message (Settings → Setup), and a role tag on any card that isn't `user`.
 - **Live (3 calls, `deepseek-v4-1-flash`):** Venice accepts a system message after a user one and an assistant message right after the system prompt. DeepSeek seems to hoist every system message to the top (same prompt-token count as merging it into the system prompt): design.md, "Prompt assembly".
+
+---
+
+## T14: Typing in the last message's editor no longer scrolls anything · `done`
+
+Jason, 2026-10-14, done directly (no four-pass loop, at his request). Editing a long last message with the scrollback at the bottom, in Firefox, each keystroke threw the scrollback up and parked the line he was typing on just above the composer.
+- **Cause:** the textarea autosize set `height: auto` and read `scrollHeight` on the live textarea. That reflow collapses the editor for a moment, and Firefox clamps the scrollback to the shorter content right then (Chrome defers the clamp, so it never showed there); the caret reveal then scrolled the line back to the bottom edge. Measured in headless Firefox 158: the first keystroke moved the scrollback 1487 → 1172 (the editor's 410 px minus its collapsed height). Also, in both browsers, the pin to the bottom followed the editor as it grew, scrolling a line per Enter.
+- **Fix (web only):** `useAutosize` measures an off-screen twin textarea instead, so the live one is only ever set to its new height (every autosized textarea: editor, composer, steer box, settings). The scrollback's pin holds still while a text field inside it has the focus; the browser alone keeps the caret in view. Sending from the composer and a streaming reply still keep you pinned (T07).
+- **After:** typing and Enter in the middle of a 60-line editor at the bottom move neither the textarea's `scrollTop` nor the scrollback's, in Firefox and Chrome; the box scrolls by a line only when the caret reaches its bottom edge.
