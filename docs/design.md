@@ -20,7 +20,7 @@ This is the current best design for the data model, the prompt-assembly rules an
    - Venice must always get `venice_parameters.include_venice_system_prompt: false`. Without it, Venice adds its own system prompt.
    - `prompt.preview` must return the **exact** request body that would be sent (minus the auth header). The real send path must use the same function, so preview and reality cannot drift. A test asserts this.
    - The only text outside our control is the model's own chat template (how DeepSeek serializes the tool schema). That is unavoidable and is noted in the UI's payload view.
-   - **Known leak, found by T01 QA-1:** some Venice models (confirmed: `venice-uncensored-1-2`) inject a default system prompt of ~550 tokens whenever the request has **no non-empty system message**. Any non-empty system message suppresses it. `deepseek-v4-1-flash` does not do this. Required behavior: when a brain's system prompt is empty, `prompt.preview` and the UI must say so plainly ("No system message. Some Venice models then add their own default prompt."). New conversations always pre-fill a non-empty system prompt. Don't spend money probing every model; a warning is enough.
+   - **Never send a request without a user-written system message (Jason, 2026-10-14).** Some Venice models (confirmed: `venice-uncensored-1-2`, found by T01 QA-1) insert their own built-in prompt of ~550 tokens ("you are uncensored…") whenever a request has no non-empty system message, even with `include_venice_system_prompt: false`. Any non-empty system message suppresses it. So a brain's system prompt must be non-empty: brain create and update reject an empty one, and the send path refuses, with a clear error, to send a body whose first message isn't a non-empty `role: system`. `prompt.preview` shows the same error. Jason's words: "The system prompt should be whatever we put in, and nothing else." 
 2. **Terminal-first.** Every capability is a registered command. The web UI only calls commands. There are no UI-only endpoints.
 3. **Local only.** The server binds to `127.0.0.1`. Nothing is deployed and nothing is pushed.
 4. **Never put reasoning text or steer text into a prompt.** They are stored for display only.
@@ -90,7 +90,7 @@ type Brain = {
   isDefault: boolean;                   // exactly one brain is the default
   reasoning: { enabled: boolean; effort: string };  // default { enabled: true, effort: "low" }. Disabled → reasoning_effort "none".
   safeMode?: boolean;                   // image brains only, default true → Venice safe_mode
-  systemPrompt: string;                 // empty = no system message sent
+  systemPrompt: string;                 // must be non-empty (see hard rule 1)
   finalReminder: { enabled: boolean; content: string };  // default enabled=false for the default brain, true for others
   tool?: {                              // image brains only. All of this text reaches the model.
     name: string;                       // default "generate_image"
@@ -129,7 +129,7 @@ Template placeholders are literal string replacements and there are only four: `
 
 For the target brain **B**:
 
-1. If `B.systemPrompt` is not empty: `{ role: "system", content: B.systemPrompt }`.
+1. `{ role: "system", content: B.systemPrompt }`. Always present and never empty; refuse to build otherwise.
 2. For each setup message, in order: `{ role: "user", content: setup.content }`. Verbatim, no template.
 3. For each ledger message `m`, in order, using `m.versions[m.activeVersion]`. On regenerate, stop before `excludeFromMessageId`:
    - **Player message:** `{ role: "user", content: render(templates.player, {content}) }`.

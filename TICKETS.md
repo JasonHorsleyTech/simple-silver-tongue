@@ -51,7 +51,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 - `prompt.preview` shows system, then framed user/assistant pairs, with no extra text.
 - One live round trip on `deepseek-v4-1-flash` works.
 
-- Handle the empty-system-prompt leak (design.md hard rule 1, T01 QA-1): warn in `prompt.preview` and pre-fill a non-empty system prompt.
+- **Enforce a non-empty system prompt** (design.md hard rule 1, T01 QA-1, Jason's explicit request): never send a request without a user-written system message. Creating a conversation requires a system prompt or pre-fills an editable default, and the send path and preview refuse an empty one. QA should confirm, on one cheap live call, that `usage.prompt_tokens` matches what we sent, with nothing injected.
 
 **Frontend scope:** Sidebar conversation list, "New conversation" form (title + system prompt), and the chat view with routing at `/c/<id>`. Markdown-rendered scrollback, a composer (Enter sends, Shift+Enter adds a newline), live token streaming, collapsible reasoning, and a running cost per conversation.
 
