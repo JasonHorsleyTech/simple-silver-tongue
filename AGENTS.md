@@ -150,7 +150,7 @@ Rules for every pass:
 - ESM TypeScript with native type stripping: use `import ... from "./x.ts"` with explicit `.ts` extensions, and only erasable syntax (no `enum`, no `namespace`, no constructor parameter properties).
 - Small files, plain functions, no class hierarchies. Comments only where the *why* is non-obvious.
 - IDs: short random strings with a prefix (`c_`, `b_`, `m_`, `s_`, `img_`).
-- Use test usernames like `qa-t03`. QA and engineers may wipe `data/users/qa-*` and `data/users/dev-*` freely. **Never touch any other user's data.**
+- Use test usernames like `qa-t03`. QA and engineers may wipe `data/users/qa-*` and `data/users/dev-*` freely. **Never touch any other user's data.** Jason's own users (anything not `qa-*`/`dev-*`) are off limits to every agent: never log in as them, never read, list the contents of, copy or delete their folders, and never reuse a CLI session you didn't create. Whatever an agent reads ends up in plaintext in Claude Code's transcripts (`~/.claude/projects/…`), and keeping his campaigns out of reach of "you or anyone else who uses this shared computer" is the whole point of checkpoint 5.
 - Commit messages end with the co-author trailer the orchestrator gives you.
 
 ## Lessons learned
