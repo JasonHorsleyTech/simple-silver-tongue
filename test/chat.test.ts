@@ -115,7 +115,7 @@ describe("streaming chat end to end: CLI → server → mock Venice", () => {
     r = await t.cli(["turn", "--conversation", conv.id, "--content", "MOCK_MIDSTREAM_ERROR please"]);
     assert.equal(r.code, 1);
     // The error says what was kept and how to retry (T02 QA-8).
-    assert.match(r.stderr, /stream broke off .*Your message is saved; the reply isn't\. To retry, run turn again without --content\./);
+    assert.match(r.stderr, /stream broke off .*Your message is saved; the reply isn't\. To retry, send again with no new message: turn without --content, or Retry in the browser\./);
     const saved = await get(conv.id);
     assert.deepEqual(saved.messages.map((m) => m.author.type), ["player"]);
   });
@@ -198,6 +198,56 @@ describe("streaming chat end to end: CLI → server → mock Venice", () => {
     assert.equal((await get(conv.id)).messages[1]!.versions[0]!.finishReason, "length");
     await json(["conversation.update", "--id", conv.id, "--settings", '{"maxTokens": null}']);
     assert.equal((await get(conv.id)).settings.maxTokens, undefined);
+  });
+
+  test("generation.follow: a late follower gets the reply so far, then the rest live, and the same done (T02 frontend)", async () => {
+    await login("dev-chat");
+    const conv = await create();
+    const post = (cmd: string, body: unknown) =>
+      t.app.fetch(new Request(`http://localhost/api/${cmd}`, { method: "POST", headers: { host: "localhost", "content-type": "application/json", cookie: cookieOf() }, body: JSON.stringify(body) }));
+    const lines = async (res: Response) => (await res.text()).trim().split("\n").map((l) => JSON.parse(l));
+
+    // Nothing running: an empty done straight away. An unknown conversation is a 404.
+    assert.deepEqual((await lines(await post("generation.follow", { conversation: conv.id }))).map((e) => [e.type, e.message]), [["done", null]]);
+    assert.equal((await post("generation.follow", { conversation: "c_nosuchthing" })).status, 404);
+
+    // Join after the first deltas of a slow reply.
+    const turn = await post("turn", { conversation: conv.id, content: "MOCK_SLOW tell me a story" });
+    const reader = turn.body!.pipeThrough(new TextDecoderStream()).getReader();
+    let turnText = "";
+    while ((turnText.match(/"type":"delta"/g) ?? []).length < 2) turnText += (await reader.read()).value ?? "";
+    const followed = await lines(await post("generation.follow", { conversation: conv.id }));
+    for (let r = await reader.read(); !r.done; r = await reader.read()) turnText += r.value;
+    const own = turnText.trim().split("\n").map((l) => JSON.parse(l));
+
+    const types = followed.map((e) => e.type);
+    assert.deepEqual(types.slice(0, 3), ["following", "message", "start"]);
+    assert.equal(types.at(-1), "done");
+    assert.ok(types.filter((x) => x === "delta").length < own.filter((e) => e.type === "delta").length, "the replay is merged");
+    const text = (evs: any[]) => evs.filter((e) => e.type === "delta").map((e) => e.delta).join("");
+    const saved = (await get(conv.id)).messages[1]!;
+    assert.equal(text(followed), saved.versions[0]!.content);
+    assert.equal(text(own), saved.versions[0]!.content);
+    assert.deepEqual(followed.at(-1), own.at(-1), "the same done event, message and note");
+    assert.equal(followed[2].messageId, saved.id);
+
+    // A reply that breaks: the follower gets the same error the sender does.
+    const broken = await post("turn", { conversation: conv.id, content: "MOCK_SLOW MOCK_MIDSTREAM_ERROR again" });
+    const brokenFollow = await lines(await post("generation.follow", { conversation: conv.id }));
+    const ownBroken = await lines(broken);
+    assert.equal(brokenFollow.at(-1).type, "error");
+    assert.deepEqual(brokenFollow.at(-1), ownBroken.at(-1));
+    assert.equal(brokenFollow.at(-1).error.code, "venice_error");
+    // And once it is over there is nothing to follow.
+    assert.deepEqual((await lines(await post("generation.follow", { conversation: conv.id }))).map((e) => e.type), ["done"]);
+  });
+
+  test("generation.follow from the CLI: with nothing running it says so and exits 0", async () => {
+    await login("dev-chat");
+    const conv = await create();
+    const r = await t.cli(["generation.follow", "--conversation", conv.id]);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stderr, /Nothing is being generated/);
   });
 
   test("an encrypted user's conversation is ciphertext on disk", async () => {

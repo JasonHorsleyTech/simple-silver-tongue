@@ -36,7 +36,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T02: Basic streaming chat (CP1) · `frontend`
+## T02: Basic streaming chat (CP1) · `done`
 
 **Engineer scope**
 - The full conversation document per design.md (settings, templates, setup, brains, ledger), even though brains and setup only get commands in T04. A new conversation gets one default text brain named "Assistant" with the given system prompt, and per-brain reasoning **off** by default (see design.md, T02 QA-1).
@@ -75,6 +75,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 - Regenerating a message that is not the last one is rejected with a clear error.
 
 **Frontend scope:** Per-message actions. Edit swaps rendered Markdown for a raw Markdown textarea with Save/Cancel. Delete asks for confirmation. The last brain message gets "Regenerate…" with an optional steer box, plus a version pager (`‹ 2/3 ›`) showing the steer that produced each version.
+- **From T02 frontend:** the slots are there. `MessageItem` (`web/src/features/chat/`) has header/body/footer; actions go in `MessageFooter`'s `actions`, which is always visible on the last message. `useChat` merges saved messages by id (`upsertMessage`), so a regenerate's `done.message` replaces the old one in place. Relay `message.regenerate` through `gen.relay` (as `turn` does) and `generation.follow` covers reloads for free. The live reply currently renders at the end of the list; a regenerate should render it in the regenerated message's slot (its id is the `start` event's `messageId`).
 
 **Deferred in:** *(none yet)*
 
@@ -97,7 +98,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 - Editing a GM message changes what the Dice Master sees.
 - Adding a third brain mid-conversation and editing the GM's system prompt both work without restarting the conversation.
 
-**Frontend scope:** A conversation settings drawer: title, text and image model pickers from `models.list`, reasoning effort, a templates editor, a setup-messages editor (add, reorder, edit, delete), and a brains editor (name, color, kind, system prompt, reasoning on/off + effort, reminder checkbox + text, default, delete only when unused). The composer gets a big Send to the default brain plus a button per other brain. Messages get colored author badges. An "Exact payload" modal per brain renders `prompt.preview`.
+**Frontend scope (T02 built the base: `SettingsPanel`, `BrainEditor`, `TemplatesEditor`, `PayloadDialog`, per-brain `Composer` buttons, `BrainBadge`):** A conversation settings drawer: title, text and image model pickers from `models.list`, reasoning effort, a templates editor, a setup-messages editor (add, reorder, edit, delete), and a brains editor (name, color, kind, system prompt, reasoning on/off + effort, reminder checkbox + text, default, delete only when unused). The composer gets a big Send to the default brain plus a button per other brain. Messages get colored author badges. An "Exact payload" modal per brain renders `prompt.preview`.
 
 **Deferred in:** *(none yet)*
 

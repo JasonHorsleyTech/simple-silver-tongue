@@ -2,7 +2,14 @@
  * The commands the web app calls, with their argument and result shapes. They mirror the server's zod
  * schemas (`./ss help <name>` shows each one). When a ticket gives the UI a new command, add a line here:
  * the client is typed from these maps, so a typo in a command name or an argument is a type error.
+ *
+ * The conversation document and model types are the server's own (type-only imports of dependency-free
+ * files), so the UI can't drift from what is on disk. Command args are still written out here by hand.
  */
+import type { Brain, ChatMessage, ChatRequest, Conversation, LedgerMessage, MessageVersion, Templates } from "../../../src/conversations/types.ts";
+import type { ModelInfo } from "../../../src/venice/models.ts";
+
+export type { Brain, ChatMessage, ChatRequest, Conversation, LedgerMessage, MessageVersion, ModelInfo, Templates };
 
 export type User = { username: string; encrypted: boolean };
 export type Who = User | { username: null };
@@ -21,6 +28,47 @@ export type Health = {
   commands: number;
 };
 
+/** A row of conversation.list (src/conversations/format.ts). */
+export type ConversationSummary = {
+  id: string;
+  title: string;
+  textModel: string;
+  messageCount: number;
+  costUsd: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** A conversation file the server couldn't read, with a content-free reason (T02 QA-4). */
+export type UnreadableConversation = { id: string; error: string };
+
+/** prompt.preview: the exact body turn would send, plus notes and the reason turn would refuse it. */
+export type Preview = {
+  conversationId: string;
+  brainId: string;
+  brainName: string;
+  body: ChatRequest;
+  notes: string[];
+  refusal?: string;
+};
+
+export type ConversationUpdate = {
+  id: string;
+  title?: string;
+  settings?: Partial<{ textModel: string; maxTokens: number | null; temperature: number | null; imageModel: string }>;
+  templates?: Partial<Templates>;
+};
+
+export type BrainUpdate = {
+  conversation: string;
+  brain?: string;
+  name?: string;
+  color?: string;
+  systemPrompt?: string;
+  reasoning?: Partial<Brain["reasoning"]>;
+  finalReminder?: Partial<Brain["finalReminder"]>;
+};
+
 /** For commands that take no arguments: they can then be called as api.call("auth.whoami"). */
 export type NoArgs = Record<string, never>;
 
@@ -31,26 +79,45 @@ export type Commands = {
   "auth.login": { args: { username: string; password: string }; result: User };
   "auth.logout": { args: NoArgs; result: { loggedOut: string | null } };
   "auth.whoami": { args: NoArgs; result: Who };
+  "models.list": {
+    args: { type?: "text" | "image"; refresh?: boolean };
+    result: { models: ModelInfo[]; defaults: { text: string; image: string } };
+  };
+  "conversation.list": { args: NoArgs; result: { conversations: ConversationSummary[]; unreadable: UnreadableConversation[] } };
+  "conversation.create": { args: { title?: string; systemPrompt: string; textModel?: string }; result: Conversation };
+  "conversation.get": { args: { id: string }; result: Conversation };
+  "conversation.update": { args: ConversationUpdate; result: Conversation };
+  "conversation.delete": { args: { id: string }; result: { deleted: string } };
+  "brain.update": { args: BrainUpdate; result: Brain };
+  "prompt.preview": { args: { conversation: string; brain?: string; content?: string }; result: Preview };
 };
 
-/** NDJSON stream commands: POST /api/<name> with args, answered with StreamEvent lines. T02 adds `turn`. */
-export type StreamCommands = {};
+/** NDJSON stream commands: POST /api/<name> with args, answered with StreamEvent lines. */
+export type StreamCommands = {
+  turn: { args: { conversation: string; content?: string; brain?: string } };
+  /** Re-attach to a reply that is being generated right now (after a reload, or from another tab). */
+  "generation.follow": { args: { conversation: string } };
+};
 
 /**
  * The NDJSON events of docs/design.md ("Command surface"). Every stream ends with exactly one `done` or
  * `error`. The client turns `error` into a thrown ApiError, so a consumer only ever sees the rest.
- * `message` is the ledger message; T02 gives it a real type.
  */
 export type StreamEvent =
-  | { type: "message"; message: unknown }
-  | { type: "start"; brainId?: string; brainName?: string }
+  /** generation.follow only, first: a reply is running. What has streamed so far follows, then the rest. */
+  | { type: "following"; startedAt: string }
+  /** The player message was saved. */
+  | { type: "message"; message: LedgerMessage }
+  /** The brain starts; messageId is the id its saved message will have. */
+  | { type: "start"; brainId: string; brainName: string; messageId: string }
   | { type: "reasoning"; delta: string }
   | { type: "delta"; delta: string }
   | { type: "tool_args"; delta: string }
   | { type: "image_pending"; messageId: string; imageId: string }
   | { type: "image_done"; messageId: string; imageId: string }
   | { type: "image_error"; messageId: string; error: string }
-  | { type: "done"; message: unknown }
+  /** The saved brain message. Null only from generation.follow when nothing was running. */
+  | { type: "done"; message: LedgerMessage | null; note?: string }
   | { type: "error"; error: { code: string; message: string; details?: unknown } };
 
 /** What a stream consumer receives: every event except `error`, which arrives as a thrown ApiError. */

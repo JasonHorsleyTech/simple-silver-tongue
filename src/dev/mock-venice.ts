@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { crc32, deflateSync } from "node:zlib";
+import { MOCK_MARKDOWN } from "./mock-markdown.ts";
 import { MOCK_MODELS } from "./mock-models.ts";
 
 /**
@@ -17,6 +18,7 @@ import { MOCK_MODELS } from "./mock-models.ts";
  *   MOCK_ERROR            → HTTP error before anything streams
  *   MOCK_SLOW             → much slower stream / image (handy for 409 and stop tests)
  *   MOCK_MIDSTREAM_ERROR  → the connection drops halfway through the stream
+ *   MOCK_MARKDOWN         → the echo line, then a long Markdown reply (code, a table, quotes, lists; mock-markdown.ts)
  * max_tokens is honored (counted in words, reasoning first): the reply is cut with finish_reason "length".
  *
  * Rules enforced like a strict Venice: a Bearer token is required, and chat requests must send
@@ -143,9 +145,8 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
         return json(res, 400, { error: `mock: tool_choice names a tool that is not in tools: ${toolName}` });
       }
     }
-    const fullContent = toolName
-      ? ""
-      : `MOCK reply to brain "${brain}"; saw ${messages.length} messages; last: "${excerpt(lastText, 60)}"`;
+    const echo = `MOCK reply to brain "${brain}"; saw ${messages.length} messages; last: "${excerpt(lastText, 60)}"`;
+    const fullContent = toolName ? "" : lastText.includes("MOCK_MARKDOWN") ? `${echo}\n\n${MOCK_MARKDOWN}` : echo;
     // max_tokens counts words here (one word ≈ one token), reasoning first and then content, as live: a small
     // budget can run out while reasoning and leave no content at all (T02 QA-6). Like live, a cut ends with
     // finish_reason "length", and the last content delta rides in the same chunk as the finish reason.

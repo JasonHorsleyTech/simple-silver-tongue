@@ -27,7 +27,7 @@ export function Sidebar({ user, onClose }: { user: User; onClose?: () => void })
       </div>
 
       <nav aria-label="Conversations" className="min-h-0 flex-1 overflow-y-auto px-3 pt-2 pb-3">
-        <ConversationList />
+        <ConversationList username={user.username} />
       </nav>
 
       <div className="shrink-0 space-y-2 border-t border-line p-3">

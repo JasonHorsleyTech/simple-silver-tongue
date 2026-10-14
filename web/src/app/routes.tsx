@@ -1,12 +1,13 @@
-import { HomeView, NotFoundView } from "../features/home/HomeView.tsx";
-import { usePath } from "../lib/router.tsx";
+import { ChatView } from "../features/chat/ChatView.tsx";
+import { NewConversationView } from "../features/conversations/NewConversationView.tsx";
+import { NotFoundView } from "../features/home/NotFoundView.tsx";
+import { matchPath, usePath } from "../lib/router.tsx";
 
-/**
- * URL → view, rendered in the shell's main area. Add a line per view, most specific first, e.g. T02:
- *   const c = matchPath("/c/:id", path); if (c) return <ChatView key={c.id} id={c.id} />;
- */
+/** URL → view, rendered in the shell's main area. Add a line per view, most specific first. */
 export function Routes() {
   const path = usePath();
-  if (path === "/") return <HomeView />;
+  if (path === "/") return <NewConversationView />;
+  const c = matchPath("/c/:id", path);
+  if (c) return <ChatView key={c.id} id={c.id} />;
   return <NotFoundView />;
 }

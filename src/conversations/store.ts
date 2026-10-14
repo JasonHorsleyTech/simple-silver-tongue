@@ -1,5 +1,6 @@
-import { CommandError, conflict, notFound } from "../lib/errors.ts";
+import { CommandError, conflict, notFound, toErrorBody, type ErrorBody } from "../lib/errors.ts";
 import { nowIso } from "../lib/ids.ts";
+import type { StreamEvent } from "../registry.ts";
 import { listFiles, readJson, removeFile, writeJson, type Vault } from "../storage/vault.ts";
 import type { UnreadableConversation } from "./format.ts";
 import type { Conversation } from "./types.ts";
@@ -101,25 +102,108 @@ async function serialize<T>(key: string, job: () => Promise<T>): Promise<T> {
  * One generation at a time per conversation (design.md: a second turn or regenerate is a 409).
  * The AbortController is there for a future generation.stop (T03); release() also aborts any upstream
  * request still open, so a failed turn never leaves a Venice connection behind.
+ *
+ * A generation also keeps, in memory only, the events it has streamed so far, so generation.follow can
+ * re-attach to it: a reloaded browser tab, or a second terminal (T02 frontend). Consecutive text deltas are
+ * merged, so a late follower gets the reply so far in a few events and then the rest live.
  */
-type Generation = { controller: AbortController; startedAt: string };
+type Generation = { controller: AbortController; startedAt: string; live: Live };
+type Follower = { queue: StreamEvent[]; wake?: () => void };
+type Live = {
+  log: StreamEvent[];
+  followers: Set<Follower>;
+  ended: boolean;
+  failure?: { status: number; body: ErrorBody };
+};
 const generations = new Map<string, Generation>();
 
 const busy = (id: string) =>
   conflict(`Conversation ${id} is busy: a reply is still being generated. Wait for it to finish, then try again.`);
 
-export function beginGeneration(vault: Vault, id: string): { signal: AbortSignal; release(): void } {
+const MERGEABLE = new Set(["reasoning", "delta", "tool_args"]);
+
+export type GenerationHandle = {
+  signal: AbortSignal;
+  /** Pass the generation's events through, recording them for followers (generation.follow). */
+  relay(events: AsyncIterable<StreamEvent>): AsyncGenerator<StreamEvent, void, undefined>;
+  release(): void;
+};
+
+export function beginGeneration(vault: Vault, id: string): GenerationHandle {
   const key = keyOf(vault, id);
   if (generations.has(key)) throw busy(id);
-  const gen: Generation = { controller: new AbortController(), startedAt: nowIso() };
+  const live: Live = { log: [], followers: new Set(), ended: false };
+  const gen: Generation = { controller: new AbortController(), startedAt: nowIso(), live };
   generations.set(key, gen);
+
+  const publish = (ev: StreamEvent) => {
+    const last = live.log.at(-1);
+    if (last && last.type === ev.type && MERGEABLE.has(ev.type)) {
+      live.log[live.log.length - 1] = { type: ev.type, delta: String(last.delta) + String(ev.delta) };
+    } else {
+      live.log.push(ev);
+    }
+    for (const f of live.followers) {
+      f.queue.push(ev);
+      f.wake?.();
+    }
+  };
+  const end = (failure?: { status: number; body: ErrorBody }) => {
+    if (live.ended) return;
+    live.ended = true;
+    if (failure) live.failure = failure;
+    for (const f of live.followers) f.wake?.();
+  };
+
   return {
     signal: gen.controller.signal,
+    async *relay(events) {
+      try {
+        for await (const ev of events) {
+          publish(ev);
+          yield ev;
+        }
+        end();
+      } catch (err) {
+        end(toErrorBody(err)); // followers get the same error the caller does
+        throw err;
+      }
+    },
     release() {
+      end({ status: 500, body: { code: "internal", message: "The reply ended unexpectedly. Check what was saved." } });
       if (generations.get(key) === gen) generations.delete(key);
       gen.controller.abort();
     },
   };
+}
+
+/**
+ * The running generation's events: first `{type: "following", startedAt}`, then what has streamed so far
+ * (merged), then the rest as it arrives, ending with its `done`, or throwing its error. Null when nothing
+ * is being generated for this conversation.
+ */
+export function followGeneration(vault: Vault, id: string): AsyncGenerator<StreamEvent, void, undefined> | null {
+  const gen = generations.get(keyOf(vault, id));
+  return gen ? follow(gen) : null;
+}
+
+async function* follow(gen: Generation): AsyncGenerator<StreamEvent, void, undefined> {
+  const live = gen.live;
+  const me: Follower = { queue: [...live.log] };
+  live.followers.add(me);
+  try {
+    yield { type: "following", startedAt: gen.startedAt };
+    for (;;) {
+      while (me.queue.length) yield me.queue.shift()!;
+      if (live.ended) break;
+      await new Promise<void>((resolve) => (me.wake = resolve));
+      me.wake = undefined;
+    }
+  } finally {
+    live.followers.delete(me);
+  }
+  const f = live.failure;
+  if (f) throw new CommandError(f.status, f.body.code, f.body.message, f.body.details);
 }
 
 export function isGenerating(vault: Vault, id: string): boolean {

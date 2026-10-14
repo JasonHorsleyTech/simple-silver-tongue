@@ -1,0 +1,54 @@
+import type { Conversation, LedgerMessage, MessageVersion } from "../api/types.ts";
+
+/** Dollars the way the CLI prints them (src/venice/models.ts usd): cents when it's at least a cent, else 2 significant digits. */
+export function formatUsd(n: number): string {
+  if (n === 0) return "$0";
+  return n >= 0.01 ? `$${n.toFixed(2)}` : `$${Number(n.toPrecision(2))}`;
+}
+
+/** Everything ever spent on a conversation: every generated version, active or not (like the server's totalCost). */
+export function conversationCost(conv: Conversation): number {
+  let sum = 0;
+  for (const m of conv.messages) for (const v of m.versions) sum += v.costUsd ?? 0;
+  return sum;
+}
+
+export function activeVersion(m: LedgerMessage): MessageVersion {
+  return m.versions[m.activeVersion] ?? m.versions[0]!;
+}
+
+/** "just now", "5m", "3h", "Yesterday", "Mon", "Oct 12", "Oct 12, 2025". */
+export function relativeTime(iso: string, now = Date.now()): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "";
+  const s = Math.max(0, (now - t) / 1000);
+  if (s < 45) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)}m`;
+  const d = new Date(t);
+  const today = new Date(now);
+  if (s < 86400 && d.getDate() === today.getDate()) return `${Math.round(s / 3600)}h`;
+  const yesterday = new Date(now - 86400_000);
+  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+  if (s < 6 * 86400) return d.toLocaleDateString(undefined, { weekday: "short" });
+  const sameYear = d.getFullYear() === today.getFullYear();
+  return d.toLocaleDateString(undefined, sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+}
+
+/** "14:02" today, "Oct 12, 14:02" otherwise. */
+export function clockTime(iso: string, now = Date.now()): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (d.toDateString() === new Date(now).toDateString()) return time;
+  return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${time}`;
+}
+
+export function fullTime(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+}
+
+/** 1234 → "1.2k". */
+export function compactNumber(n: number): string {
+  return n < 1000 ? String(n) : `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+}

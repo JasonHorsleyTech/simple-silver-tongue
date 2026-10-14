@@ -206,6 +206,9 @@ async function printStream(res: Response, json: boolean, io: Io, dim: (s: string
         io.stderr.write(dim(String(ev.delta ?? "")));
         inReasoning = true;
         break;
+      case "following":
+        io.stderr.write(dim("(following a reply in progress: what has streamed so far, then the rest live)\n"));
+        break;
       case "start":
         io.stderr.write(dim(`[${ev.brainName ?? ev.brainId ?? "start"}]\n`));
         break;

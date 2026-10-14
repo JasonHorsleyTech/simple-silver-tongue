@@ -12,5 +12,6 @@ export default defineConfig({
     strictPort: true,
     proxy: { "/api": "http://127.0.0.1:4747" },
   },
-  build: { outDir: "dist", emptyOutDir: true },
+  // One bundle is fine for a local app served from localhost; highlight.js's common languages make it ~600 kB.
+  build: { outDir: "dist", emptyOutDir: true, chunkSizeWarningLimit: 1000 },
 });

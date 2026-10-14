@@ -47,6 +47,16 @@ test("chat stream: reasoning, then content that echoes structure, then usage wit
   assert.equal(chunks.at(-2).choices[0].finish_reason, "stop");
 });
 
+test("chat stream: MOCK_MARKDOWN streams the echo line, then the long Markdown sample, whitespace intact", async () => {
+  const { MOCK_MARKDOWN } = await import("../src/dev/mock-markdown.ts");
+  const body = { ...chatBody, messages: [chatBody.messages[0], { role: "user", content: "Show me MOCK_MARKDOWN" }] };
+  const chunks = await sse(await post("/chat/completions", body));
+  const content = chunks.map((c) => c.choices[0]?.delta?.content ?? "").join("");
+  assert.ok(content.startsWith('MOCK reply to brain "You are the Game Master."; saw 2 messages'), content.slice(0, 80));
+  assert.ok(content.endsWith(MOCK_MARKDOWN), "the sample arrives verbatim, indentation and newlines included");
+  for (const bit of ["```ts", "| Item | Price | Notes |", "> > Carved", "<!-- from: the GM"]) assert.ok(content.includes(bit), bit);
+});
+
 test("chat stream: a forced tool call streams JSON argument fragments", async () => {
   const chunks = await sse(
     await post("/chat/completions", {

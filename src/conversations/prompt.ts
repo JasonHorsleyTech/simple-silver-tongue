@@ -196,9 +196,9 @@ export function nothingToAnswer(body: Pick<ChatRequest, "messages">, brainName =
   const last = body.messages.at(-1)?.role;
   if (last === "user" || last === "tool") return null;
   if (last === "assistant") {
-    return `The last message is ${brainName}'s own reply, so there is nothing new for it to answer. Send a message with --content.`;
+    return `The last message is ${brainName}'s own reply, so there is nothing new for it to answer. Write a message for it first.`;
   }
-  return `There is nothing for ${brainName} to answer yet: the request would hold only its system prompt. Send a message with --content.`;
+  return `There is nothing for ${brainName} to answer yet: the request would hold only its system prompt. Write a message for it first.`;
 }
 
 /** The send path's copy of the check above, whoever built the body (so T03's regenerate can't skip it). */
