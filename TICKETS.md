@@ -306,7 +306,7 @@ Why a fence: models write fences reliably, Markdown parses it without HTML, and 
 
 ---
 
-## T09: Dice rolls · `qa`
+## T09: Dice rolls · `triage`
 
 Jason, 2026-10-14: a button that rolls a real d20 and sends it to a brain. The server's random number generator rolls it, never a model. The result goes into the ledger as a message every brain reads, and then the brain the player picked answers the conversation. Here is the loop it serves, with T10's Show Me the Odds brain:
 1. The player sends "I try to talk the hooded figure down to half price" to Show Me the Odds.
