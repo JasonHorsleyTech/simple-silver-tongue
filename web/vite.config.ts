@@ -11,6 +11,8 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: { "/api": "http://127.0.0.1:4747" },
+    // The app imports a few dependency-free values from the server's own files (src/conversations/wording.ts).
+    fs: { allow: [".."] },
   },
   // One bundle is fine for a local app served from localhost; highlight.js's common languages make it ~600 kB.
   build: { outDir: "dist", emptyOutDir: true, chunkSizeWarningLimit: 1000 },

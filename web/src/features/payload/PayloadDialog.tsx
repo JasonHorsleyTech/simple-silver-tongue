@@ -11,30 +11,40 @@ import { copyText } from "../../lib/clipboard.ts";
 import { cx } from "../../lib/cx.ts";
 import { BrainBadge } from "../chat/BrainBadge.tsx";
 
+/** Which request to show: the next Send (with the unsent composer text), or a Regenerate with its steer. */
+export type PayloadRequest = { kind: "turn"; draft: string } | { kind: "regenerate"; messageId: string; steer: string };
+
 /**
- * "Exact payload": prompt.preview for one brain, which is built by the same code path that turn sends with.
- * It includes the unsent composer text, so it shows what Send would send right now. Two views: each message
- * verbatim, or the raw JSON body. T04 opens it per brain (the `brain` prop).
+ * "Exact payload": prompt.preview for one brain, which is built by the same code path that turn and
+ * message.regenerate send with. For Send it includes the unsent composer text; for Regenerate, the steer as
+ * typed so far. Two views: each message verbatim, or the raw JSON body. T04 opens it per brain (`brain`).
  */
-export function PayloadDialog({ conversationId, brain, draft, onClose }: { conversationId: string; brain: Brain; draft: string; onClose(): void }) {
+export function PayloadDialog({ conversationId, brain, request, onClose }: { conversationId: string; brain: Brain; request: PayloadRequest; onClose(): void }) {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<"messages" | "json">("messages");
   const [copied, setCopied] = useState(false);
+  const regen = request.kind === "regenerate" ? request : null;
+  const draft = request.kind === "turn" ? request.draft : "";
   const withDraft = draft.trim() !== "";
+  const steer = regen?.steer.trim() ?? "";
+  const regenId = regen?.messageId;
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setPreview(await api.call("prompt.preview", { conversation: conversationId, brain: brain.id, ...(withDraft ? { content: draft } : {}) }));
+      const args = regenId
+        ? { conversation: conversationId, regenerate: true, message: regenId, ...(steer ? { steer } : {}) }
+        : { conversation: conversationId, brain: brain.id, ...(withDraft ? { content: draft } : {}) };
+      setPreview(await api.call("prompt.preview", args));
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, [conversationId, brain.id, draft, withDraft]);
+  }, [conversationId, brain.id, draft, withDraft, regenId, steer]);
 
   useEffect(() => {
     void load();
@@ -48,14 +58,24 @@ export function PayloadDialog({ conversationId, brain, draft, onClose }: { conve
       onClose={onClose}
       title={
         <span className="inline-flex items-center gap-2">
-          Exact payload <BrainBadge name={brain.name} color={brain.color} />
+          {regen ? "Regenerate payload" : "Exact payload"} <BrainBadge name={brain.name} color={brain.color} />
         </span>
       }
       subtitle={
-        <>
-          <code className="font-mono text-[11.5px] text-muted">POST /chat/completions</code>, exactly as the next Send would make it, minus the API
-          key. {withDraft ? "Your unsent message is included as the last message." : "With the composer empty, Send asks the brain to answer the ledger as it stands."}
-        </>
+        regen ? (
+          <>
+            <code className="font-mono text-[11.5px] text-muted">POST /chat/completions</code>, exactly as Regenerate would make it
+            {preview?.regenerate ? ` (version ${preview.regenerate.newVersion})` : ""}, minus the API key.{" "}
+            {steer
+              ? "The version on screen stays in, and your steer goes last. Only this one request carries the steer."
+              : "A plain re-roll: the messages before this one, without it."}
+          </>
+        ) : (
+          <>
+            <code className="font-mono text-[11.5px] text-muted">POST /chat/completions</code>, exactly as the next Send would make it, minus the API
+            key. {withDraft ? "Your unsent message is included as the last message." : "With the composer empty, Send asks the brain to answer the ledger as it stands."}
+          </>
+        )
       }
       footer={
         <>
@@ -111,7 +131,7 @@ export function PayloadDialog({ conversationId, brain, draft, onClose }: { conve
           ))}
           {preview.refusal && (
             <Notice tone="info">
-              <strong className="font-medium text-fg">Send would refuse this as it stands.</strong> {preview.refusal}
+              <strong className="font-medium text-fg">{regen ? "Regenerate" : "Send"} would refuse this as it stands.</strong> {preview.refusal}
             </Notice>
           )}
           {view === "json" ? (

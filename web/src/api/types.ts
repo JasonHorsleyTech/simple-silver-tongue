@@ -11,6 +11,9 @@ import type { ModelInfo } from "../../../src/venice/models.ts";
 
 export type { Brain, ChatMessage, ChatRequest, Conversation, LedgerMessage, MessageVersion, ModelInfo, Templates };
 
+/** The server's own sentence for what a stop does and doesn't save (shown next to Stop, and with its result). */
+export { STOP_BILL_NOTE } from "../../../src/conversations/wording.ts";
+
 export type User = { username: string; encrypted: boolean };
 export type Who = User | { username: null };
 
@@ -50,7 +53,15 @@ export type Preview = {
   body: ChatRequest;
   notes: string[];
   refusal?: string;
+  /** prompt.preview with regenerate: which message gets the new version, and the steer it is asked with. */
+  regenerate?: { messageId: string; newVersion: number; steer?: string; steeredFrom?: number };
 };
+
+/** message.get, .edit and .select-version: the message, with every version, and who wrote it. */
+export type MessageView = { conversationId: string; author: string; message: LedgerMessage };
+
+/** generation.stop. `message` is what the stopped reply saved (null when no text had arrived; `error` says so). */
+export type StopOutcome = { stopped: boolean; message: LedgerMessage | null; error?: { code: string; message: string }; note?: string };
 
 export type ConversationUpdate = {
   id: string;
@@ -89,7 +100,17 @@ export type Commands = {
   "conversation.update": { args: ConversationUpdate; result: Conversation };
   "conversation.delete": { args: { id: string }; result: { deleted: string } };
   "brain.update": { args: BrainUpdate; result: Brain };
-  "prompt.preview": { args: { conversation: string; brain?: string; content?: string }; result: Preview };
+  "prompt.preview": {
+    args: { conversation: string; brain?: string; content?: string; regenerate?: boolean; message?: string; steer?: string };
+    result: Preview;
+  };
+  /** Any message, any depth: the active version's text, in place. 409 while a reply is being generated. */
+  "message.edit": { args: { conversation: string; message: string; content: string }; result: MessageView };
+  /** Any message, with all its versions. Its cost stays in spentUsd. 409 while a reply is being generated. */
+  "message.delete": { args: { conversation: string; message: string }; result: { conversationId: string; deleted: string; messageCount: number } };
+  /** `version` is 1-based (what the pager shows); the document's activeVersion is 0-based. 409 while generating. */
+  "message.select-version": { args: { conversation: string; message: string; version: number }; result: MessageView };
+  "generation.stop": { args: { conversation: string }; result: StopOutcome };
 };
 
 /** NDJSON stream commands: POST /api/<name> with args, answered with StreamEvent lines. */
@@ -97,6 +118,8 @@ export type StreamCommands = {
   turn: { args: { conversation: string; content?: string; brain?: string } };
   /** Re-attach to a reply that is being generated right now (after a reload, or from another tab). */
   "generation.follow": { args: { conversation: string } };
+  /** A new, active version of the last message (a brain's). With a steer, the brain rewrites its current version. */
+  "message.regenerate": { args: { conversation: string; message?: string; steer?: string } };
 };
 
 /**
@@ -108,16 +131,23 @@ export type StreamEvent =
   | { type: "following"; startedAt: string }
   /** The player message was saved. */
   | { type: "message"; message: LedgerMessage }
-  /** The brain starts; messageId is the id its saved message will have. */
-  | { type: "start"; brainId: string; brainName: string; messageId: string }
+  /**
+   * The brain starts; messageId is the id its saved message will have. For message.regenerate (also when
+   * replayed by generation.follow), `regenerate` is true, messageId is the message getting a new version,
+   * and `steer` is the direction it was given, if any.
+   */
+  | { type: "start"; brainId: string; brainName: string; messageId: string; regenerate?: true; steer?: string }
   | { type: "reasoning"; delta: string }
   | { type: "delta"; delta: string }
   | { type: "tool_args"; delta: string }
   | { type: "image_pending"; messageId: string; imageId: string }
   | { type: "image_done"; messageId: string; imageId: string }
   | { type: "image_error"; messageId: string; error: string }
-  /** The saved brain message. Null only from generation.follow when nothing was running. */
-  | { type: "done"; message: LedgerMessage | null; note?: string }
+  /**
+   * The saved brain message. Null only from generation.follow when nothing was running. `spentUsd` is the
+   * conversation's running total once this reply's cost was added (a stopped reply's cost comes later).
+   */
+  | { type: "done"; message: LedgerMessage | null; note?: string; spentUsd?: number }
   | { type: "error"; error: { code: string; message: string; details?: unknown } };
 
 /** What a stream consumer receives: every event except `error`, which arrives as a thrown ApiError. */

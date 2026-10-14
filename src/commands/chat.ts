@@ -21,6 +21,7 @@ import {
   type Reply,
 } from "../conversations/turn.ts";
 import type { ChatRequest, Conversation, LedgerMessage, Usage } from "../conversations/types.ts";
+import { STOP_BILL_NOTE } from "../conversations/wording.ts";
 import { badRequest, CommandError } from "../lib/errors.ts";
 import { newId } from "../lib/ids.ts";
 import { command, streamCommand, type Ctx, type StreamEvent } from "../registry.ts";
@@ -137,11 +138,11 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
     retry: "To retry, send again with no new message: turn without --content, or Retry in the browser.",
   });
   const message = newMessage({ type: "brain", brainId: plan.brain.id }, "text", generatedVersion(reply, plan.body.model), messageId);
-  await saveReply(vault, conv.id, reply, (c) => {
+  const spentUsd = await saveReply(vault, conv.id, reply, (c) => {
     c.messages.push(message);
     return { messageId, version: 0 };
   });
-  yield { type: "done", message, note: replyNote(plan.brain.name, reply) };
+  yield { type: "done", message, note: replyNote(plan.brain.name, reply), spentUsd };
 }
 
 const regenerateArgs = z.object({ conversation: conversationId, message: regenerateTarget, steer });
@@ -193,7 +194,7 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
   const version = generatedVersion(reply, plan.body.model);
   if (plan.steer !== undefined) Object.assign(version, { steer: plan.steer, steeredFrom: plan.steeredFrom });
   let message!: LedgerMessage;
-  await saveReply(vault, conv.id, reply, (c) => {
+  const spentUsd = await saveReply(vault, conv.id, reply, (c) => {
     // Ledger edits are refused while this runs, and the plan read the ledger after the lock, so the message
     // is still there; but say so if it isn't.
     const m = c.messages.find((x) => x.id === id);
@@ -205,7 +206,7 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
     return { messageId: id, version: m.activeVersion };
   });
   const n = message.versions.length;
-  yield { type: "done", message, note: replyNote(`${plan.brain.name} · version ${n}/${n}${plan.steer !== undefined ? " · steered" : ""}`, reply) };
+  yield { type: "done", message, note: replyNote(`${plan.brain.name} · version ${n}/${n}${plan.steer !== undefined ? " · steered" : ""}`, reply), spentUsd };
 }
 
 /**
@@ -226,9 +227,8 @@ async function openUpstream(ctx: Ctx, convId: string, body: ChatRequest, gen: Ge
 
 const stopped = (message: string) => new CommandError(499, "stopped", message);
 
-/** The same words wherever a stop is reported (T03 QA-2: measured live, a stopped reply is billed in full). */
-export const STOP_BILL_NOTE =
-  "Stopping saves waiting, not money: Venice still writes and bills the whole reply, so its cost is added to the conversation once Venice reports it.";
+/** The same words wherever a stop is reported; the browser shows them next to its Stop button too. */
+export { STOP_BILL_NOTE };
 
 /**
  * Relay the reply and return it whole. A broken stream says what was kept and how to retry, in the message
@@ -265,14 +265,16 @@ type CostTarget = { messageId: string; version: number };
 /**
  * Save a reply: `put` adds it to the ledger and says where it went, and its cost joins the running total
  * (added first, see addSpend). A stopped reply has no cost yet, so its stream goes on to a drain.
+ * Returns the running total after the save, for the `done` event (so a UI needn't recompute it).
  */
-async function saveReply(vault: Vault, convId: string, reply: Reply, put: (c: Conversation) => CostTarget): Promise<void> {
+async function saveReply(vault: Vault, convId: string, reply: Reply, put: (c: Conversation) => CostTarget): Promise<number> {
   let target: CostTarget | null = null;
   try {
-    await mutateConversation(vault, convId, (c) => {
+    const { conv } = await mutateConversation(vault, convId, (c) => {
       addSpend(c, reply.costUsd);
       target = put(c);
     });
+    return conv.spentUsd ?? 0;
   } finally {
     if (reply.rest) drainStopped(vault, convId, reply.rest, target);
   }

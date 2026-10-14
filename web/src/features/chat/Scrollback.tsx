@@ -3,17 +3,31 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import type { Conversation } from "../../api/types.ts";
 import { Markdown } from "../../components/Markdown.tsx";
 import { LiveReply } from "./LiveReply.tsx";
-import { MessageItem, PlayerBubble } from "./MessageItem.tsx";
+import { MessageItem } from "./MessageItem.tsx";
+import { PlayerBubble } from "./MessageFrame.tsx";
 import type { Chat } from "./useChat.ts";
 
 /** Within this many pixels of the bottom counts as "at the bottom": new text keeps it pinned there. */
 const STICK_PX = 96;
 
 /**
- * The ledger, top to bottom, then the optimistic player message and the live reply. It follows the stream
- * while you are at the bottom, and leaves you alone once you scroll up (a "Latest" button brings you back).
+ * The ledger, top to bottom, then the optimistic player message and the live reply. A regenerate's live reply
+ * goes in the slot of the message it rewrites instead. It follows the stream while you are at the bottom,
+ * and leaves you alone once you scroll up (a "Latest" button brings you back).
  */
-export function Scrollback({ conv, chat, onRetry, empty }: { conv: Conversation; chat: Chat; onRetry(): void; empty: ReactNode }) {
+export function Scrollback({
+  conv,
+  chat,
+  onRetry,
+  onPreviewRegenerate,
+  empty,
+}: {
+  conv: Conversation;
+  chat: Chat;
+  onRetry(): void;
+  onPreviewRegenerate(messageId: string, steer: string): void;
+  empty: ReactNode;
+}) {
   const box = useRef<HTMLDivElement>(null);
   const stuck = useRef(true);
   const [away, setAway] = useState(false);
@@ -57,7 +71,12 @@ export function Scrollback({ conv, chat, onRetry, empty }: { conv: Conversation;
   };
 
   const nothing = conv.messages.length === 0 && pendingPlayer === null && !live;
-  const lastId = conv.messages.at(-1)?.id;
+  const last = conv.messages.at(-1);
+  // A regenerate streams in its message's slot (also when re-attached by generation.follow, once `start` says
+  // which message). Anything else, or a regenerate of a message we don't have, goes at the bottom.
+  const inSlot = live?.kind === "regenerate" && live.messageId && conv.messages.some((m) => m.id === live.messageId) ? live.messageId : null;
+  const atBottom = live && !inSlot ? live : null;
+  const canRegenerate = !!last && last.author.type === "brain" && last.kind === "text" && !atBottom && pendingPlayer === null;
 
   return (
     <div className="relative min-h-0 flex-1">
@@ -69,7 +88,17 @@ export function Scrollback({ conv, chat, onRetry, empty }: { conv: Conversation;
             <ol className="space-y-7">
               {conv.messages.map((m) => (
                 <li key={m.id} id={m.id}>
-                  <MessageItem message={m} brain={m.author.type === "brain" ? brains.get(m.author.brainId) : undefined} isLast={m.id === lastId && !live} />
+                  <MessageItem
+                    message={m}
+                    brain={m.author.type === "brain" ? brains.get(m.author.brainId) : undefined}
+                    isLast={m === last && !atBottom && pendingPlayer === null}
+                    canRegenerate={m === last && canRegenerate}
+                    live={m.id === inSlot ? live! : undefined}
+                    busy={chat.busy}
+                    actions={chat.actions}
+                    onPreviewRegenerate={onPreviewRegenerate}
+                    onDismissLive={chat.dismissLive}
+                  />
                 </li>
               ))}
               {pendingPlayer !== null && (
@@ -79,9 +108,14 @@ export function Scrollback({ conv, chat, onRetry, empty }: { conv: Conversation;
                   </PlayerBubble>
                 </li>
               )}
-              {live && (
+              {atBottom && (
                 <li>
-                  <LiveReply live={live} brain={live.brainId ? brains.get(live.brainId) : undefined} onRetry={onRetry} onDismiss={chat.dismissLive} />
+                  <LiveReply
+                    live={atBottom}
+                    brain={atBottom.brainId ? brains.get(atBottom.brainId) : undefined}
+                    onRetry={onRetry}
+                    onDismiss={chat.dismissLive}
+                  />
                 </li>
               )}
             </ol>

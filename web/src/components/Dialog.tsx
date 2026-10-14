@@ -25,9 +25,13 @@ export function Dialog({
   const body = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const d = ref.current;
+    const before = document.activeElement; // where focus goes back to on close (unmounting skips the browser's own restore)
     if (d && !d.open) d.showModal();
     body.current?.focus(); // not the close button: arrow keys then scroll the content
-    return () => d?.close();
+    return () => {
+      d?.close();
+      if (before instanceof HTMLElement && before.isConnected) before.focus();
+    };
   }, []);
 
   return (

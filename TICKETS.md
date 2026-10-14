@@ -60,7 +60,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T03: Steered regeneration, versions, edit and delete (CP2) · `frontend`
+## T03: Steered regeneration, versions, edit and delete (CP2) · `done`
 
 **Engineer scope**
 - `message.regenerate --message <id> [--steer "..."]`: only for the last ledger message, and only when a brain wrote it. Uses the steer template, appended last. Produces a new version and makes it active.
@@ -110,6 +110,8 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 - Editing a GM message changes what the Dice Master sees.
 - Adding a third brain mid-conversation and editing the GM's system prompt both work without restarting the conversation.
 
+- **From T03 frontend:** message actions (edit, delete, pager, Regenerate with a steer) work for any brain's message already: `MessageItem` takes the message's own brain, and the in-slot live reply uses it. The composer's Send becomes Stop during any reply (`status` names who is writing); with several brains, pass the replying brain's name, which `useChat`'s live reply already has. `PayloadDialog` takes `request: {kind: "turn", draft} | {kind: "regenerate", messageId, steer}`, so a per-brain payload is `{kind: "turn"}` with that brain.
+
 **Frontend scope (T02 built the base: `SettingsPanel`, `BrainEditor`, `TemplatesEditor`, `PayloadDialog`, per-brain `Composer` buttons, `BrainBadge`):** A conversation settings drawer: title, text and image model pickers from `models.list`, reasoning effort, a templates editor, a setup-messages editor (add, reorder, edit, delete), and a brains editor (name, color, kind, system prompt, reasoning on/off + effort, reminder checkbox + text, default, delete only when unused). The composer gets a big Send to the default brain plus a button per other brain. Messages get colored author badges. An "Exact payload" modal per brain renders `prompt.preview`.
 
 **Deferred in:** *(none yet)*
@@ -131,6 +133,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 - Editing the prompt generates a new image. A steered regeneration produces a new prompt and a new image.
 
 **Frontend scope:** An image message card showing the prompt (streams in live, collapsible), then a loader, then the image (click to enlarge), or an error with Retry. Editing the prompt keeps the old image dimmed with a spinner until the new one arrives. The image model and size live in the settings drawer. The safe-mode toggle (default on) lives on each image brain.
+- **From T03 frontend:** `MessageItem`'s `BrainBody` is where an image card goes, and `MessageEditor` already edits the active version's `content` (the prompt, for an image message). A steered regenerate of an image message streams into the message's slot through `LiveReply` with `slot`; add `tool_args` (the prompt) and the image events to `useChat`'s one reducer (`apply`, which ignores them today). Edit/delete of image messages are refused by the server until T05 (`not_supported`); the browser shows that message inline.
 
 **Deferred in:**
 - Mock: add a trigger (e.g. `MOCK_BLURRED` in the prompt, with `safe_mode` on) that answers `x-venice-is-blurred: true`, so the safe-mode UX can be tested for free. The headers already exist, always `false` (T01 QA-7).

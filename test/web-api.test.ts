@@ -7,7 +7,8 @@ import { command, streamCommand } from "../src/registry.ts";
 import { createClient } from "../web/src/api/client.ts";
 import { ApiError, errorMessage } from "../web/src/api/errors.ts";
 import { readNdjson } from "../web/src/api/ndjson.ts";
-import type { Commands, NoArgs } from "../web/src/api/types.ts";
+import { STOP_BILL_NOTE as SERVER_STOP_NOTE } from "../src/commands/chat.ts";
+import { STOP_BILL_NOTE, type Commands, type NoArgs, type StreamCommands, type StreamYield } from "../web/src/api/types.ts";
 import { startTestServer } from "./helpers.ts";
 
 // The web app's API client is plain TS with no DOM dependency, so it runs here against the real server.
@@ -65,7 +66,7 @@ function cookieJar() {
 }
 
 type TestCommands = Commands & { "test.private": { args: NoArgs; result: { ok: boolean } } };
-type TestStreams = { "test.stream": { args: { mode: "ok" | "busy" | "mid_error" | "no_done" } } };
+type TestStreams = StreamCommands & { "test.stream": { args: { mode: "ok" | "busy" | "mid_error" | "no_done" } } };
 
 describe("web API client against the real server", () => {
   let t: Awaited<ReturnType<typeof startTestServer>>;
@@ -172,11 +173,55 @@ describe("web API client against the real server", () => {
     await assert.rejects(drain(api.stream("test.stream", { mode: "no_done" })), (e: unknown) => e instanceof ApiError && e.code === "stream_broken");
   });
 
+  test("T03: the web client's regenerate, version, edit, delete and stop shapes are what the server accepts", async () => {
+    const api = client();
+    await api.call("auth.login", { username: "web-plain", password: "" });
+    const conv = await api.call("conversation.create", { title: "T03 web", systemPrompt: "You answer in one word." });
+    const turn = await collectStream(api.stream("turn", { conversation: conv.id, content: "What color is a lime?" }));
+    const reply = turn.at(-1)!;
+    assert.ok(reply.type === "done" && reply.message);
+    const id = reply.message.id;
+
+    // The steered request, previewed exactly as the steer box's Payload button asks for it.
+    const preview = await api.call("prompt.preview", { conversation: conv.id, regenerate: true, message: id, steer: "Say it's blue." });
+    assert.deepEqual(preview.regenerate, { messageId: id, newVersion: 2, steer: "Say it's blue.", steeredFrom: 0 });
+
+    // A regenerate's start event says so, with its steer, and done carries the whole message.
+    const regen = await collectStream(api.stream("message.regenerate", { conversation: conv.id, message: id, steer: "Say it's blue." }));
+    const start = regen.find((e) => e.type === "start");
+    assert.ok(start?.type === "start" && start.regenerate === true && start.steer === "Say it's blue." && start.messageId === id);
+    const done = regen.at(-1)!;
+    assert.ok(done.type === "done" && done.message);
+    assert.equal(done.message.versions.length, 2);
+    assert.equal(done.message.activeVersion, 1);
+    assert.equal(done.message.versions[1]!.steer, "Say it's blue.");
+    // done carries the running total, so the header needn't re-read the conversation.
+    assert.ok(done.spentUsd! > 0);
+    assert.equal(done.spentUsd, (await api.call("conversation.get", { id: conv.id })).spentUsd);
+
+    // The pager's 1-based version; edit and delete.
+    const back = await api.call("message.select-version", { conversation: conv.id, message: id, version: 1 });
+    assert.equal(back.message.activeVersion, 0);
+    const edited = await api.call("message.edit", { conversation: conv.id, message: id, content: "**Green.**" });
+    assert.equal(edited.message.versions[0]!.content, "**Green.**");
+    assert.equal(edited.message.versions[0]!.edited, true);
+    assert.deepEqual(await api.call("generation.stop", { conversation: conv.id }), { stopped: false, message: null });
+    const gone = await api.call("message.delete", { conversation: conv.id, message: id });
+    assert.equal(gone.messageCount, 1);
+    assert.equal(STOP_BILL_NOTE, SERVER_STOP_NOTE, "the browser shows the server's own sentence");
+  });
+
   test("an unreachable server is a network ApiError", async () => {
     const api = createClient({ baseUrl: "http://127.0.0.1:9" });
     await assert.rejects(api.call("health"), (e: unknown) => e instanceof ApiError && e.code === "network" && e.status === 0);
   });
 });
+
+async function collectStream(it: AsyncIterable<StreamYield>): Promise<StreamYield[]> {
+  const out: StreamYield[] = [];
+  for await (const ev of it) out.push(ev);
+  return out;
+}
 
 async function drain(it: AsyncIterable<{ type: string }>, seen: string[] = []) {
   for await (const ev of it) seen.push(ev.type);

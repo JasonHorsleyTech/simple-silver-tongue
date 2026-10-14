@@ -5,7 +5,7 @@ import { Spinner } from "../../components/Spinner.tsx";
 import { Link } from "../../lib/router.tsx";
 import { readLocal, writeLocal } from "../../lib/storage.ts";
 import { useMediaQuery } from "../../lib/useMediaQuery.ts";
-import { PayloadDialog } from "../payload/PayloadDialog.tsx";
+import { PayloadDialog, type PayloadRequest } from "../payload/PayloadDialog.tsx";
 import { SettingsPanel } from "../settings/SettingsPanel.tsx";
 import { BrainBadge } from "./BrainBadge.tsx";
 import { ChatHeader } from "./ChatHeader.tsx";
@@ -27,7 +27,8 @@ export function ChatView({ id }: { id: string }) {
   const { conv, loadError } = chat;
   const [draft, setDraftState] = useState(() => drafts.get(id) ?? "");
   const [settingsOpen, setSettingsOpen] = useState(() => readLocal(SETTINGS_OPEN_KEY) === "1");
-  const [payloadOpen, setPayloadOpen] = useState(false);
+  const [payload, setPayload] = useState<{ kind: "turn" } | Extract<PayloadRequest, { kind: "regenerate" }> | null>(null);
+  const previewRegenerate = useCallback((messageId: string, steer: string) => setPayload({ kind: "regenerate", messageId, steer }), []);
   const docked = useMediaQuery("(min-width: 1180px)");
 
   const setDraft = useCallback(
@@ -85,6 +86,17 @@ export function ChatView({ id }: { id: string }) {
   }
 
   const brain = conv.brains.find((b) => b.id === conv.defaultBrainId) ?? conv.brains[0]!;
+  const brainOf = (messageId: string) => {
+    const m = conv.messages.find((x) => x.id === messageId);
+    return (m?.author.type === "brain" && conv.brains.find((b) => b.id === (m.author as { brainId: string }).brainId)) || brain;
+  };
+  const live = chat.live;
+  const liveBrain = live?.brainName ?? brain.name;
+  const status =
+    live?.kind === "regenerate" && live.messageId
+      ? `${liveBrain} is writing version ${(conv.messages.find((m) => m.id === live.messageId)?.versions.length ?? 0) + 1}`
+      : `${liveBrain} is replying`;
+  const notice = chat.notice;
   const panel = (
     <SettingsPanel
       conv={conv}
@@ -101,7 +113,7 @@ export function ChatView({ id }: { id: string }) {
         <ChatHeader
           conv={conv}
           onRenamed={chat.replaceConversation}
-          onOpenPayload={() => setPayloadOpen(true)}
+          onOpenPayload={() => setPayload({ kind: "turn" })}
           settingsOpen={settingsOpen}
           onToggleSettings={() => toggleSettings()}
         />
@@ -109,14 +121,18 @@ export function ChatView({ id }: { id: string }) {
           conv={conv}
           chat={chat}
           onRetry={() => void chat.send("")}
+          onPreviewRegenerate={previewRegenerate}
           empty={<EmptyConversation name={brain.name} color={brain.color} systemPrompt={brain.systemPrompt} onEdit={() => toggleSettings(true)} />}
         />
-        {chat.sendError && (
+        {notice && (
           <div className="mx-auto w-full max-w-3xl px-4 pb-2 sm:px-6">
-            <Notice tone="error">
+            <Notice tone={notice.tone}>
               <div className="flex items-start gap-2">
-                <span className="flex-1">{chat.sendError}</span>
-                <button type="button" onClick={chat.dismissSendError} aria-label="Dismiss" className="-m-0.5 rounded p-0.5 text-red-200/70 hover:text-red-100">
+                <div className="flex-1">
+                  <p className={notice.tone === "info" ? "text-fg" : undefined}>{notice.message}</p>
+                  {notice.note && <p className="mt-0.5 text-faint">{notice.note}</p>}
+                </div>
+                <button type="button" onClick={chat.dismissNotice} aria-label="Dismiss" className="-m-0.5 rounded p-0.5 opacity-70 hover:opacity-100">
                   <X aria-hidden className="size-3.5" />
                 </button>
               </div>
@@ -127,12 +143,15 @@ export function ChatView({ id }: { id: string }) {
           value={draft}
           onChange={(v) => {
             setDraft(v);
-            if (chat.sendError) chat.dismissSendError();
+            if (chat.notice) chat.dismissNotice();
           }}
           onSend={(b) => void send(b)}
           brains={conv.brains}
           defaultBrainId={conv.defaultBrainId}
           busy={chat.busy}
+          status={status}
+          onStop={() => void chat.stop()}
+          stopping={chat.stopping}
           autoFocus
         />
       </div>
@@ -151,7 +170,14 @@ export function ChatView({ id }: { id: string }) {
           </div>
         ))}
 
-      {payloadOpen && <PayloadDialog conversationId={conv.id} brain={brain} draft={draft} onClose={() => setPayloadOpen(false)} />}
+      {payload && (
+        <PayloadDialog
+          conversationId={conv.id}
+          brain={payload.kind === "regenerate" ? brainOf(payload.messageId) : brain}
+          request={payload.kind === "regenerate" ? payload : { kind: "turn", draft }}
+          onClose={() => setPayload(null)}
+        />
+      )}
     </div>
   );
 }

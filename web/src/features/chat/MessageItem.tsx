@@ -1,165 +1,264 @@
-import { Check, Copy } from "lucide-react";
-import { memo, useState, type ReactNode } from "react";
+import { Pencil, RefreshCw, Trash2 } from "lucide-react";
+import { memo, useEffect, useState } from "react";
 import type { Brain, LedgerMessage, MessageVersion } from "../../api/types.ts";
 import { Markdown } from "../../components/Markdown.tsx";
-import { copyText } from "../../lib/clipboard.ts";
 import { cx } from "../../lib/cx.ts";
-import { activeVersion, clockTime, formatUsd, fullTime } from "../../lib/format.ts";
-import { BrainBadge } from "./BrainBadge.tsx";
+import { activeVersion, clockTime, fullTime } from "../../lib/format.ts";
+import { LiveReply } from "./LiveReply.tsx";
+import { MessageEditor } from "./MessageEditor.tsx";
+import { BrainMessageFrame, PlayerBubble, SteerNote } from "./MessageFrame.tsx";
+import { CopyAction, DeleteConfirm, IconAction, MessageFooter, VersionMeta, VersionPager } from "./MessageFooter.tsx";
 import { Reasoning } from "./Reasoning.tsx";
+import { SteerBox } from "./SteerBox.tsx";
+import type { LiveReply as Live, MessageActions } from "./useChat.ts";
+
+export { BrainMessageFrame, PlayerBubble } from "./MessageFrame.tsx";
+
+/** Said in place when an action meets a reply in progress (the server would answer 409). */
+const BUSY_HINT = "A reply is being written. Change messages once it's done, or stop it.";
+
+type Mode = "view" | "edit" | "delete" | "steer";
 
 /**
- * One ledger message, showing its active version. The layout has fixed slots so later tickets add to it
- * rather than rewrite it:
- *   header  author badge (T04: one color per brain) and time
- *   body    rendered Markdown (T03: swapped for a raw-Markdown textarea while editing)
- *   footer  actions and meta (T03: edit, delete, regenerate with a steer, the ‹ 2/3 › version pager)
+ * One ledger message, showing its active version, with its actions:
+ *   any message   edit (raw Markdown in place), delete (confirmed inline), copy
+ *   brain message the ‹ 2/3 › pager when it has versions, and the steer behind the version shown
+ *   last reply    Regenerate…, with an optional steer; the new version streams into this same slot (`live`)
+ * Actions show on hover or keyboard focus, and stay shown on the last message. During a reply they explain
+ * why they can't run instead of failing with the server's 409.
  */
-export const MessageItem = memo(function MessageItem({ message, brain, isLast }: { message: LedgerMessage; brain?: Brain; isLast: boolean }) {
+export const MessageItem = memo(function MessageItem({
+  message,
+  brain,
+  isLast,
+  canRegenerate,
+  live,
+  busy,
+  actions,
+  onPreviewRegenerate,
+  onDismissLive,
+}: {
+  message: LedgerMessage;
+  brain?: Brain;
+  /** The last thing in the scrollback: its footer stays shown. */
+  isLast: boolean;
+  /** The last ledger message, a brain's text: it can be regenerated. */
+  canRegenerate: boolean;
+  /** A regenerate of this message, streaming (or failed) in its place. */
+  live?: Live;
+  busy: boolean;
+  actions: MessageActions;
+  onPreviewRegenerate(messageId: string, steer: string): void;
+  onDismissLive(): void;
+}) {
   const v = activeVersion(message);
-  if (message.author.type === "player") {
+  const [mode, setMode] = useState<Mode>("view");
+  const [steer, setSteer] = useState("");
+  const [steerError, setSteerError] = useState<string | null>(null);
+  const [regenerating, setRegenerating] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [hint, setHint] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!hint) return;
+    const t = setTimeout(() => setHint(null), 6000);
+    return () => clearTimeout(t);
+  }, [hint]);
+  useEffect(() => {
+    if (!busy) setHint((h) => (h === BUSY_HINT ? null : h));
+  }, [busy]);
+  // Only the last message keeps a steer box (a turn may have been sent from another tab meanwhile).
+  useEffect(() => {
+    if (!canRegenerate) setMode((m) => (m === "steer" ? "view" : m));
+  }, [canRegenerate]);
+
+  if (live) {
     return (
-      <PlayerBubble footer={<MessageFooter version={v} actions={<CopyAction text={v.content} />} align="end" />}>
-        <Markdown text={v.content} />
-      </PlayerBubble>
+      <LiveReply
+        live={live}
+        brain={brain}
+        slot={{ nextVersion: message.versions.length + 1, fromVersion: live.steer ? message.activeVersion + 1 : null }}
+        onRetry={() => void actions.regenerate(message.id, live.steer ?? "")}
+        onDismiss={onDismissLive}
+      />
     );
   }
+
+  const unlessBusy = (fn: () => void) => () => (busy ? setHint(BUSY_HINT) : fn());
+  const editor = (compact?: boolean) => (
+    <MessageEditor
+      initial={v.content}
+      busy={busy}
+      compact={compact}
+      versionNote={message.versions.length > 1 ? `Editing version ${message.activeVersion + 1} of ${message.versions.length}` : undefined}
+      onCancel={() => setMode("view")}
+      onSave={async (content) => {
+        const problem = await actions.edit(message.id, content);
+        if (!problem) setMode("view");
+        return problem;
+      }}
+    />
+  );
+  const remove = async () => {
+    setPending(true);
+    const problem = await actions.remove(message.id);
+    if (!problem) return; // gone from the list
+    setPending(false);
+    setMode("view");
+    setHint(problem);
+  };
+  const pinned = isLast || mode === "delete" || mode === "steer";
+  const hintLine = hint && (
+    <p role="status" className={cx("text-[12.5px] leading-5 text-amber-200/85", message.author.type === "player" ? "mt-7 text-right" : "mt-1")}>
+      {hint}
+    </p>
+  );
+
+  if (message.author.type === "player") {
+    return (
+      <div>
+        {mode === "edit" ? (
+          <div className="flex justify-end">{editor(true)}</div>
+        ) : (
+          <PlayerBubble
+            footer={
+              <MessageFooter align="end" pinned={mode === "delete"}>
+                {mode === "delete" ? (
+                  <DeleteConfirm versions={1} pending={pending} onConfirm={() => void remove()} onCancel={() => setMode("view")} />
+                ) : (
+                  <>
+                    <CopyAction text={v.content} />
+                    <IconAction label="Edit" onClick={() => setMode("edit")}>
+                      <Pencil aria-hidden className="size-3.5" />
+                    </IconAction>
+                    <IconAction label="Delete" blocked={busy} onClick={unlessBusy(() => setMode("delete"))}>
+                      <Trash2 aria-hidden className="size-3.5" />
+                    </IconAction>
+                    {v.edited && <span className="px-1">edited</span>}
+                    <time dateTime={v.createdAt} title={fullTime(v.createdAt)} className="px-1 tabular-nums">
+                      {clockTime(v.createdAt)}
+                    </time>
+                  </>
+                )}
+              </MessageFooter>
+            }
+          >
+            <Markdown text={v.content} />
+          </PlayerBubble>
+        )}
+        {hintLine}
+      </div>
+    );
+  }
+
+  const count = message.versions.length;
+  const regenerate = async () => {
+    if (regenerating) return;
+    if (busy) return setSteerError(BUSY_HINT);
+    setSteerError(null);
+    setRegenerating(true);
+    const problem = await actions.regenerate(message.id, steer);
+    setRegenerating(false);
+    if (problem) return setSteerError(problem); // refused up front: the box stays open with the steer
+    setMode("view");
+    setSteer("");
+  };
+
   return (
-    <BrainMessageFrame
-      name={brain?.name ?? "Unknown brain"}
-      color={brain?.color ?? "#9aa3b0"}
-      time={v.createdAt}
-      reasoning={v.reasoning ? <Reasoning text={v.reasoning} tokens={v.usage?.reasoningTokens} /> : null}
-      footer={<MessageFooter version={v} actions={<CopyAction text={v.content} />} meta={<UsageMeta version={v} />} pinned={isLast} />}
-    >
-      {v.content.trim() ? (
-        <>
-          <Markdown text={v.content} />
-          {v.finishReason === "length" && <CutOffNote />}
-        </>
-      ) : (
-        <EmptyReply version={v} />
+    <>
+      <BrainMessageFrame
+        name={brain?.name ?? "Unknown brain"}
+        color={brain?.color ?? "#9aa3b0"}
+        time={v.createdAt}
+        origin={count > 1 ? <SteerNote steer={v.steer} fromVersion={v.steeredFrom !== undefined ? v.steeredFrom + 1 : null} reroll={message.activeVersion > 0 && v.steer === undefined} /> : null}
+        reasoning={v.reasoning ? <Reasoning text={v.reasoning} tokens={v.usage?.reasoningTokens} /> : null}
+        footer={
+          mode === "edit" ? null : (
+            <MessageFooter
+              pinned={pinned}
+              pager={
+                count > 1 ? (
+                  <VersionPager
+                    index={message.activeVersion}
+                    count={count}
+                    pending={pending}
+                    blocked={busy}
+                    onGo={async (n) => {
+                      if (busy) return setHint(BUSY_HINT);
+                      setPending(true);
+                      const problem = await actions.selectVersion(message.id, n);
+                      setPending(false);
+                      if (problem) setHint(problem);
+                    }}
+                  />
+                ) : null
+              }
+            >
+              {mode === "delete" ? (
+                <DeleteConfirm versions={count} pending={pending} onConfirm={() => void remove()} onCancel={() => setMode("view")} />
+              ) : (
+                <>
+                  {canRegenerate && !busy && (
+                    <button
+                      type="button"
+                      aria-expanded={mode === "steer"}
+                      onClick={() => setMode((m) => (m === "steer" ? "view" : "steer"))}
+                      title="Write this reply again, optionally with a steer"
+                      className={cx(
+                        "mr-0.5 inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] transition-colors",
+                        mode === "steer" ? "bg-hover text-fg" : "text-muted hover:bg-hover hover:text-fg",
+                      )}
+                    >
+                      <RefreshCw aria-hidden className="size-3.5" /> Regenerate
+                    </button>
+                  )}
+                  <CopyAction text={v.content} />
+                  <IconAction label="Edit" onClick={() => setMode("edit")}>
+                    <Pencil aria-hidden className="size-3.5" />
+                  </IconAction>
+                  <IconAction label="Delete" blocked={busy} onClick={unlessBusy(() => setMode("delete"))}>
+                    <Trash2 aria-hidden className="size-3.5" />
+                  </IconAction>
+                  <VersionMeta version={v} />
+                </>
+              )}
+            </MessageFooter>
+          )
+        }
+      >
+        {mode === "edit" ? editor() : <BrainBody version={v} />}
+      </BrainMessageFrame>
+      {hintLine}
+      {mode === "steer" && canRegenerate && (
+        <SteerBox
+          value={steer}
+          onChange={(s) => {
+            setSteer(s);
+            setSteerError(null);
+          }}
+          onSubmit={() => void regenerate()}
+          onCancel={() => {
+            setMode("view");
+            setSteerError(null);
+          }}
+          onPreview={() => onPreviewRegenerate(message.id, steer)}
+          error={steerError}
+          nextVersion={count + 1}
+          fromVersion={count > 1 ? message.activeVersion + 1 : null}
+          pending={regenerating}
+        />
       )}
-    </BrainMessageFrame>
+    </>
   );
 });
 
-/** The player's message: a quiet bubble on the right. Its footer floats in the gap below, shown on hover. */
-export function PlayerBubble({ children, footer, pending }: { children: ReactNode; footer?: ReactNode; pending?: boolean }) {
+function BrainBody({ version: v }: { version: MessageVersion }) {
+  if (!v.content.trim()) return <EmptyReply version={v} />;
   return (
-    <div className="group relative flex flex-col items-end">
-      <div
-        className={cx(
-          "max-w-[min(85%,40rem)] rounded-2xl rounded-br-md border border-line bg-raised px-4 py-2.5 [&_.md]:text-[15px]",
-          pending && "opacity-60",
-        )}
-      >
-        {children}
-      </div>
-      {footer && <div className="absolute top-full right-0">{footer}</div>}
-    </div>
-  );
-}
-
-/** A brain's message: badge on top, then the body at full column width. Live replies use the same frame. */
-export function BrainMessageFrame({
-  name,
-  color,
-  time,
-  reasoning,
-  children,
-  footer,
-}: {
-  name: string;
-  color: string;
-  time?: string;
-  reasoning?: ReactNode;
-  children: ReactNode;
-  footer?: ReactNode;
-}) {
-  return (
-    <div className="group">
-      <div className="mb-2 flex items-center gap-2">
-        <BrainBadge name={name} color={color} />
-        {time && (
-          <time dateTime={time} title={fullTime(time)} className="text-[11.5px] text-faint tabular-nums">
-            {clockTime(time)}
-          </time>
-        )}
-      </div>
-      {reasoning}
-      {children}
-      {footer}
-    </div>
-  );
-}
-
-function MessageFooter({
-  version,
-  actions,
-  meta,
-  align = "start",
-  pinned,
-}: {
-  version: MessageVersion;
-  actions: ReactNode;
-  meta?: ReactNode;
-  align?: "start" | "end";
-  pinned?: boolean;
-}) {
-  return (
-    <div
-      className={cx(
-        "flex items-center gap-1 text-[11.5px] text-faint transition-opacity",
-        align === "end" ? "mt-0.5 h-6" : "mt-1.5 h-7",
-        align === "end" && "flex-row-reverse",
-        pinned ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100",
-      )}
-    >
-      {actions}
-      {version.edited && <span className="px-1">edited</span>}
-      {meta}
-      {align === "end" && (
-        <time dateTime={version.createdAt} title={fullTime(version.createdAt)} className="px-1 tabular-nums">
-          {clockTime(version.createdAt)}
-        </time>
-      )}
-    </div>
-  );
-}
-
-function CopyAction({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      type="button"
-      title="Copy the Markdown"
-      aria-label={copied ? "Copied" : "Copy the Markdown"}
-      onClick={async () => {
-        if (await copyText(text)) {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        }
-      }}
-      className="grid size-7 place-items-center rounded-md text-faint transition-colors hover:bg-hover hover:text-fg"
-    >
-      {copied ? <Check aria-hidden className="size-3.5" /> : <Copy aria-hidden className="size-3.5" />}
-    </button>
-  );
-}
-
-function UsageMeta({ version: v }: { version: MessageVersion }) {
-  if (!v.usage && v.costUsd === undefined) return null;
-  const bits: string[] = [];
-  if (v.usage) bits.push(`${v.usage.promptTokens} in`, `${v.usage.completionTokens} out`);
-  if (v.costUsd !== undefined) bits.push(formatUsd(v.costUsd));
-  const title = [v.model, v.finishReason && `finish: ${v.finishReason}`, v.usage?.reasoningTokens && `${v.usage.reasoningTokens} reasoning tokens`]
-    .filter(Boolean)
-    .join(" · ");
-  return (
-    <span className="px-1 tabular-nums" title={title || undefined}>
-      {bits.join(" · ")}
-    </span>
+    <>
+      <Markdown text={v.content} />
+      {v.finishReason === "length" && <CutOffNote />}
+    </>
   );
 }
 

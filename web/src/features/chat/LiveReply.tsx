@@ -2,18 +2,33 @@ import { RotateCw, X } from "lucide-react";
 import type { Brain } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Markdown } from "../../components/Markdown.tsx";
-import { BrainMessageFrame } from "./MessageItem.tsx";
+import { BrainMessageFrame, SteerNote } from "./MessageFrame.tsx";
 import { Reasoning } from "./Reasoning.tsx";
 import type { LiveReply as Live } from "./useChat.ts";
 
 /**
  * The reply being generated, in the same frame a saved brain message uses, so nothing jumps when it is saved.
  * Waiting: three dots. Reasoning: a collapsed "Thinking…". Writing: Markdown, token by token, with a caret.
- * Failed: the partial text (not saved), the server's error, and Retry (a turn with no new message).
+ * Failed: the partial text (not saved), the server's error, Retry and Dismiss.
+ *
+ * A regenerate renders in the regenerated message's own slot (`slot`): its header says which version is
+ * being written and with what steer, and a failure leaves the message's saved versions as they were.
  */
-export function LiveReply({ live, brain, onRetry, onDismiss }: { live: Live; brain?: Brain; onRetry(): void; onDismiss(): void }) {
+export function LiveReply({
+  live,
+  brain,
+  slot,
+  onRetry,
+  onDismiss,
+}: {
+  live: Live;
+  brain?: Brain;
+  slot?: { nextVersion: number; fromVersion: number | null };
+  onRetry(): void;
+  onDismiss(): void;
+}) {
   const failed = live.phase === "failed";
-  if (!brain && !live.brainName && !failed) {
+  if (!slot && !brain && !live.brainName && !failed) {
     // Re-attached (generation.follow) before Venice accepted the request: who will answer isn't known yet.
     return (
       <div aria-live="polite" aria-busy className="flex items-center gap-3 text-[13px] text-faint">
@@ -22,12 +37,20 @@ export function LiveReply({ live, brain, onRetry, onDismiss }: { live: Live; bra
       </div>
     );
   }
+  const status = slot ? (
+    <span className={failed ? "shrink-0 text-[11.5px] text-red-200/80" : "shimmer shrink-0 text-[11.5px] font-medium"}>
+      {failed ? `version ${slot.nextVersion} wasn't saved` : `writing version ${slot.nextVersion}…`}
+    </span>
+  ) : undefined;
   return (
     <div aria-live="polite" aria-busy={!failed}>
       <BrainMessageFrame
         name={brain?.name ?? live.brainName ?? "Reply"}
         color={brain?.color ?? "#9aa3b0"}
+        status={status}
+        origin={slot && live.steer ? <SteerNote steer={live.steer} fromVersion={slot.fromVersion} /> : null}
         reasoning={live.reasoning ? <Reasoning text={live.reasoning} live={live.phase === "reasoning"} /> : null}
+        footer={failed ? null : FOOTER_SPACE}
       >
         {live.content ? (
           <div className={failed ? "opacity-55" : "ss-caret"}>
@@ -47,7 +70,7 @@ export function LiveReply({ live, brain, onRetry, onDismiss }: { live: Live; bra
                 <RotateCw aria-hidden className="size-3.5" /> Retry
               </Button>
               <Button size="sm" variant="ghost" onClick={onDismiss}>
-                <X aria-hidden className="size-3.5" /> Dismiss
+                <X aria-hidden className="size-3.5" /> {slot ? "Show the saved version" : "Dismiss"}
               </Button>
             </div>
           </div>
@@ -56,6 +79,9 @@ export function LiveReply({ live, brain, onRetry, onDismiss }: { live: Live; bra
     </div>
   );
 }
+
+/** As tall as a saved message's footer, so nothing jumps when the reply is saved. */
+const FOOTER_SPACE = <div aria-hidden className="mt-1.5 h-7" />;
 
 function TypingDots() {
   return (

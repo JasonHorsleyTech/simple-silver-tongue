@@ -1,6 +1,6 @@
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, Square } from "lucide-react";
 import { useEffect, useRef, type KeyboardEvent } from "react";
-import type { Brain } from "../../api/types.ts";
+import { STOP_BILL_NOTE, type Brain } from "../../api/types.ts";
 import { Spinner } from "../../components/Spinner.tsx";
 import { cx } from "../../lib/cx.ts";
 import { useAutosize } from "../../lib/useAutosize.ts";
@@ -12,6 +12,9 @@ import { useAutosize } from "../../lib/useAutosize.ts";
  *
  * Send targets: the default brain gets the big button (and Enter). T04 adds one small button per other
  * brain to `brains`; with one brain there is only the big one.
+ *
+ * While a reply is being written (sent here, regenerated, or followed from the CLI) the big button is Stop.
+ * Its caption and tooltip are the server's own sentence: a stop saves waiting, not money.
  */
 export function Composer({
   value,
@@ -20,6 +23,9 @@ export function Composer({
   brains,
   defaultBrainId,
   busy,
+  status,
+  onStop,
+  stopping,
   autoFocus,
 }: {
   value: string;
@@ -28,6 +34,10 @@ export function Composer({
   brains: Brain[];
   defaultBrainId: string;
   busy: boolean;
+  /** What is being written, while busy ("Assistant is writing version 3"). */
+  status?: string;
+  onStop(): void;
+  stopping: boolean;
   autoFocus?: boolean;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -74,9 +84,11 @@ export function Composer({
           className="block max-h-[40vh] w-full resize-none bg-transparent px-4 pt-3.5 pb-1 text-[15px] leading-[1.6] text-fg outline-none placeholder:text-faint"
         />
         <div className="flex items-center gap-2 px-2.5 pt-1 pb-2.5">
-          <p className="hidden min-w-0 flex-1 truncate pl-1.5 text-[11.5px] text-faint sm:block">
+          <p className="hidden min-w-0 flex-1 truncate pl-1.5 text-[11.5px] text-faint sm:block" title={busy ? STOP_BILL_NOTE : undefined}>
             {busy ? (
-              `${main?.name ?? "The brain"} is replying…`
+              <>
+                {status ?? `${main?.name ?? "The brain"} is replying`} · <span className="text-muted">{STOP_CAPTION}</span>
+              </>
             ) : (
               <>
                 <Kbd>Enter</Kbd> to send · <Kbd>Shift</Kbd> <Kbd>Enter</Kbd> for a new line · Markdown works
@@ -95,28 +107,45 @@ export function Composer({
                 {b.name}
               </button>
             ))}
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => onSend()}
-              title={`Send to ${main?.name ?? "the brain"} (Enter)`}
-              aria-label={`Send to ${main?.name ?? "the brain"}`}
-              className={cx(
-                "inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[13px] font-medium transition-colors",
-                busy
-                  ? "cursor-wait bg-hover text-faint"
-                  : "bg-silver text-canvas shadow-[inset_0_1px_0_rgb(255_255_255/0.55)] hover:bg-silver-hi",
-              )}
-            >
-              {busy ? <Spinner className="size-3.5" /> : <ArrowUp aria-hidden className="size-4" strokeWidth={2.25} />}
-              Send
-            </button>
+            {busy ? (
+              <button
+                type="button"
+                onClick={onStop}
+                disabled={stopping}
+                title={STOP_BILL_NOTE}
+                aria-label="Stop the reply"
+                aria-describedby="stop-note"
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line-strong bg-hover px-3 text-[13px] font-medium text-fg transition-colors hover:border-[#3a4250] hover:bg-[#232934] disabled:cursor-wait disabled:text-muted"
+              >
+                {stopping ? <Spinner className="size-3.5" /> : <Square aria-hidden className="size-3 fill-current" />}
+                {stopping ? "Stopping…" : "Stop"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onSend()}
+                title={`Send to ${main?.name ?? "the brain"} (Enter)`}
+                aria-label={`Send to ${main?.name ?? "the brain"}`}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-silver px-3 text-[13px] font-medium text-canvas shadow-[inset_0_1px_0_rgb(255_255_255/0.55)] transition-colors hover:bg-silver-hi"
+              >
+                <ArrowUp aria-hidden className="size-4" strokeWidth={2.25} />
+                Send
+              </button>
+            )}
+            {busy && (
+              <span id="stop-note" className="sr-only">
+                {STOP_BILL_NOTE}
+              </span>
+            )}
           </div>
         </div>
       </div>
     </div>
   );
 }
+
+/** The first clause of the server's sentence, for the caption; the whole sentence is the tooltip. */
+const STOP_CAPTION = STOP_BILL_NOTE.split(":")[0];
 
 function Kbd({ children }: { children: string }) {
   return <kbd className="rounded border border-line-strong bg-panel px-1 py-px font-sans text-[10.5px] text-muted">{children}</kbd>;
