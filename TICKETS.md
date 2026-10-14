@@ -357,7 +357,7 @@ Any brain can be sent a roll, image brains included (Jason: "sure, why not"). It
 
 ---
 
-## T10: Presets · `qa`
+## T10: Presets · `triage`
 
 Jason, 2026-10-14: typing in a campaign's brains by hand is the slow part. A **preset** is a ready-made kit of brains with good default instructions and no world: no World Bible, no story. You can start a new conversation from one ("Chinatown, film noir": pick the tabletop preset, write the World Bible, play). You can also add any one of a preset's brains to a conversation you already have.
 
