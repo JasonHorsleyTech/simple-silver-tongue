@@ -2,6 +2,7 @@ import { z } from "zod";
 import { formatMessage, type MessageView } from "../conversations/format.ts";
 import { activeVersion } from "../conversations/prompt.ts";
 import { assertLedgerIdle, loadConversation, mutateConversation } from "../conversations/store.ts";
+import { addSpend } from "../conversations/turn.ts";
 import type { Conversation, LedgerMessage } from "../conversations/types.ts";
 import { CommandError, notFound } from "../lib/errors.ts";
 import { nowIso } from "../lib/ids.ts";
@@ -83,7 +84,8 @@ is being generated. Image messages (their prompt) can be edited from T05.`,
 export const messageDelete = command({
   name: "message.delete",
   description: `Delete a message, with all its versions: any message, yours or a brain's, at any depth.
-From the next request on, it is as if it was never there. Refused while a reply is being generated.`,
+From the next request on, it is as if it was never there. What it cost stays in the conversation's total.
+Refused while a reply is being generated.`,
   args: z.object(target),
   examples: ["./ss message.delete --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a"],
   handler: async (args, ctx) => {
@@ -92,6 +94,7 @@ From the next request on, it is as if it was never there. Refused while a reply 
       assertLedgerIdle(vault, c.id);
       const m = findMessage(c, args.message);
       if (m.versions.some((v) => v.image)) throw new CommandError(400, "not_supported", `${m.id} has images; deleting those arrives with image brains (T05).`);
+      addSpend(c); // pin the running total first: the money is spent, even when the message goes (T03 QA-2)
       c.messages.splice(c.messages.indexOf(m), 1);
     });
     return { conversationId: conv.id, deleted: args.message, messageCount: conv.messages.length };

@@ -60,7 +60,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T03: Steered regeneration, versions, edit and delete (CP2) · `triage`
+## T03: Steered regeneration, versions, edit and delete (CP2) · `frontend`
 
 **Engineer scope**
 - `message.regenerate --message <id> [--steer "..."]`: only for the last ledger message, and only when a brain wrote it. Uses the steer template, appended last. Produces a new version and makes it active.
@@ -82,6 +82,11 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
   - `message.select-version {conversation, message, version}`: **`version` is 1-based** (what the pager shows), while the document's `activeVersion` is 0-based. Each version has `steer` and `steeredFrom` (0-based index of the version it revised) for the pager: "steer: … (on version 2)".
   - `message.edit {conversation, message, content}` (blank refused), `message.delete {conversation, message}`. Both, and select-version, are a **409 while a reply is being generated**: disable them during a reply, or show the 409 message.
   - `generation.stop {conversation}` → `{stopped, message, error?}`, returning once the stopped reply is saved: a Stop button for the live reply. What had arrived is kept as the message (turn) or a new version (regenerate), with `stopped: true` (show "stopped"). When nothing had arrived, the stream ends with an error of code `stopped` (HTTP 499 if it ended before the first event): show its message calmly, not as a failure. For a turn stopped before its `message` event, the player message wasn't saved: put the text back in the composer, as for any failed send.
+- **From T03 triage:**
+  - **The Stop button's copy must be honest: a stop saves waiting, not money.** Venice still writes and bills the whole reply. `generation.stop` now returns `note` (`STOP_BILL_NOTE`: "Stopping saves waiting, not money: Venice still writes and bills the whole reply, so its cost is added to the conversation once Venice reports it."). Show it near the button (tooltip or caption) and with the stop result, rather than writing your own wording.
+  - A stopped version gets its `usage` and `costUsd` a little *after* the stop, from the server's drain (live: seconds). Until then, show "stopped · cost pending" rather than nothing. The header total is `conversation.spentUsd`, and `conversationCost` in `web/src/lib/format.ts` already reads it. A stop doesn't send an event when the cost lands, so re-fetch `conversation.get` a few seconds after a stop, or on the next focus or load.
+  - `conversation.update` now refuses a template without its placeholder (400 `bad_args`, with the message on `templates.<name>`): show it inline in the templates editor. Each template's help line says which placeholder it needs.
+  - The running total only grows: deleting a message keeps its cost. If the delete confirmation mentions cost, it shouldn't promise a refund.
 
 **Deferred in:** *(none yet)*
 
@@ -97,6 +102,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 - `message.add --as player|<brain>`: hand-authored messages, e.g. the GM's opening line.
 - Regenerate always uses the message's own brain. (Done in T03: `planRegenerate` takes the brain from the message's author; there is no `--brain` on `message.regenerate`.)
 - `--brain` accepts a name or an id everywhere.
+- **From T03 triage:** "delete a brain, but not while a generation for it runs" must check the lock *inside* `mutateConversation` (as `assertLedgerIdle` does), and every generating command reads the conversation through `gen.load()` after `beginGeneration`, never with a bare `loadConversation` (design.md, "The lock and the read must agree"). Otherwise a delete can slip in between the lock and the read (T03 QA-1).
 
 **Acceptance (terminal, mock, then one live pass)**
 - A D&D setup: GM (default) with the system prompt "You are the GM…", a World Bible setup message, a hand-authored GM opener, and a Dice Master with a reminder.
@@ -160,4 +166,5 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 **Frontend scope:** The same playthrough in Chrome, plus visual polish, empty states, keyboard niceties and error toasts. Screenshots go in `reports/screens/`.
 
-**Deferred in:** *(none yet)*
+**Deferred in:**
+- CLI: `./ss generation.follow --json | head -3` (any streaming command piped into something that closes early) crashes with an unhandled `EPIPE` stack trace. It is harmless, carries no user content and predates T03. Exit quietly on `EPIPE` instead (T03 QA, "Outside this ticket").

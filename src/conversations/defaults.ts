@@ -53,5 +53,6 @@ export function newConversation(opts: { title: string; systemPrompt: string; tex
     brains: [brain],
     defaultBrainId: brain.id,
     messages: [],
+    spentUsd: 0,
   };
 }

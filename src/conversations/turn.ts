@@ -84,8 +84,9 @@ export function planRegenerate(conv: Conversation, opts: { message?: string; ste
     ? buildRequest(conv, brain.id, { model, steer })
     : buildRequest(conv, brain.id, { model, excludeFromMessageId: message.id });
   const review = reviewBody(brain, body, model);
-  if (review.refusal && !steer) {
-    // Only a plain re-roll can hit this: the message before it is the same brain's own reply.
+  if (review.refusal && !steer && body.messages.at(-1)?.role === "assistant") {
+    // A plain re-roll whose message comes right after the same brain's own reply. When nothing comes before
+    // it at all, nothingToAnswer's "only its system prompt" already says why (T03 QA-4).
     review.refusal = `Without ${message.id}, the request would end with ${brain.name}'s own earlier reply, so a plain re-roll has nothing to answer. Give it a steer, or edit the message instead.`;
   }
   const plan: RegeneratePlan = { brain, message, body, ...review };
@@ -135,50 +136,75 @@ export type Reply = {
   costUsd?: number;
   /** generation.stop cut it short: this is what had arrived. */
   stopped?: true;
+  /**
+   * With `stopped`: the unread rest of the Venice stream. Venice finishes and bills a stopped reply anyway
+   * (T03 QA-2), so the caller drains it for the usage and cost (drainStopped in commands/chat.ts).
+   */
+  rest?: AsyncIterable<ChatEvent>;
 };
 
-/** generation.stop aborts the upstream request with this error as the reason. */
-export const isStopped = (err: unknown) => err instanceof CommandError && err.code === "stopped";
+const STOP = Symbol("stop");
+
+/** Resolves with STOP once the signal aborts. */
+export function untilAborted(signal: AbortSignal): Promise<typeof STOP> {
+  return new Promise((resolve) => signal.addEventListener("abort", () => resolve(STOP), { once: true }));
+}
 
 /**
  * Relay a chat stream as NDJSON events (reasoning, delta, tool_args) while collecting the whole reply,
- * which is the generator's return value: `const reply = yield* relayReply(events)`. A stop
- * (generation.stop) is not an error here: the reply so far comes back with `stopped: true`.
+ * which is the generator's return value: `const reply = yield* relayReply(events, stop)`. A stop
+ * (generation.stop) is not an error here: the relay ends at once and the reply so far comes back with
+ * `stopped: true`, plus the unread `rest` of the stream. The Venice request itself is left running.
  */
-export async function* relayReply(events: AsyncIterable<ChatEvent>): AsyncGenerator<StreamEvent, Reply> {
+export async function* relayReply(events: AsyncIterable<ChatEvent>, stop?: AbortSignal): AsyncGenerator<StreamEvent, Reply> {
   const reply: Reply = { content: "", reasoning: "", toolArgs: "" };
-  try {
-    yield* collect(events, reply);
-  } catch (err) {
-    if (!isStopped(err)) throw err;
+  const it = events[Symbol.asyncIterator]();
+  const stopped = stop && untilAborted(stop);
+  const halt = (pending?: Promise<IteratorResult<ChatEvent>>) => {
     reply.stopped = true;
+    reply.rest = rest(it, pending);
+    return reply;
+  };
+  for (;;) {
+    if (stop?.aborted) return halt();
+    const next = it.next();
+    const r = stopped ? await Promise.race([stopped, next]) : await next;
+    if (r === STOP) return halt(next);
+    if (r.done) return reply;
+    yield* handle(r.value, reply);
   }
-  return reply;
 }
 
-async function* collect(events: AsyncIterable<ChatEvent>, reply: Reply): AsyncGenerator<StreamEvent, void> {
-  for await (const ev of events) {
-    switch (ev.type) {
-      case "reasoning":
-        reply.reasoning += ev.delta;
-        yield { type: "reasoning", delta: ev.delta };
-        break;
-      case "content":
-        reply.content += ev.delta;
-        yield { type: "delta", delta: ev.delta };
-        break;
-      case "tool_call":
-        reply.toolArgs += ev.argsDelta;
-        if (ev.argsDelta) yield { type: "tool_args", delta: ev.argsDelta };
-        break;
-      case "finish":
-        reply.finishReason = ev.reason;
-        break;
-      case "usage":
-        reply.usage = ev.usage;
-        if (ev.costUsd !== undefined) reply.costUsd = ev.costUsd;
-        break;
-    }
+/** The stream from where the relay left it, starting with the read that was in flight when the stop came. */
+function rest(it: AsyncIterator<ChatEvent>, pending?: Promise<IteratorResult<ChatEvent>>): AsyncIterable<ChatEvent> {
+  pending?.catch(() => {}); // a stream that breaks before the drain starts is not an unhandled rejection
+  return (async function* () {
+    for (let r = await (pending ?? it.next()); !r.done; r = await it.next()) yield r.value;
+  })();
+}
+
+/** One upstream event into the reply, and the NDJSON event the client sees, if any. */
+function* handle(ev: ChatEvent, reply: Reply): Generator<StreamEvent, void> {
+  switch (ev.type) {
+    case "reasoning":
+      reply.reasoning += ev.delta;
+      yield { type: "reasoning", delta: ev.delta };
+      break;
+    case "content":
+      reply.content += ev.delta;
+      yield { type: "delta", delta: ev.delta };
+      break;
+    case "tool_call":
+      reply.toolArgs += ev.argsDelta;
+      if (ev.argsDelta) yield { type: "tool_args", delta: ev.argsDelta };
+      break;
+    case "finish":
+      reply.finishReason = ev.reason;
+      break;
+    case "usage":
+      reply.usage = ev.usage;
+      if (ev.costUsd !== undefined) reply.costUsd = ev.costUsd;
+      break;
   }
 }
 
@@ -193,9 +219,22 @@ export function generatedVersion(reply: Reply, model: string): MessageVersion {
   return v;
 }
 
-/** Total spent on a conversation: every version that was ever generated, active or not. */
+/**
+ * What a conversation has cost so far (T03 QA-2): `spentUsd`, which only ever grows, so deleting a message or
+ * stopping a reply doesn't hide money already spent. Files from before it have no `spentUsd`; for them the
+ * versions still in the ledger are the record.
+ */
 export function totalCost(conv: Conversation): number {
+  if (conv.spentUsd !== undefined) return conv.spentUsd;
   let sum = 0;
   for (const m of conv.messages) for (const v of m.versions) sum += v.costUsd ?? 0;
   return sum;
+}
+
+/**
+ * Add a reply's cost to the running total, inside mutateConversation. Call it before the change that adds or
+ * removes versions: for an older file it first pins the total from the versions as they are.
+ */
+export function addSpend(conv: Conversation, usd = 0): void {
+  conv.spentUsd = totalCost(conv) + usd;
 }

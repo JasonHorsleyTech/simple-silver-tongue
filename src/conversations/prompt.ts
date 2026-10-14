@@ -1,5 +1,5 @@
 import { badRequest, CommandError, notFound } from "../lib/errors.ts";
-import type { Brain, ChatMessage, ChatRequest, Conversation, LedgerMessage } from "./types.ts";
+import type { Brain, ChatMessage, ChatRequest, Conversation, LedgerMessage, Templates } from "./types.ts";
 
 /**
  * Prompt assembly (docs/design.md, "Prompt assembly"). buildRequest is a pure function from the conversation
@@ -27,6 +27,26 @@ type Vars = Partial<Record<"content" | "brain" | "prompt" | "instruction", strin
  */
 export function render(template: string, vars: Vars): string {
   return template.replace(PLACEHOLDER, (whole, key: keyof Vars) => vars[key] ?? whole);
+}
+
+/**
+ * The placeholder each template can't do without: it is where the text goes, so a template without it would
+ * silently leave that text out of the request (T03 QA-3: a blank steer template dropped the steer, and the
+ * request then ended with an empty message after the brain's own reply). conversation.update refuses such a
+ * template, and buildRequest refuses to use one, for files written before that check.
+ */
+const TEMPLATE_SLOTS: Record<keyof Templates, { label: string; placeholder: string; what: string }> = {
+  player: { label: "player", placeholder: "{{content}}", what: "your messages" },
+  otherBrainText: { label: "other-brain text", placeholder: "{{content}}", what: "other brains' replies" },
+  otherBrainImage: { label: "other-brain image", placeholder: "{{prompt}}", what: "other brains' image prompts" },
+  steer: { label: "steer", placeholder: "{{instruction}}", what: "your steer" },
+};
+
+/** Why this template can't be used, or null when it has its placeholder. */
+export function templateProblem(name: keyof Templates, template: string): string | null {
+  const { label, placeholder, what } = TEMPLATE_SLOTS[name];
+  if (template.includes(placeholder)) return null;
+  return `The ${label} template has no ${placeholder}, so ${what} would be left out of the request. Put ${placeholder} back in the template, where the text should go.`;
 }
 
 /** Design hard rule 1: some Venice models inject their own prompt when the system message is missing or empty. */
@@ -71,6 +91,11 @@ export function buildRequest(conv: Conversation, brainId: string, opts: BuildOpt
     throw new CommandError(400, "bad_brain", `Image brain "${brain.name}" has no tool text (tool.name, description, ...).`);
   }
   const t = conv.templates;
+  const frame = (name: keyof Templates, vars: Vars) => {
+    const problem = templateProblem(name, t[name]);
+    if (problem) throw new CommandError(400, "bad_template", problem);
+    return render(t[name], vars);
+  };
 
   // 1. System prompt, verbatim.
   const messages: ChatMessage[] = [{ role: "system", content: brain.systemPrompt }];
@@ -87,7 +112,7 @@ export function buildRequest(conv: Conversation, brainId: string, opts: BuildOpt
     }
     const { content } = activeVersion(m);
     if (m.author.type === "player") {
-      messages.push({ role: "user", content: render(t.player, { content }) });
+      messages.push({ role: "user", content: frame("player", { content }) });
     } else if (m.author.brainId === brain.id) {
       if (m.kind === "text") {
         messages.push({ role: "assistant", content });
@@ -109,8 +134,8 @@ export function buildRequest(conv: Conversation, brainId: string, opts: BuildOpt
         role: "user",
         content:
           m.kind === "text"
-            ? render(t.otherBrainText, { brain: other.name, content })
-            : render(t.otherBrainImage, { brain: other.name, prompt: content }),
+            ? frame("otherBrainText", { brain: other.name, content })
+            : frame("otherBrainImage", { brain: other.name, prompt: content }),
       });
     }
   }
@@ -122,7 +147,7 @@ export function buildRequest(conv: Conversation, brainId: string, opts: BuildOpt
   }
 
   // 5. Steer, last, so everything before it stays a cacheable prefix.
-  if (opts.steer !== undefined) messages.push({ role: "user", content: render(t.steer, { instruction: opts.steer }) });
+  if (opts.steer !== undefined) messages.push({ role: "user", content: frame("steer", { instruction: opts.steer }) });
 
   const body: ChatRequest = {
     model: conv.settings.textModel,

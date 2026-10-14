@@ -6,8 +6,12 @@ export function formatUsd(n: number): string {
   return n >= 0.01 ? `$${n.toFixed(2)}` : `$${Number(n.toPrecision(2))}`;
 }
 
-/** Everything ever spent on a conversation: every generated version, active or not (like the server's totalCost). */
+/**
+ * Everything ever spent on a conversation, like the server's totalCost: its running `spentUsd`, which keeps
+ * deleted messages and stopped replies (T03 QA-2). Older files have none; their versions are the record.
+ */
 export function conversationCost(conv: Conversation): number {
+  if (conv.spentUsd !== undefined) return conv.spentUsd;
   let sum = 0;
   for (const m of conv.messages) for (const v of m.versions) sum += v.costUsd ?? 0;
   return sum;

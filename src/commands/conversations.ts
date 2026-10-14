@@ -10,7 +10,8 @@ import {
   mutateConversation,
 } from "../conversations/store.ts";
 import { lookupModel } from "../conversations/turn.ts";
-import type { Conversation } from "../conversations/types.ts";
+import { templateProblem } from "../conversations/prompt.ts";
+import type { Conversation, Templates } from "../conversations/types.ts";
 import { badRequest } from "../lib/errors.ts";
 import { command } from "../registry.ts";
 
@@ -74,12 +75,19 @@ The text view prints each message's active version; --json gives the complete do
   format: formatConversation,
 });
 
+/** A template must keep the placeholder its text goes into, or that text would silently go missing (T03 QA-3). */
+const template = (name: keyof Templates, describe: string) =>
+  z
+    .string()
+    .refine((s) => templateProblem(name, s) === null, templateProblem(name, "")!)
+    .describe(describe);
+
 const templates = z
   .object({
-    player: z.string().describe("How a brain sees the player's messages. {{content}} is the message"),
-    otherBrainText: z.string().describe("How a brain sees another brain's text. {{brain}} {{content}}"),
-    otherBrainImage: z.string().describe("How a brain sees another brain's image prompt. {{brain}} {{prompt}}"),
-    steer: z.string().describe("How a steer is sent when regenerating. {{instruction}}"),
+    player: template("player", "How a brain sees the player's messages. Must contain {{content}}, the message"),
+    otherBrainText: template("otherBrainText", "How a brain sees another brain's text. {{brain}}, and {{content}} (required)"),
+    otherBrainImage: template("otherBrainImage", "How a brain sees another brain's image prompt. {{brain}}, and {{prompt}} (required)"),
+    steer: template("steer", "How a steer is sent when regenerating. Must contain {{instruction}}, the steer"),
   })
   .partial();
 
@@ -87,7 +95,8 @@ export const conversationUpdate = command({
   name: "conversation.update",
   description: `Change a conversation's title, settings or framing templates. Only the fields you pass change.
 Unset maxTokens or temperature with null: --settings '{"maxTokens": null}'.
-Templates are sent to the models, so they are yours to edit; prompt.preview shows the effect.`,
+Templates are sent to the models, so they are yours to edit; prompt.preview shows the effect. Each one must keep
+its placeholder ({{content}}, {{prompt}} or {{instruction}}), where the text goes.`,
   args: z.object({
     id: conversationId,
     title: title.optional(),

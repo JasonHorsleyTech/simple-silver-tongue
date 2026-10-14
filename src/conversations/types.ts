@@ -20,6 +20,12 @@ export type Conversation = {
   /** Exactly one default brain, by construction: `turn` without --brain talks to it. */
   defaultBrainId: string;
   messages: LedgerMessage[];
+  /**
+   * Everything this conversation has cost, in USD (T03 QA-2). It only grows: each reply's cost is added when
+   * it is saved, a stopped reply's when the drain hears it from Venice, and deleting a message doesn't take
+   * its cost back. Absent in files from before it: totalCost() then sums the versions.
+   */
+  spentUsd?: number;
 };
 
 export type Settings = {
@@ -106,9 +112,13 @@ export type MessageVersion = {
   model?: string;
   /** Generated versions: Venice's finish_reason ("stop", "length" = cut off by max_tokens, "tool_calls"). */
   finishReason?: string;
-  /** Generated versions: cut short by generation.stop. The text is what had arrived; Venice reported no usage or cost. */
+  /**
+   * Generated versions: cut short by generation.stop. The text is what had arrived. Venice finishes and bills
+   * the whole reply anyway, so usage and costUsd arrive a little later, from the drain, and are the whole reply's.
+   */
   stopped?: true;
   usage?: Usage;
+  /** From the final chunk's cost.usd. The conversation's total is spentUsd, not a sum of these. */
   costUsd?: number;
   createdAt: string;
 };

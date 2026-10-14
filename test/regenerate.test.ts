@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import type { ChatRequest, Conversation, LedgerMessage } from "../src/conversations/types.ts";
@@ -43,6 +43,26 @@ describe("steered regeneration, versions, edit and delete: CLI → server → mo
   const post = (cmd: string, body: unknown) =>
     t.app.fetch(new Request(`http://localhost/api/${cmd}`, { method: "POST", headers: { host: "localhost", "content-type": "application/json", cookie: cookie() }, body: JSON.stringify(body) }));
   const lines = async (res: Response) => (await res.text()).trim().split("\n").map((l) => JSON.parse(l));
+  /** Poll until `fn` returns a value: the drain after a stop records its cost a little later. */
+  const until = async <T,>(fn: () => Promise<T | undefined>, what: string, ms = 5000): Promise<T> => {
+    for (const end = Date.now() + ms; Date.now() < end; await new Promise((r) => setTimeout(r, 25))) {
+      const v = await fn();
+      if (v !== undefined) return v;
+    }
+    assert.fail(`timed out waiting for ${what}`);
+  };
+  /** Start a stream, read it until `n` deltas have arrived, then stop it. Returns the whole stream and the stop's result. */
+  const stopAfter = async (cmd: string, args: Record<string, unknown>, n: number) => {
+    const res = await post(cmd, args);
+    assert.equal(res.status, 200);
+    const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+    let text = "";
+    while ((text.match(/"type":"delta"/g) ?? []).length < n) text += (await reader.read()).value ?? "";
+    const stop = (await (await post("generation.stop", args.conversation ? { conversation: args.conversation } : {})).json()) as { stopped: boolean; message: LedgerMessage; note: string };
+    for (let r = await reader.read(); !r.done; r = await reader.read()) text += r.value;
+    return { events: text.trim().split("\n").map((l) => JSON.parse(l)), stop };
+  };
+  const close = (a: number, b: number) => assert.ok(Math.abs(a - b) < 1e-9, `${a} ≈ ${b}`);
 
   test("green, blue, green: each steer is sent once, revises the active version, and leaves no trace in the next prompt", async () => {
     await login();
@@ -194,7 +214,7 @@ describe("steered regeneration, versions, edit and delete: CLI → server → mo
     const saved = (await get(c)).messages[1]!;
     assert.deepEqual(outcome.message, saved, "stop returns once the stopped version is saved");
     const v = saved.versions[1]!;
-    assert.deepEqual([saved.activeVersion, v.stopped, v.steer, v.usage, v.costUsd], [1, true, STEER, undefined, undefined]);
+    assert.deepEqual([saved.activeVersion, v.stopped, v.steer], [1, true, STEER]);
     const streamed = own.filter((e) => e.type === "delta").map((e) => e.delta).join("");
     assert.equal(v.content, streamed, "the partial text is exactly what had streamed");
     assert.ok(v.content.length > 0 && !v.content.includes(MOCK_MARKDOWN.trim().slice(-40)), "cut short");
@@ -213,21 +233,90 @@ describe("steered regeneration, versions, edit and delete: CLI → server → mo
       const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
       let text = "";
       while (!text.includes('"type":"reasoning"')) text += (await reader.read()).value ?? "";
-      const stop = (await (await post("generation.stop", { conversation: c })).json()) as { stopped: boolean; message: unknown; error?: { code: string; message: string } };
+      const stop = (await (await post("generation.stop", { conversation: c })).json()) as { stopped: boolean; message: unknown; error?: { code: string; message: string }; note: string };
       for (let r = await reader.read(); !r.done; r = await reader.read()) text += r.value;
       return { stop, last: JSON.parse(text.trim().split("\n").at(-1)!) };
     };
 
+    const spentBefore = (await get(c)).spentUsd!;
+    const balanceBefore = t.mock.state.balanceUsd;
     let r = await stopAtFirst("turn", { conversation: c, content: "MOCK_SLOW again" });
     assert.equal(r.last.type, "error");
     assert.deepEqual(r.last.error, { code: "stopped", message: "Stopped before any reply text arrived. Your message is saved; the reply isn't." });
-    assert.deepEqual(r.stop, { stopped: true, message: null, error: r.last.error });
+    assert.deepEqual(r.stop, { stopped: true, message: null, error: r.last.error, note: r.stop.note });
+    assert.match(r.stop.note, /^Stopping saves waiting, not money/);
     assert.deepEqual((await get(c)).messages.map((m) => m.author.type), ["player", "brain", "player"]);
+    // Nothing was saved, but Venice billed the reply, so the drain adds what it cost to the running total (T03 QA-2).
+    const spent = await until(async () => {
+      const s = (await get(c)).spentUsd!;
+      return s > spentBefore ? s : undefined;
+    }, "the drained cost");
+    close(spent - spentBefore, balanceBefore - t.mock.state.balanceUsd);
 
     await ok(["turn", "--conversation", c]); // answer it, so there is a reply to regenerate
     r = await stopAtFirst("message.regenerate", { conversation: c, steer: "MOCK_SLOW" });
     assert.match(r.last.error.message, /^Stopped before any reply text arrived\. No new version was saved; m_\w+ keeps its current version\.$/);
     const last = (await get(c)).messages[3]!;
     assert.deepEqual([last.versions.length, last.activeVersion], [1, 0]);
+  });
+
+  test("a stopped reply's real cost arrives from the drain, and the total never goes down when messages are deleted (T03 QA-2)", async () => {
+    await login();
+    const c = await chat(["Hello."]);
+    const first = (await get(c)).messages[1]!.versions[0]!.costUsd!;
+    close((await get(c)).spentUsd!, first);
+
+    // A turn stopped after two deltas: the partial text is saved at once, and the whole reply's cost a moment later.
+    let balance = t.mock.state.balanceUsd;
+    const turn = await stopAfter("turn", { conversation: c, content: "MOCK_SLOW count to ten slowly" }, 2);
+    assert.match(turn.stop.note, /Venice still writes and bills the whole reply/);
+    const id = turn.stop.message.id;
+    const streamed = turn.events.filter((e) => e.type === "delta").map((e) => e.delta).join("");
+    const turnCost = await until(async () => (await get(c)).messages.find((m) => m.id === id)!.versions[0]!.costUsd, "the stopped turn's cost");
+    const billed = balance - t.mock.state.balanceUsd;
+    close(turnCost, billed);
+    let v = (await get(c)).messages.find((m) => m.id === id)!.versions[0]!;
+    assert.deepEqual([v.stopped, v.content], [true, streamed], "the text stays what had arrived; only the cost is added");
+    assert.ok(v.usage!.completionTokens > Math.ceil(streamed.length / 4), "usage is the whole reply's, as billed");
+    close((await get(c)).spentUsd!, first + turnCost);
+
+    // A regenerate stopped the same way: the cost lands on the new version, not the old one.
+    balance = t.mock.state.balanceUsd;
+    await stopAfter("message.regenerate", { conversation: c, steer: "MOCK_SLOW once more" }, 2);
+    const regenCost = await until(async () => (await get(c)).messages.find((m) => m.id === id)!.versions[1]?.costUsd, "the stopped regenerate's cost");
+    close(regenCost, balance - t.mock.state.balanceUsd);
+    v = (await get(c)).messages.find((m) => m.id === id)!.versions[0]!;
+    close(v.costUsd!, turnCost);
+    const total = first + turnCost + regenCost;
+    close((await get(c)).spentUsd!, total);
+
+    // Deleting messages removes them from every prompt, not from the bill.
+    for (const m of (await get(c)).messages) await ok(["message.delete", "--conversation", c, "--message", m.id]);
+    const after = await get(c);
+    assert.equal(after.messages.length, 0);
+    close(after.spentUsd!, total);
+    const listed = (await json(["conversation.list"])).conversations.find((x: { id: string }) => x.id === c);
+    close(listed.costUsd, total);
+  });
+
+  test("a steer template without {{instruction}} is refused, never silently dropping the steer (T03 QA-3)", async () => {
+    await login();
+    const c = await chat(["What color is a lime?"]);
+    for (const broken of ["", "   ", "Rewrite it."]) {
+      await fails(["conversation.update", "--id", c, "--templates.steer", broken], /steer template has no \{\{instruction\}\}, so your steer would be left out/);
+    }
+    await fails(["conversation.update", "--id", c, "--templates.player", "<!-- from: the user -->"], /player template has no \{\{content\}\}/);
+    assert.equal((await get(c)).templates.steer, STEER_HEAD + "\n{{instruction}}", "nothing was changed");
+
+    // A file written before the check (or by hand) is refused where the template is used, with nothing sent.
+    const file = join(t.config.dataDir, "users", "dev-t03", "conversations", `${c}.json`);
+    const doc = JSON.parse(readFileSync(file, "utf8")) as Conversation;
+    doc.templates.steer = "";
+    writeFileSync(file, JSON.stringify(doc));
+    const before = sentCount();
+    await fails(["prompt.preview", "--conversation", c, "--regenerate", "--steer", "Hidden?"], /steer template has no \{\{instruction\}\}/);
+    await fails(["message.regenerate", "--conversation", c, "--steer", "Hidden?"], /steer template has no \{\{instruction\}\}/);
+    assert.equal(sentCount(), before, "nothing went upstream");
+    await ok(["message.regenerate", "--conversation", c]); // a plain re-roll doesn't use the steer template
   });
 });

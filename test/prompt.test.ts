@@ -290,6 +290,34 @@ describe("planTurn and helpers", () => {
     assert.equal(planRegenerate(conv, { steer: "again" }, DEEPSEEK).refusal, undefined, "a steer always ends with a user message");
   });
 
+  test("planRegenerate: a re-roll of a lone reply says there is only the system prompt, not 'its own earlier reply' (T03 QA-4)", () => {
+    const conv = newConversation({ title: "t", systemPrompt: "Be brief." });
+    const brainId = conv.brains[0]!.id;
+    conv.messages.push(newMessage({ type: "brain", brainId }, "text", { content: "Alone.", source: "generated", createdAt: AT }));
+    const plan = planRegenerate(conv, {}, DEEPSEEK);
+    assert.deepEqual(plan.body.messages.map((m) => m.role), ["system"]);
+    assert.match(plan.refusal ?? "", /would hold only its system prompt/);
+    assert.doesNotMatch(plan.refusal ?? "", /earlier reply/);
+  });
+
+  test("a template without its placeholder is refused where it's used, so no text is silently left out (T03 QA-3)", () => {
+    const { conv, gm } = table();
+    const steered = () => planRegenerate(conv, { steer: "Say it's blue." }, DEEPSEEK);
+    for (const broken of ["", "   ", "Rewrite it."]) {
+      conv.templates.steer = broken;
+      assert.throws(steered, { code: "bad_template", message: /steer template has no \{\{instruction\}\}, so your steer would be left out/ });
+    }
+    conv.templates.steer = "{{instruction}}";
+    assert.equal(steered().body.messages.at(-1)?.content, "Say it's blue.");
+    assert.ok(planRegenerate(conv, {}, DEEPSEEK), "a plain re-roll doesn't use the steer template");
+
+    conv.templates.player = "<!-- from: the user -->";
+    assert.throws(() => buildRequest(conv, gm.id, { model: DEEPSEEK }), { code: "bad_template", message: /player template has no \{\{content\}\}, so your messages/ });
+    conv.templates.player = "{{content}}";
+    conv.templates.otherBrainText = "[{{brain}}]";
+    assert.throws(() => buildRequest(conv, gm.id, { model: DEEPSEEK }), { code: "bad_template", message: /other-brain text template has no \{\{content\}\}/ });
+  });
+
   test("render: one literal pass, so placeholders or $ patterns inside values are never expanded", () => {
     assert.equal(render("{{brain}}: {{content}}", { brain: "GM", content: "x {{brain}} $& $1 $$" }), "GM: x {{brain}} $& $1 $$");
     assert.equal(render("{{prompt}} {{other}} {{content}}", { content: "c" }), "{{prompt}} {{other}} c");
