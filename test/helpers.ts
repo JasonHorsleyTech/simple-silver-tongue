@@ -58,6 +58,9 @@ export async function startTestServer(opts: { commands?: AnyCommand[] } = {}) {
 
   return {
     url,
+    /** The Hono app itself. Call app.fetch(new Request(...)) for concurrency tests: Node's fetch can queue a
+     * second request to the same server behind a still-open stream. */
+    app,
     tmp,
     config,
     mock,

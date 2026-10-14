@@ -9,6 +9,7 @@ import { toErrorBody } from "../lib/errors.ts";
 import { toText } from "../lib/text.ts";
 import { describeCommand, indexCommands, requireSessionFrom, type AnyCommand, type Ctx, type Deps } from "../registry.ts";
 import { safeJoin } from "../storage/files.ts";
+import { closeVault, forkVault } from "../storage/vault.ts";
 import type { Session } from "./sessions.ts";
 
 export const SESSION_COOKIE = "ss_session";
@@ -49,6 +50,11 @@ export function createApp(base: Omit<Deps, "commands">, commands: AnyCommand[], 
 
     let raw: unknown;
     if (c.req.method === "POST") {
+      // CSRF: without a CORS preflight a page can only send text/plain or form bodies, and we never approve
+      // a preflight. Requiring JSON blocks blind cookie-carrying posts from other localhost ports.
+      if (!isJsonType(c.req.header("content-type"))) {
+        return apiError(c, 415, "unsupported_media_type", "POST /api/<command> needs Content-Type: application/json.");
+      }
       const text = await c.req.text();
       try {
         raw = text.trim() === "" ? {} : JSON.parse(text);
@@ -69,8 +75,13 @@ export function createApp(base: Omit<Deps, "commands">, commands: AnyCommand[], 
     }
 
     const token = getCookie(c, SESSION_COOKIE) ?? bearer(c.req.header("authorization"));
-    const session = deps.sessions.get(token);
-    if (token && !session) c.header("x-ss-session", "invalid"); // lets the CLI drop a stale saved token
+    const found = deps.sessions.get(token);
+    if (token && !found) c.header("x-ss-session", "invalid"); // lets the CLI drop a stale saved token
+    // This request's own copy of the key (see vault.ts). Logging out wipes the session's key, not this one,
+    // so work already running still saves under the real key. Closed once the request's work is done.
+    const session: Session | null = found ? { ...found, vault: forkVault(found.vault) } : null;
+    const release = () => session && closeVault(session.vault);
+    let handedOff = false; // a stream releases the lease itself, after draining
     let change: { session: Session | null } | null = null;
     const ctx: Ctx = {
       deps,
@@ -116,6 +127,7 @@ export function createApp(base: Omit<Deps, "commands">, commands: AnyCommand[], 
       applySession();
       c.header("Content-Type", "application/x-ndjson; charset=utf-8");
       c.header("X-Content-Type-Options", "nosniff");
+      handedOff = true;
       return stream(c, async (s) => {
         let open = true;
         s.onAbort(() => {
@@ -136,12 +148,16 @@ export function createApp(base: Omit<Deps, "commands">, commands: AnyCommand[], 
         } catch (err) {
           logFailure(log, name, err);
           await send({ type: "error", error: toErrorBody(err).body });
+        } finally {
+          release();
         }
       });
     } catch (err) {
       logFailure(log, name, err);
       const { status, body } = toErrorBody(err);
       return c.json({ error: body }, status as 400);
+    } finally {
+      if (!handedOff) release();
     }
   });
 
@@ -167,6 +183,10 @@ function formatIssues(issues: z.core.$ZodIssue[]): { path: string; message: stri
     path: i.path.map(String).join("."),
     message: i.message.endsWith("received undefined") ? "required" : i.message,
   }));
+}
+
+function isJsonType(h: string | undefined): boolean {
+  return (h ?? "").split(";")[0]!.trim().toLowerCase() === "application/json";
 }
 
 function bearer(h: string | undefined): string | undefined {

@@ -5,12 +5,13 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { after, before, describe, test } from "node:test";
 import { z } from "zod";
-import { authLogin } from "../src/commands/auth.ts";
+import { authLogin, authLogout } from "../src/commands/auth.ts";
 import { help } from "../src/commands/system.ts";
 import { ROOT } from "../src/config.ts";
 import { conflict } from "../src/lib/errors.ts";
 import { binaryCommand, streamCommand } from "../src/registry.ts";
-import { createUser } from "../src/storage/users.ts";
+import { createUser, unlockUser } from "../src/storage/users.ts";
+import { readJson, writeJson } from "../src/storage/vault.ts";
 import { startTestServer } from "./helpers.ts";
 
 describe("CLI end to end against an in-process server and mock Venice", () => {
@@ -55,6 +56,13 @@ describe("CLI end to end against an in-process server and mock Venice", () => {
     r = await t.cli(["auth.login", "--username", "dev-b", "--password", "nope"]);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /Wrong password for dev-b/);
+
+    // T01 QA-6: no terminal and no input is not a choice; it must not quietly create an unencrypted user.
+    r = await t.cli(["user.create", "--username", "dev-c"], { stdin: "" });
+    assert.equal(r.code, 2);
+    assert.match(r.stderr, /--password is required and there is no terminal/);
+    r = await t.cli(["user.list", "--json"]);
+    assert.ok(!JSON.parse(r.stdout).users.some((u: { username: string }) => u.username === "dev-c"));
 
     r = await t.cli(["auth.login", "--username", "dev-b", "--password", "-"], { stdin: "s3cret\n" });
     assert.equal(r.code, 0, r.stderr);
@@ -207,4 +215,68 @@ describe("HTTP adapter: streams, binary, sessions and the local-only guard", () 
     assert.equal(await status({ host: "localhost:4747", origin: "https://evil.example", "content-type": "application/json" }), 403);
     assert.equal(await status({ host: "localhost:4747", origin: "http://localhost:5173", "content-type": "application/json" }), 200);
   });
+
+  test("CSRF: POSTs that a page could send without a preflight are refused with 415 (T01 QA-4)", async () => {
+    const post = (headers: Record<string, string>) => fetch(`${t.url}/api/help`, { method: "POST", headers, body: "{}" });
+    for (const type of ["text/plain", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x"]) {
+      const res = await post({ origin: "http://localhost:3000", "content-type": type });
+      assert.equal(res.status, 415, type);
+      assert.equal(((await res.json()) as { error: { code: string } }).error.code, "unsupported_media_type");
+    }
+    assert.equal((await fetch(`${t.url}/api/help`, { method: "POST" })).status, 415); // no content type at all
+    assert.equal((await post({ "content-type": "application/json; charset=utf-8" })).status, 200);
+  });
+});
+
+describe("sessions: logging out or in mid-request never pulls the key out from under running work (T01 QA-2)", () => {
+  let t: Awaited<ReturnType<typeof startTestServer>>;
+  let open: () => void = () => {};
+  let gate: Promise<void> = Promise.resolve();
+  const slowSave = streamCommand({
+    name: "test.slow-save",
+    description: "Starts, waits for the test to let it go, then saves through the vault (like T02's turn)",
+    args: z.object({ file: z.string() }),
+    async *handler(args, ctx) {
+      const { vault } = ctx.requireSession();
+      yield { type: "start" };
+      await gate;
+      await writeJson(vault, `conversations/${args.file}`, { title: "SECRET-TAVERN" });
+      yield { type: "done", message: null };
+    },
+  });
+  before(async () => {
+    t = await startTestServer({ commands: [authLogin, authLogout, slowSave] });
+    await createUser(t.config.dataDir, "dev-lease", "pw", { N: 2 ** 10, r: 8, p: 1 });
+  });
+  after(() => t.close());
+
+  const post = (cmd: string, body: unknown, cookie = "") =>
+    t.app.fetch(
+      new Request(`http://localhost/api/${cmd}`, {
+        method: "POST",
+        headers: { host: "localhost", "content-type": "application/json", cookie },
+        body: JSON.stringify(body),
+      }),
+    );
+  const login = async () =>
+    (await post("auth.login", { username: "dev-lease", password: "pw" })).headers.getSetCookie()[0]!.split(";")[0]!;
+
+  for (const [what, interrupt] of [
+    ["logout", (cookie: string) => post("auth.logout", {}, cookie)],
+    ["logging in again", (cookie: string) => post("auth.login", { username: "dev-lease", password: "pw" }, cookie)],
+  ] as const) {
+    test(`${what} mid-stream: the work finishes and saves under the real key`, async () => {
+      const cookie = await login();
+      gate = new Promise((r) => (open = r));
+      const file = `c_${what.replace(/\W/g, "")}.json`;
+      const res = await post("test.slow-save", { file }, cookie);
+      assert.equal((await interrupt(cookie)).status, 200);
+      assert.equal((await post("test.slow-save", { file: "x.json" }, cookie)).status, 401, "the old token is dead");
+      open();
+      const events = (await res.text()).trim().split("\n").map((l) => JSON.parse(l));
+      assert.deepEqual(events.map((e) => e.type), ["start", "done"]);
+      const { vault } = await unlockUser(t.config.dataDir, "dev-lease", "pw");
+      assert.deepEqual(await readJson(vault, `conversations/${file}`), { title: "SECRET-TAVERN" });
+    });
+  }
 });

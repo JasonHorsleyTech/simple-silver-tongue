@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
-import { dirname, isAbsolute, join, normalize, sep } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 
 /** Write to a temp file in the same directory, fsync, then rename over the target. */
 export async function writeFileAtomic(path: string, data: Uint8Array | string): Promise<void> {
@@ -41,12 +41,13 @@ export async function listDir(path: string): Promise<string[]> {
   }
 }
 
-/** Join a relative path under root, refusing anything that would escape it. */
+/**
+ * Join a relative path under root. Any "." or ".." segment is refused outright rather than normalized
+ * away, so "conversations/../user.json" can't sneak past a check on the result.
+ */
 export function safeJoin(root: string, rel: string): string {
-  if (!rel || rel.includes("\0") || isAbsolute(rel)) throw new Error(`unsafe path: ${JSON.stringify(rel)}`);
-  const norm = normalize(rel);
-  if (norm === ".." || norm.startsWith(`..${sep}`) || norm.split(sep).includes("..")) {
+  if (!rel || rel.includes("\0") || isAbsolute(rel) || rel.split(/[\\/]/).some((p) => p === "." || p === "..")) {
     throw new Error(`unsafe path: ${JSON.stringify(rel)}`);
   }
-  return join(root, norm);
+  return join(root, rel);
 }

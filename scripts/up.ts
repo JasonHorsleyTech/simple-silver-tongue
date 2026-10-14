@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROOT, veniceApiKey } from "../src/config.ts";
-import { MOCK, RUN_DIR, SERVER, stop, tail, waitFor, type Proc } from "./proc.ts";
+import { foreignHolder, MOCK, RUN_DIR, SERVER, stop, tail, waitFor, type Proc } from "./proc.ts";
 
 /**
  * npm run up        → stop whatever is running, build the web app if there is one, start the server (live Venice)
@@ -68,6 +68,11 @@ try {
   await stop(MOCK);
 } catch (err) {
   fail((err as Error).message);
+}
+// Only the ports this mode uses must be free: a stranger on the mock's port doesn't matter in live mode.
+for (const p of mock ? [SERVER, MOCK] : [SERVER]) {
+  const holder = foreignHolder(p);
+  if (holder) fail(holder);
 }
 
 const web = buildWeb();

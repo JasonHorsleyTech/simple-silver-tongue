@@ -18,6 +18,9 @@ export const badRequest = (message: string, details?: unknown) =>
 export const unauthenticated = (message = "Not logged in. Run ./ss auth.login --username <name>.") =>
   new CommandError(401, "unauthenticated", message);
 export const wrongPassword = (message: string) => new CommandError(401, "wrong_password", message);
+/** Thrown by a closed vault: the session that owned this work logged out or logged in again. */
+export const sessionEnded = () =>
+  new CommandError(401, "session_ended", "Your session ended (you logged out or logged in again) before this work could use your data.");
 export const notFound = (message: string) => new CommandError(404, "not_found", message);
 export const conflict = (message: string) => new CommandError(409, "conflict", message);
 export const upstreamError = (message: string, details?: unknown) =>

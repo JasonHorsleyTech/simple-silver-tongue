@@ -13,7 +13,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T01: Foundation: server, command registry, CLI, users and encryption · `triage`
+## T01: Foundation: server, command registry, CLI, users and encryption · `frontend`
 
 **Engineer scope**
 - `package.json` (ESM), `tsconfig.json` (`noEmit`, `allowImportingTsExtensions`, `erasableSyntaxOnly`, strict), and the scripts `up`, `up:mock`, `down`, `logs`, `test`, `typecheck`. `up` stops any running server, builds the web app if there is one, starts the server detached (pid and log in `.run/`), waits for `/api/health` and prints the URL. `up` is idempotent: it always ends with a fresh server on current code.
@@ -116,7 +116,8 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 **Frontend scope:** An image message card showing the prompt (streams in live, collapsible), then a loader, then the image (click to enlarge), or an error with Retry. Editing the prompt keeps the old image dimmed with a spinner until the new one arrives. The image model and size live in the settings drawer. The safe-mode toggle (default on) lives on each image brain.
 
-**Deferred in:** *(none yet)*
+**Deferred in:**
+- Mock: add a trigger (e.g. `MOCK_BLURRED` in the prompt, with `safe_mode` on) that answers `x-venice-is-blurred: true`, so the safe-mode UX can be tested for free. The headers already exist, always `false` (T01 QA-7).
 
 ---
 
@@ -132,7 +133,8 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 **Frontend scope:** Login polish (user picker from `user.list`, a lock icon for encrypted users, error on a wrong password), logout and switching users, and a session-expired redirect to login.
 
-**Deferred in:** *(none yet)*
+**Deferred in:**
+- `user.delete` while that user has work in flight: since T01 triage, running work holds its own key copy and finishes after logout. Its last save would recreate `data/users/<u>/conversations/` with no `user.json`, and that name then can't be reused. Refuse with a 409, or wait, while the user has requests running (T01 QA-2).
 
 ---
 

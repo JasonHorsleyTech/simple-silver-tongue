@@ -145,8 +145,12 @@ async function promptForSecrets(schema: JsonSchema, args: Record<string, unknown
     if (!s.secret || args[key] !== undefined || !(schema.required ?? []).includes(key)) continue;
     const question = (s.prompt ?? `${key}: `).replace(/\{(\w+)\}/g, (_, k: string) => String(args[k] ?? k));
     if (!io.stdinIsTTY) {
-      // Scripted use: take the first line of stdin.
-      args[key] = (await io.readStdin()).split(/\r?\n/)[0] ?? "";
+      // Scripted use: take the first line of stdin. No input at all is not a choice, so refuse it rather than
+      // read it as an empty password, which would quietly make an unencrypted user.
+      const input = await io.readStdin();
+      const flag = `--${key.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)}`;
+      if (input === "") throw new UsageError(`${flag} is required and there is no terminal to prompt on. Pass ${flag} '' for none, or pipe it on stdin`);
+      args[key] = input.split(/\r?\n/)[0] ?? "";
       continue;
     }
     const value = await io.promptSecret(question);

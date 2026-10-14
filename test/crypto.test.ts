@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { createKeyEnvelope, decrypt, DecryptError, encrypt, MAGIC, openKeyEnvelope } from "../src/storage/crypto.ts";
 import { createUser, unlockUser } from "../src/storage/users.ts";
-import { readJson, writeJson } from "../src/storage/vault.ts";
+import { closeVault, forkVault, listFiles, readJson, writeJson } from "../src/storage/vault.ts";
 import { randomBytes } from "node:crypto";
 
 const FAST_KDF = { N: 2 ** 10, r: 8, p: 1 }; // tests only; real users get KDF_DEFAULTS
@@ -60,6 +60,27 @@ test("encrypted user: files on disk are ciphertext and read back intact; wrong p
   // user.json never goes through the vault, and paths can't escape the user's folder.
   await assert.rejects(writeJson(vault, "user.json", {}), /not vault data/);
   await assert.rejects(writeJson(vault, "../dev-other/x.json", {}), /unsafe path/);
+  // T01 QA-3: no spelling reaches user.json (macOS volumes are case-insensitive), and login still works.
+  for (const p of ["conversations/../user.json", "./user.json", "USER.json", "User.JSON"]) {
+    await assert.rejects(writeJson(vault, p, { oops: 1 }), /unsafe path|not vault data/, p);
+  }
+  assert.ok((await unlockUser(dataDir, "dev-enc", "pw")).vault.key);
+  assert.deepEqual(await listFiles(vault, "conversations"), ["c_plain.json", "c_test.json"]);
+});
+
+test("a forked vault outlives a closed master; a closed vault refuses everything; a wiped key can't encrypt", async () => {
+  const dataDir = join(tmp, "data");
+  const { vault: master } = await unlockUser(dataDir, "dev-enc", "pw");
+  const lease = forkVault(master);
+  closeVault(master); // what logout does to the session's copy
+  assert.ok(master.key!.every((b) => b === 0));
+  assert.throws(() => forkVault(master), { code: "session_ended" });
+  await writeJson(lease, "conversations/c_lease.json", { ok: 1 }); // running work is unaffected
+  assert.deepEqual(await readJson((await unlockUser(dataDir, "dev-enc", "pw")).vault, "conversations/c_lease.json"), { ok: 1 });
+  closeVault(lease);
+  await assert.rejects(writeJson(lease, "conversations/c_lease.json", { ok: 2 }), { code: "session_ended" });
+  await assert.rejects(readJson(lease, "conversations/c_lease.json"), { code: "session_ended" });
+  assert.throws(() => encrypt(Buffer.alloc(32), Buffer.from("x")), /wiped/);
 });
 
 test("plaintext user: files are readable JSON", async () => {

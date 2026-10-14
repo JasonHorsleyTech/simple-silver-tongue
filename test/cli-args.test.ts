@@ -14,6 +14,7 @@ const schema: JsonSchema = {
     tags: { type: "array", items: { type: "string" } },
     settings: { type: "object", properties: { temperature: { type: "number" }, textModel: { type: "string" } } },
     note: { anyOf: [{ type: "string" }, { type: "null" }] },
+    password: { type: "string", secret: true },
   },
 };
 
@@ -77,4 +78,10 @@ test("usage errors are clear", async () => {
   await assert.rejects(parse(["--username", "--content", "x"]), /--username needs a value/);
   await assert.rejects(parse(["--max-tokens", "lots"]), /expects a number/);
   await assert.rejects(parse(["--settings", "{nope"]), /expects JSON/);
+});
+
+test("secret args are literal: no @file expansion (T01 QA-8), but - still reads stdin", async () => {
+  assert.deepEqual(await parse(["--password", "@Horse-qa1"]), { password: "@Horse-qa1" });
+  assert.deepEqual(await parse(["--password", "@scene.md"]), { password: "@scene.md" });
+  assert.deepEqual(await parse(["--password", "-"]), { password: "from stdin" });
 });

@@ -21,6 +21,8 @@ export function isEncryptedBlob(blob: Uint8Array): boolean {
 }
 
 export function encrypt(key: Buffer, plaintext: Uint8Array): Buffer {
+  // Last-ditch guard: a key that was wiped (closeVault) must never produce "ciphertext" anyone can read.
+  if (key.every((b) => b === 0)) throw new Error("refusing to encrypt with a wiped (all-zero) key");
   const iv = randomBytes(IV_LEN);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
   cipher.setAAD(MAGIC);

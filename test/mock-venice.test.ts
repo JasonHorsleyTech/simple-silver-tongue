@@ -63,6 +63,21 @@ test("chat stream: a forced tool call streams JSON argument fragments", async ()
   assert.ok(chunks.some((c) => c.choices[0]?.finish_reason === "tool_calls"));
 });
 
+test("chat stream: max_tokens cuts with finish_reason length, and the last content shares the finish chunk", async () => {
+  const chunks = await sse(await post("/chat/completions", { ...chatBody, reasoning_effort: "none", max_tokens: 3 }));
+  const finishChunk = chunks.find((c) => c.choices[0]?.finish_reason);
+  assert.equal(finishChunk.choices[0].finish_reason, "length");
+  assert.equal(finishChunk.choices[0].delta.content, "to ");
+  assert.equal(chunks.map((c) => c.choices[0]?.delta?.content ?? "").join(""), "MOCK reply to ");
+});
+
+test("chat stream: the role chunk carries content \"\" on a model without reasoning, like live", async () => {
+  const [role] = await sse(await post("/chat/completions", { ...chatBody, model: "venice-uncensored-1-2", reasoning_effort: undefined }));
+  assert.deepEqual(role.choices[0].delta, { role: "assistant", content: "" });
+  const [roleR] = await sse(await post("/chat/completions", chatBody));
+  assert.deepEqual(roleR.choices[0].delta, { role: "assistant" });
+});
+
 test("chat: refuses requests that would let Venice inject its system prompt", async () => {
   const res = await post("/chat/completions", { ...chatBody, venice_parameters: {} });
   assert.equal(res.status, 400);
@@ -72,6 +87,8 @@ test("chat: refuses requests that would let Venice inject its system prompt", as
 test("image: returns a real PNG and charges the balance", async () => {
   const before = mock.state.balanceUsd;
   const res = await post("/image/generate", { model: "z-image-turbo", prompt: "a tavern", width: 16, height: 16 });
+  assert.equal(res.headers.get("x-venice-is-blurred"), "false");
+  assert.equal(res.headers.get("x-venice-is-content-violation"), "false");
   const body = (await res.json()) as { images: string[] };
   const png = Buffer.from(body.images[0]!, "base64");
   assert.deepEqual([...png.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);

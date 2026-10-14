@@ -17,6 +17,7 @@ import { MOCK_MODELS } from "./mock-models.ts";
  *   MOCK_ERROR            → HTTP error before anything streams
  *   MOCK_SLOW             → much slower stream / image (handy for 409 and stop tests)
  *   MOCK_MIDSTREAM_ERROR  → the connection drops halfway through the stream
+ * max_tokens is honored (counted in content words): the reply is cut with finish_reason "length".
  *
  * Rules enforced like a strict Venice: a Bearer token is required, and chat requests must send
  * venice_parameters.include_venice_system_prompt: false (our no-hidden-text hard rule).
@@ -91,6 +92,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     stream_options?: { include_usage?: boolean };
     venice_parameters?: { include_venice_system_prompt?: boolean };
     reasoning_effort?: string;
+    max_tokens?: number;
     tools?: Array<{ type: string; function: { name: string } }>;
     tool_choice?: { type: string; function?: { name: string } } | string;
   };
@@ -126,9 +128,15 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
         return json(res, 400, { error: `mock: tool_choice names a tool that is not in tools: ${toolName}` });
       }
     }
-    const content = toolName
+    const fullContent = toolName
       ? ""
       : `MOCK reply to brain "${brain}"; saw ${messages.length} messages; last: "${excerpt(lastText, 60)}"`;
+    // max_tokens counts content words here (one word ≈ one token). Like live, a cut ends with
+    // finish_reason "length", and the last content delta rides in the same chunk as the finish reason.
+    let contentWords: string[] = words(fullContent);
+    const cut = !toolName && typeof body.max_tokens === "number" && contentWords.length > body.max_tokens;
+    if (cut) contentWords = contentWords.slice(0, Math.max(0, body.max_tokens!));
+    const content = contentWords.join("");
     const toolArgs = toolName
       ? JSON.stringify({ prompt: `MOCK image prompt after ${messages.length} messages; last: "${excerpt(lastText, 60)}"` })
       : "";
@@ -150,7 +158,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     const id = `chatcmpl-mock-${n}`;
     const created = Math.floor(Date.now() / 1000);
     const callId = `call_mock_${n}`;
-    const finish = toolName ? "tool_calls" : "stop";
+    const finish = toolName ? "tool_calls" : cut ? "length" : "stop";
 
     if (!body.stream) {
       const message: Record<string, unknown> = { role: "assistant", content: toolName ? null : content };
@@ -170,14 +178,16 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache" });
     const chunk = (delta: unknown, finish_reason: string | null = null) =>
       ({ id, object: "chat.completion.chunk", created, model: model.id, choices: [{ index: 0, delta, finish_reason }], usage: null });
-    const deltas: unknown[] = [chunk({ role: "assistant" })];
+    // Live sends content: "" in the role chunk for models without reasoning.
+    const deltas: unknown[] = [chunk(caps.supportsReasoning ? { role: "assistant" } : { role: "assistant", content: "" })];
     for (const w of words(reasoning)) deltas.push(chunk({ reasoning_content: w }));
     if (toolName) {
       deltas.push(chunk({ tool_calls: [{ index: 0, id: callId, type: "function", function: { name: toolName, arguments: "" } }] }));
       for (const piece of toolArgs.match(/.{1,12}/g) ?? []) deltas.push(chunk({ tool_calls: [{ index: 0, function: { arguments: piece } }] }));
     }
-    for (const w of words(content)) deltas.push(chunk({ content: w }));
-    deltas.push(chunk({}, finish));
+    const tail = cut ? contentWords.pop() : undefined;
+    for (const w of contentWords) deltas.push(chunk({ content: w }));
+    deltas.push(chunk(tail === undefined ? {} : { content: tail }, finish));
     if (body.stream_options?.include_usage) {
       deltas.push({ id, object: "chat.completion.chunk", created, model: model.id, choices: [], usage, cost: costObj });
     }
@@ -212,7 +222,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     const h = clamp(body.height ?? 64, 8, 256);
     const bytes = solidPng(w, h, colorFor(prompt));
     if (body.return_binary) {
-      res.writeHead(200, { "Content-Type": "image/png", "Content-Length": bytes.length });
+      res.writeHead(200, { "Content-Type": "image/png", "Content-Length": bytes.length, ...IMAGE_HEADERS });
       return void res.end(bytes);
     }
     return json(res, 200, {
@@ -220,7 +230,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
       images: [bytes.toString("base64")],
       request: body,
       timing: { inferenceDuration: imageDelayMs, inferencePreprocessingTime: 0, inferenceQueueTime: 0, total: imageDelayMs },
-    });
+    }, IMAGE_HEADERS);
   }
 
   await new Promise<void>((resolve, reject) => {
@@ -240,8 +250,11 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
   };
 }
 
-function json(res: ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, { "Content-Type": "application/json" });
+// Live /image/generate responses carry these (T05's safe-mode UX reads them). The mock never blurs.
+const IMAGE_HEADERS = { "x-venice-is-blurred": "false", "x-venice-is-content-violation": "false" };
+
+function json(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
+  res.writeHead(status, { "Content-Type": "application/json", ...headers });
   res.end(JSON.stringify(body));
 }
 

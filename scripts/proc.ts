@@ -69,10 +69,7 @@ async function kill(pid: number): Promise<void> {
   }
 }
 
-/**
- * Stop a process: the one in its pid file, plus any of ours still holding its port (e.g. a lost pid file).
- * Throws if the port is held by something that is not ours.
- */
+/** Stop our process: the one in its pid file, plus any of ours still holding its port (e.g. a lost pid file). */
 export async function stop(p: Proc): Promise<boolean> {
   const pids = new Set<number>();
   if (existsSync(p.pidFile)) {
@@ -84,11 +81,13 @@ export async function stop(p: Proc): Promise<boolean> {
   }
   for (const pid of pids) await kill(pid);
   rmSync(p.pidFile, { force: true });
-  const foreign = listeners(p.port).filter((pid) => !commandOf(pid).includes(p.marker));
-  if (foreign.length) {
-    throw new Error(`port ${p.port} is in use by another program (pid ${foreign.join(", ")}: ${commandOf(foreign[0]!)})`);
-  }
   return pids.size > 0;
+}
+
+/** Describes a program that is not ours holding the port, or null. We never kill those. */
+export function foreignHolder(p: Proc): string | null {
+  const foreign = listeners(p.port).filter((pid) => !commandOf(pid).includes(p.marker));
+  return foreign.length ? `port ${p.port} is in use by another program (pid ${foreign.join(", ")}: ${commandOf(foreign[0]!)})` : null;
 }
 
 export async function waitFor(url: string, pid: number, timeoutMs = 15000): Promise<boolean> {

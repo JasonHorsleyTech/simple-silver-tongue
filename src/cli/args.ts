@@ -84,6 +84,7 @@ function parseBool(v: string): boolean | null {
  *   --tag a --tag b                   arrays (repeat the flag, or pass a JSON array)
  *   --settings '{"a":1}'              objects as JSON
  *   --content @file.md | --content -  text from a file or stdin (one trailing newline dropped); @@x is a literal "@x"
+ *   secret args (passwords) take "-" for stdin but are otherwise literal: no @file, so "@x" is "@x"
  */
 export async function parseFlags(
   tokens: string[],
@@ -133,7 +134,8 @@ export async function parseFlags(
           throw new UsageError(`${flag} expects JSON`);
         }
       case "string":
-        return text(v, flag);
+        // A password may start with "@", and a failed file read would echo it to the terminal.
+        return s.secret && v !== "-" ? v : text(v, flag);
       default: {
         // untyped: JSON if it parses, else the string
         const t = await text(v, flag);
