@@ -3,7 +3,7 @@ import { nowIso } from "../lib/ids.ts";
 import type { StreamEvent } from "../registry.ts";
 import { listFiles, readJson, removeFile, writeJson, type Vault } from "../storage/vault.ts";
 import type { UnreadableConversation } from "./format.ts";
-import type { Conversation } from "./types.ts";
+import type { Conversation, LedgerMessage } from "./types.ts";
 
 /**
  * Conversation files, through the vault (so they are ciphertext for encrypted users). There is no cache:
@@ -100,20 +100,22 @@ async function serialize<T>(key: string, job: () => Promise<T>): Promise<T> {
 
 /**
  * One generation at a time per conversation (design.md: a second turn or regenerate is a 409).
- * The AbortController is there for a future generation.stop (T03); release() also aborts any upstream
- * request still open, so a failed turn never leaves a Venice connection behind.
+ * generation.stop aborts the AbortController with a "stopped" reason (stopGeneration); release() also
+ * aborts any upstream request still open, so a failed turn never leaves a Venice connection behind.
  *
  * A generation also keeps, in memory only, the events it has streamed so far, so generation.follow can
  * re-attach to it: a reloaded browser tab, or a second terminal (T02 frontend). Consecutive text deltas are
  * merged, so a late follower gets the reply so far in a few events and then the rest live.
  */
-type Generation = { controller: AbortController; startedAt: string; live: Live };
+type Generation = { controller: AbortController; startedAt: string; live: Live; settled: Promise<void> };
 type Follower = { queue: StreamEvent[]; wake?: () => void };
 type Live = {
   log: StreamEvent[];
   followers: Set<Follower>;
   ended: boolean;
   failure?: { status: number; body: ErrorBody };
+  /** Resolves `settled` once the generation has ended (done or error). */
+  settle(): void;
 };
 const generations = new Map<string, Generation>();
 
@@ -132,8 +134,10 @@ export type GenerationHandle = {
 export function beginGeneration(vault: Vault, id: string): GenerationHandle {
   const key = keyOf(vault, id);
   if (generations.has(key)) throw busy(id);
-  const live: Live = { log: [], followers: new Set(), ended: false };
-  const gen: Generation = { controller: new AbortController(), startedAt: nowIso(), live };
+  let settle = () => {};
+  const settled = new Promise<void>((resolve) => (settle = resolve));
+  const live: Live = { log: [], followers: new Set(), ended: false, settle };
+  const gen: Generation = { controller: new AbortController(), startedAt: nowIso(), live, settled };
   generations.set(key, gen);
 
   const publish = (ev: StreamEvent) => {
@@ -153,6 +157,7 @@ export function beginGeneration(vault: Vault, id: string): GenerationHandle {
     live.ended = true;
     if (failure) live.failure = failure;
     for (const f of live.followers) f.wake?.();
+    live.settle();
   };
 
   return {
@@ -208,4 +213,37 @@ async function* follow(gen: Generation): AsyncGenerator<StreamEvent, void, undef
 
 export function isGenerating(vault: Vault, id: string): boolean {
   return generations.has(keyOf(vault, id));
+}
+
+/**
+ * Ledger edits (edit, delete, select-version) wait for no one: while a reply is being generated they are
+ * refused, because that reply answers the ledger as it was sent, and its save expects that ledger to be there.
+ */
+export function assertLedgerIdle(vault: Vault, id: string): void {
+  if (isGenerating(vault, id)) {
+    throw conflict(
+      `Conversation ${id} is busy: a reply is being generated from the messages as they are now. Wait for it to finish, or stop it, then change the messages.`,
+    );
+  }
+}
+
+/** What generation.stop reports: whether anything was running, and what the stopped generation saved. */
+export type StopOutcome = { stopped: boolean; message: LedgerMessage | null; error?: ErrorBody };
+
+/**
+ * Stop the running generation (generation.stop) and wait until it has settled, so its partial reply is
+ * saved by the time this returns. The upstream request is aborted with a "stopped" reason, which
+ * relayReply turns into a reply with `stopped: true`. Null when nothing is being generated.
+ */
+export async function stopGeneration(vault: Vault, id: string, waitMs = 10_000): Promise<StopOutcome | null> {
+  const gen = generations.get(keyOf(vault, id));
+  if (!gen) return null;
+  gen.controller.abort(new CommandError(499, "stopped", "Stopped."));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([gen.settled, new Promise<void>((resolve) => (timer = setTimeout(resolve, waitMs)))]);
+  clearTimeout(timer);
+  const last = gen.live.log.at(-1);
+  const outcome: StopOutcome = { stopped: true, message: last?.type === "done" ? ((last.message as LedgerMessage | undefined) ?? null) : null };
+  if (gen.live.failure) outcome.error = gen.live.failure.body;
+  return outcome;
 }

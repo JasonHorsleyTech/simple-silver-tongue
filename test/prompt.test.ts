@@ -11,7 +11,7 @@ import {
   resolveBrain,
   type ModelCaps,
 } from "../src/conversations/prompt.ts";
-import { newMessage, planTurn, reviewBody } from "../src/conversations/turn.ts";
+import { newMessage, planRegenerate, planTurn, reviewBody } from "../src/conversations/turn.ts";
 import type { Author, Brain, Conversation, MessageVersion } from "../src/conversations/types.ts";
 
 const DEEPSEEK: ModelCaps = { reasoning: { supported: true, effortOptions: ["none", "low", "high", "max"] } };
@@ -238,6 +238,56 @@ describe("planTurn and helpers", () => {
     assert.equal(resolveBrain(conv, dice.id).id, dice.id);
     assert.equal(resolveBrain(conv, "dice master").id, dice.id);
     assert.throws(() => resolveBrain(conv, "Bard"), /No brain "Bard".*Game Master, Dice Master, Scene Painter/);
+  });
+
+  test("planRegenerate: a steer keeps the active version in, before the reminder and the steer; a re-roll leaves it out", () => {
+    const { conv, gm, dice, last } = table();
+    const STEER_HEAD = "<!-- Behind-the-scenes direction from the user. This is not part of the conversation. Write your previous response again, following this direction: -->";
+    // The GM's last reply has two versions; version 2 (index 1) is active and is what the steer revises.
+    let plan = planRegenerate(conv, { steer: "  say it's green \n" }, DEEPSEEK);
+    assert.equal(plan.brain.id, gm.id, "the message's own brain answers");
+    assert.equal(plan.message.id, last.id, "default: the last message");
+    assert.deepEqual([plan.steer, plan.steeredFrom, plan.refusal], ["say it's green", 1, undefined]);
+    assert.deepEqual(plan.body.messages.slice(-3), [
+      user("<!-- from: the user -->\nI sit down."),
+      assistant("The figure nods."),
+      user(`${STEER_HEAD}\nsay it's green`),
+    ]);
+    assert.ok(!JSON.stringify(plan.body).includes("OLD-VERSION") && !JSON.stringify(plan.body).includes("SECRET-STEER"), "only the active version, no earlier steer");
+
+    // A blank steer is a plain re-roll: the message is left out, and the brain answers what came before it.
+    for (const steer of [undefined, "", "  \n"]) {
+      plan = planRegenerate(conv, { message: last.id, steer }, DEEPSEEK);
+      assert.equal(plan.steer, undefined);
+      assert.deepEqual(plan.body.messages.at(-1), user("<!-- from: the user -->\nI sit down."));
+      assert.ok(!JSON.stringify(plan.body).includes("The figure nods."));
+    }
+
+    // Another brain's reply: its reminder goes before the steer.
+    const roll = newMessage({ type: "brain", brainId: dice.id }, "text", { content: "Roll: 4.", source: "generated", createdAt: AT });
+    conv.messages.push(roll);
+    plan = planRegenerate(conv, { steer: "roll a 20" }, DEEPSEEK);
+    assert.equal(plan.brain.id, dice.id);
+    assert.deepEqual(plan.body.messages.slice(-3).map((m) => m.content.split("\n")[0]), ["Roll: 4.", "<!-- System reminder --> Only roll.", STEER_HEAD]);
+    assert.equal(conv.messages.at(-1), roll, "planning changes nothing");
+  });
+
+  test("planRegenerate: only the last message, only a brain's, and a re-roll that would end on the brain's own reply is refused", () => {
+    const { conv, gm, last } = table();
+    assert.throws(() => planRegenerate(conv, { message: conv.messages[0]!.id }, DEEPSEEK), { code: "not_last_message", message: /Only the last message can be regenerated.*edit it/ });
+    assert.throws(() => planRegenerate(conv, { message: "m_nosuchmsg" }, DEEPSEEK), { code: "not_found" });
+    conv.messages.push(newMessage({ type: "player" }, "text", { content: "Hi", source: "authored", createdAt: AT }));
+    assert.throws(() => planRegenerate(conv, {}, DEEPSEEK), { code: "not_a_brain_message" });
+    assert.throws(() => planRegenerate(newConversation({ title: "t", systemPrompt: "x" }), {}, DEEPSEEK), { code: "nothing_to_regenerate" });
+
+    // Two GM replies in a row (the player line between them was deleted): a re-roll would end on the GM's own reply.
+    conv.messages.pop();
+    conv.messages.splice(conv.messages.indexOf(last) - 1, 1);
+    conv.messages.splice(conv.messages.indexOf(last), 0, newMessage({ type: "brain", brainId: gm.id }, "text", { content: "Earlier.", source: "generated", createdAt: AT }));
+    const plan = planRegenerate(conv, {}, DEEPSEEK);
+    assert.match(plan.refusal ?? "", /a plain re-roll has nothing to answer\. Give it a steer, or edit the message instead/);
+    assert.throws(() => assertAnswerable(plan.body), { code: "nothing_to_answer" }, "the send path refuses it too");
+    assert.equal(planRegenerate(conv, { steer: "again" }, DEEPSEEK).refusal, undefined, "a steer always ends with a user message");
   });
 
   test("render: one literal pass, so placeholders or $ patterns inside values are never expanded", () => {

@@ -95,6 +95,8 @@ export type MessageVersion = {
   image?: { id: string; status: "pending" | "done" | "error"; error?: string; model: string };
   /** Display only, never sent (hard rule 4). */
   steer?: string;
+  /** With a steer: the index of the version the steer revised (the one that was active). Display only. */
+  steeredFrom?: number;
   /** Display only, never sent (hard rule 4). */
   reasoning?: string;
   /** authored = typed by the user (a player message, or words put in a brain's mouth). */
@@ -104,6 +106,8 @@ export type MessageVersion = {
   model?: string;
   /** Generated versions: Venice's finish_reason ("stop", "length" = cut off by max_tokens, "tool_calls"). */
   finishReason?: string;
+  /** Generated versions: cut short by generation.stop. The text is what had arrived; Venice reported no usage or cost. */
+  stopped?: true;
   usage?: Usage;
   costUsd?: number;
   createdAt: string;

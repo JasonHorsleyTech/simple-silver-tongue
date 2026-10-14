@@ -7,7 +7,9 @@ import { MOCK_MODELS } from "./mock-models.ts";
 /**
  * A small, deterministic stand-in for the Venice API (base path /api/v1), so everything can be exercised
  * for free. Replies echo structure, not prose:
- *   MOCK reply to brain "<system prompt, first 30 chars>"; saw N messages; last: "<last message, first 60 chars>"
+ *   MOCK reply to brain "<system prompt, first 30 chars>"; saw N messages; last: "<last message, up to 60 chars>"
+ * A last message longer than 60 characters shows its first 30 and last 29 around "…", so a steer's instruction,
+ * at the end of the steer template, shows in the reply.
  *
  * Endpoints: GET /models, GET /api_keys/rate_limits, POST /chat/completions (SSE or JSON, reasoning,
  * forced tool calls), POST /image/generate (a tiny real PNG).
@@ -145,7 +147,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
         return json(res, 400, { error: `mock: tool_choice names a tool that is not in tools: ${toolName}` });
       }
     }
-    const echo = `MOCK reply to brain "${brain}"; saw ${messages.length} messages; last: "${excerpt(lastText, 60)}"`;
+    const echo = `MOCK reply to brain "${brain}"; saw ${messages.length} messages; last: "${headTail(lastText)}"`;
     const fullContent = toolName ? "" : lastText.includes("MOCK_MARKDOWN") ? `${echo}\n\n${MOCK_MARKDOWN}` : echo;
     // max_tokens counts words here (one word ≈ one token), reasoning first and then content, as live: a small
     // budget can run out while reasoning and leave no content at all (T02 QA-6). Like live, a cut ends with
@@ -304,6 +306,11 @@ function contentText(m: { content?: unknown } | undefined): string {
 }
 
 const excerpt = (s: string, n: number) => s.replace(/\s+/g, " ").trim().slice(0, n);
+/** Up to 60 characters: the start and the end of a longer text (where a steer's instruction is). */
+function headTail(s: string): string {
+  const t = s.replace(/\s+/g, " ").trim();
+  return t.length <= 60 ? t : `${t.slice(0, 30)}…${t.slice(-29)}`;
+}
 const words = (s: string) => s.match(/\S+\s*/g) ?? [];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(v)));

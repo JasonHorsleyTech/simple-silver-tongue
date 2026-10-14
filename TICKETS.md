@@ -60,7 +60,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T03: Steered regeneration, versions, edit and delete (CP2) · `todo`
+## T03: Steered regeneration, versions, edit and delete (CP2) · `qa`
 
 **Engineer scope**
 - `message.regenerate --message <id> [--steer "..."]`: only for the last ledger message, and only when a brain wrote it. Uses the steer template, appended last. Produces a new version and makes it active.
@@ -76,6 +76,12 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 **Frontend scope:** Per-message actions. Edit swaps rendered Markdown for a raw Markdown textarea with Save/Cancel. Delete asks for confirmation. The last brain message gets "Regenerate…" with an optional steer box, plus a version pager (`‹ 2/3 ›`) showing the steer that produced each version.
 - **From T02 frontend:** the slots are there. `MessageItem` (`web/src/features/chat/`) has header/body/footer; actions go in `MessageFooter`'s `actions`, which is always visible on the last message. `useChat` merges saved messages by id (`upsertMessage`), so a regenerate's `done.message` replaces the old one in place. Relay `message.regenerate` through `gen.relay` (as `turn` does) and `generation.follow` covers reloads for free. The live reply currently renders at the end of the list; a regenerate should render it in the regenerated message's slot (its id is the `start` event's `messageId`).
+- **From T03 engineer** (the commands are in; add them to `web/src/api/types.ts`):
+  - `message.regenerate {conversation, message?, steer?}` (stream). Its `start` event carries `regenerate: true` and the `steer`, also when replayed by `generation.follow`, so a reloaded tab can tell a regenerate from a turn and render it in the message's slot. `done.message` is the whole message with the new version active.
+  - `prompt.preview {conversation, regenerate: true, steer?}` is the exact steered request, for a "show payload" next to the steer box. Its result has `regenerate: {messageId, newVersion, steer?, steeredFrom?}`.
+  - `message.select-version {conversation, message, version}`: **`version` is 1-based** (what the pager shows), while the document's `activeVersion` is 0-based. Each version has `steer` and `steeredFrom` (0-based index of the version it revised) for the pager: "steer: … (on version 2)".
+  - `message.edit {conversation, message, content}` (blank refused), `message.delete {conversation, message}`. Both, and select-version, are a **409 while a reply is being generated**: disable them during a reply, or show the 409 message.
+  - `generation.stop {conversation}` → `{stopped, message, error?}`, returning once the stopped reply is saved: a Stop button for the live reply. What had arrived is kept as the message (turn) or a new version (regenerate), with `stopped: true` (show "stopped"). When nothing had arrived, the stream ends with an error of code `stopped` (HTTP 499 if it ended before the first event): show its message calmly, not as a failure. For a turn stopped before its `message` event, the player message wasn't saved: put the text back in the composer, as for any failed send.
 
 **Deferred in:** *(none yet)*
 
@@ -89,7 +95,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 - `conversation.update` covers the templates. (Done in T02.)
 - `turn --brain <name|id>`, sending to any brain. With empty content, it just invokes the brain. (`--brain` and name/id resolution already work in T02's `turn` and `prompt.preview`; with one brain there was nothing else to send to.)
 - `message.add --as player|<brain>`: hand-authored messages, e.g. the GM's opening line.
-- Regenerate always uses the message's own brain.
+- Regenerate always uses the message's own brain. (Done in T03: `planRegenerate` takes the brain from the message's author; there is no `--brain` on `message.regenerate`.)
 - `--brain` accepts a name or an id everywhere.
 
 **Acceptance (terminal, mock, then one live pass)**
