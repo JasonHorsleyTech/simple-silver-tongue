@@ -357,7 +357,7 @@ Any brain can be sent a roll, image brains included (Jason: "sure, why not"). It
 
 ---
 
-## T10: Presets · `triage`
+## T10: Presets · `frontend`
 
 Jason, 2026-10-14: typing in a campaign's brains by hand is the slow part. A **preset** is a ready-made kit of brains with good default instructions and no world: no World Bible, no story. You can start a new conversation from one ("Chinatown, film noir": pick the tabletop preset, write the World Bible, play). You can also add any one of a preset's brains to a conversation you already have.
 
@@ -421,5 +421,8 @@ Rules for every brain:
   - **Engineer's calls:** presets have their own folder (`presets/`), refused there if they carry setup or messages. The preset uses the default templates and its prompts don't lean on them, so a preset brain reads any conversation alike. **The Character Actor ships with reasoning on (low)**, the only brain that does, on live evidence (it caught a lie the reasoning-off reply didn't; never cut by the stop sequence in 3 live replies); every other brain is off. **Show Me the Odds has no label** (a label leaked a sheet-only name live). The Creator's sheet starts with "Known to the player as".
   - **For QA:** `npm run up:mock` exercises the plumbing; the prompts can only be judged live (the mock echoes). Leak hunting is welcome, but leaks are accepted (Jason): report how rare, not that they exist. Check `brain.import` against a conversation whose templates are its own (the Goat) and the defaults (a preset conversation), and of an image brain.
   - **For Frontend:** `web/src/api/types.ts` already has `presets.list` (`PresetInfo`, brains as `LibraryBrain` with `about`), `conversation.import`'s `preset`, and `brain.import` (`BrainImport`: show `notes` after adding, they are sentences for the user). `examples.list`'s brains have `about` too. A 409 `conflict` from `brain.import` is the name clash: offer the name field. The new conversation from a preset has `setup: []`: that is the pointer to the Setup tab. README has the terminal paragraphs ("Start from a preset"); the browser ones are yours.
+- **From T10 triage** (report: `reports/T10-triage.md`):
+  - Four prompts changed on live evidence (fix against control): the odds (no chance only for the impossible; a person who'd rather say no is a roll), the Co-GM (settles plain details only, never one that gives a secret away, not even to deny it), the GM (after a roll, never writes the player's pitch), the Portraitist (nothing written about hands). The Gilded Goat is unchanged.
+  - **For Frontend:** `brain.import` can now return a third note, for a preset brain going into a conversation with a brain that doesn't know hidden notes (the Goat): it says the brain can't read other brains' system prompts. It's a sentence for the user, like the others; show all `notes`. `presets.list` and `examples.list` now list a file an import would refuse (e.g. two brains of one name) with `error`: show it as unusable, not pickable. `about` is always one line (a line break is refused). The CLI marks the Actor "(reasoning low)" in `conversation.import`'s brain list; the preset picker's badges could say so too (its `about` already does). README has a new paragraph on preset brains in the Goat.
 
 **Deferred in:** *(none yet)*

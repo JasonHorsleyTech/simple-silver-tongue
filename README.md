@@ -75,7 +75,9 @@ export SS_CONVERSATION=c_...
 ./ss brain.import --example dnd-tavern --brain "Dice Master"                             # an example campaign's brains work too
 ```
 
-The whole brain comes over (its prompt, reminder, reasoning, stop sequence, and an image brain's tool text and safe mode), and nothing else: the conversation keeps its own World Bible and templates, and the command says when those differ.
+The whole brain comes over (its prompt, reminder, reasoning, stop sequence, and an image brain's tool text and safe mode), and nothing else: the conversation keeps its own World Bible and templates, and the command says when the templates differ.
+
+A preset brain learns what you haven't seen from hidden notes (the sheets), and no brain reads another brain's system prompt. The Gilded Goat keeps the hooded figure's secrets in its Game Master's prompt, so an imported Character Actor plays her from what the story shows, and may play her differently from the GM. To share her secrets, copy them into a hidden note in a setup message (Setup tab, or `setup.add`). Every brain reads it then, the Goat's Joke Teller and painters included, and they weren't written to keep secrets.
 
 ## Play
 

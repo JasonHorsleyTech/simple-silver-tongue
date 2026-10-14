@@ -123,6 +123,7 @@ describe("presets: list, start one, add one of its brains (T10)", () => {
     assert.deepEqual(brainOf(added.brain), fileBrain(PRESET.brains[4]), "the whole brain: prompt, reminder, kind, reasoning, stop");
     assert.deepEqual(added.from, { preset: "tabletop-rpg", title: "Tabletop RPG" });
     assert.match(added.notes.join(" "), /keeps its own templates, which differ/, "it says what it left behind: the Goat frames messages its own way");
+    assert.match(added.notes.join(" "), /can't read the other brains' system prompts/, "T10 QA-3: the Goat keeps its secrets in its GM's prompt, which the Actor can't see");
     let conv = await get(clone.id);
     assert.equal(conv.brains.length, before + 1);
     assert.notEqual(conv.defaultBrainId, added.brain.id, "never the default");
@@ -179,5 +180,8 @@ describe("presets: list, start one, add one of its brains (T10)", () => {
     await fails(["brain.import", "--conversation", c, "--preset", "tabletop-rpg", "--brain", "Co-GM", "--name", "player"], /reserved/);
     await fails(["conversation.import", "--preset", "tabletop-rpg", "--example", "dnd-tavern"], /Pass one of --example/);
     assert.equal((await get(c)).brains.length, 7);
+    // Into a conversation of the same preset: same templates, and every brain knows hidden notes, so nothing to say.
+    const spare = await json(["brain.import", "--conversation", c, "--preset", "tabletop-rpg", "--brain", "Co-GM", "--name", "Spare Co-GM"]);
+    assert.deepEqual(spare.notes, []);
   });
 });

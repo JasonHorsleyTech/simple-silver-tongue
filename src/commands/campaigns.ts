@@ -58,9 +58,11 @@ const version = z.object({
   // T09: what a player's roll said, for display. The content is what the brains read.
   roll: z.object({ die: z.literal("d20"), result: z.number().int().min(1).max(20) }).optional(),
 });
+/** One line for the lists and the browser's picker (T10 QA-7: a line break broke the CLI listing). */
+const about = z.string().regex(/^[^\r\n]*$/, "one line, with no line breaks");
 const campaignSchema = z.object({
   /** One line for examples.list. Not sent to any model, and not stored. */
-  about: z.string().optional(),
+  about: about.optional(),
   title: title.optional(),
   settings: z
     .object({
@@ -80,7 +82,7 @@ const campaignSchema = z.object({
         id: z.string().min(1).optional(),
         name: brainName,
         /** T10: one line on the brain's job, for examples.list, presets.list and the browser. Not sent, not stored. */
-        about: z.string().optional(),
+        about: about.optional(),
         color: color.optional(),
         kind: kind.default("text"),
         reasoning: reasoning.optional(),
@@ -245,7 +247,8 @@ async function listLibrary(lib: Library): Promise<ExampleInfo[]> {
   const out: ExampleInfo[] = [];
   for (const name of await libraryNames(lib)) {
     try {
-      const { doc } = await readCampaign(lib, name);
+      const { doc, where } = await readCampaign(lib, name);
+      toConversation(doc, where); // T10 QA-7: what an import would refuse (two brains of one name) isn't listed as usable
       out.push({
         name,
         title: doc.title ?? name,
@@ -391,10 +394,11 @@ export const brainImport = command({
   name: "brain.import",
   description: `Add one brain from a preset (or an example campaign) to a conversation you already have.
 The whole brain comes over, as its file has it: system prompt, final reminder, kind, reasoning, stop sequences,
-and for an image brain its tool text and safe mode. Nothing else does: the file's templates, World Bible and
-settings stay behind, and the answer says so when they differ from this conversation's. It gets a fresh id, keeps
-its color unless a brain here already has it, and is never the default. A brain here with the same name is a 409:
---name adds it under another name. Edit it afterwards like any brain (brain.update).`,
+and for an image brain its tool text and safe mode. Nothing else does: the file's World Bible, templates and
+settings stay behind, and the answer says so when its templates differ from this conversation's. It gets a fresh
+id, keeps its color unless a brain here already has it, and is never the default. A brain here with the same name
+is a 409: --name adds it under another name. Edit it afterwards like any brain (brain.update). A preset brain
+learns secrets from hidden notes, never from another brain's system prompt: the answer says so when that matters.`,
   args: z.object({
     conversation: conversationId,
     preset: z.string().min(1).optional().describe("The preset it comes from (./ss presets.list), e.g. tabletop-rpg"),
@@ -439,6 +443,13 @@ its color unless a brain here already has it, and is never the default. A brain 
       );
     }
     if (lib === "example") notes.push(`It was written for "${title}", so its prompt may name that campaign's world and people: brain.list shows it, and brain.update changes it.`);
+    // T10 QA-3: a preset brain learns secrets from hidden notes. A brain whose prompt doesn't know the convention
+    // (the Gilded Goat's GM) may keep its secrets in that prompt, which no other brain reads.
+    if (lib === "preset" && conv.brains.some((b) => b.id !== result.id && !/(```|~~~)hidden/i.test(b.systemPrompt))) {
+      notes.push(
+        `${result.name} learns what the player hasn't seen from hidden notes (\`\`\`hidden blocks, such as character sheets). It can't read the other brains' system prompts, so a secret only one of them holds is news to it. To share one, put it in a hidden note in a setup message (setup.add): every brain reads those.`,
+      );
+    }
     return { conversationId: conv.id, brain: result, from: { [lib]: fileName, title }, notes };
   },
   format: (r: BrainImport) =>
@@ -491,7 +502,10 @@ cost nothing yet; the original is untouched. With --without-messages it is a fre
 });
 
 function started(verb: string, c: Conversation): string {
-  const brains = c.brains.map((b) => `${b.name}${b.id === c.defaultBrainId ? " (default)" : ""}${b.kind === "image" ? " (image)" : ""}`).join(", ");
+  // T10 QA-8: reasoning is a labeled opt-in, and a preset or a file can switch it on for you.
+  const brains = c.brains
+    .map((b) => `${b.name}${b.id === c.defaultBrainId ? " (default)" : ""}${b.kind === "image" ? " (image)" : ""}${b.reasoning.enabled ? ` (reasoning ${b.reasoning.effort})` : ""}`)
+    .join(", ");
   // Only the images that came over unpainted: a clone copies finished ones (T07 QA-8).
   const images = c.messages.filter((m) => m.kind === "image" && m.versions[m.activeVersion]?.image?.status === "error").length;
   return [
