@@ -224,6 +224,14 @@ image.get · image.retry
 prompt.preview
 ```
 
+## Web app (`web/`)
+
+React 19 + Vite + Tailwind v4, dark only, built to `web/dist` by `npm run up` and served by the same server. It is a skin over the commands: every server call goes through `web/src/api/client.ts` to `POST /api/<command>` (or `GET` for a binary command's `<img src>`), typed by the command maps in `web/src/api/types.ts`. There are no UI-only endpoints and no other fetches.
+
+- **Errors.** Every failure is an `ApiError {status, code, message}`: the server's own error body, or `network`, `stream_broken` or `bad_stream` from the client. `status` is 0 when there was no HTTP error status. Views show `message` inline where it happened, or as a sticky error toast.
+- **Streams.** `api.stream()` yields each NDJSON event as its line completes. A server `error` event, a dropped connection and a stream that ends without `done` all throw, so a consumer keeps the text it already has and still sees the failure. Aborting stops reading only; the server finishes and saves anyway.
+- **Session.** The UI mirrors `auth.whoami`: at boot, after login and logout, and whenever the tab regains focus. A response carrying `x-ss-session: invalid`, or a 401 `unauthenticated`/`session_ended`, sends the UI back to the login screen with a "session ended" notice and keeps the URL, so logging in again returns to it. Logout goes to `/`, so the next user doesn't land on someone else's conversation URL. Focusing a tab whose cookie now belongs to another user (logged in from another tab) switches to that user. The last username is remembered in `localStorage`; nothing else is stored in the browser.
+
 ## Mock Venice
 
 `src/dev/mock-venice.ts` is a small HTTP server that speaks the Venice protocol: `/models`, `/chat/completions` (SSE streaming, including reasoning and forced tool calls), `/image/generate` (a tiny real image) and `/api_keys/rate_limits`. `npm run up:mock` starts it on port 4748 and points the app at it with `VENICE_BASE_URL`. In mock mode the server never loads `.env`, so the real key can't reach the mock. Tests start it in-process with `startMockVenice({ port: 0, delayMs: 0 })`.

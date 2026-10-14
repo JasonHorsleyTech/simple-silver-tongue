@@ -56,6 +56,7 @@ npm run up         # build the web app, (re)start the server in the background â
 npm run up:mock    # same, but against the local mock Venice on :4748 (free, deterministic)
 npm run down       # stop everything
 npm run logs       # tail .run/server.log
+npm run web:dev    # Vite hot reload on :5173, forwarding /api to the server on :4747 (start one with up:mock first)
 ./ss help          # every command (also: npm run ss -- help)
 ./ss help user.create                  # one command's flags (or ./ss user.create --help)
 ./ss user.create --username jason      # prompts for a password (hidden); empty = unencrypted
@@ -64,7 +65,7 @@ npm run logs       # tail .run/server.log
 ./ss models.list --type image          # text and image models with price and privacy
 ./ss venice.balance
 npm test           # node:test, never hits the live API
-npm run typecheck
+npm run typecheck  # server, CLI and tests, then web/ (needs web/node_modules: npm run up installs it)
 ```
 
 - `up` is idempotent: it stops whatever is running (only our own processes, found by pid file or by port), builds the web app, starts the server detached, waits for `/api/health` and prints the URL. If a foreign program holds port 4747 it says so and stops. The previous log is kept as `.run/server.log.1`.
@@ -133,3 +134,6 @@ Rules for every pass:
 - **T01: tooling.** `npm install -D typescript` now installs TypeScript 7 (the Go port). It's fast and works with the tsconfig as is. Node 26 runs the `.ts` files with no flags and no warnings. Remember `import type` for type-only imports (`verbatimModuleSyntax` enforces it); a value-style import of a type crashes at runtime under type stripping.
 - **T01 triage: the vault you get is yours for this request only.** `ctx.requireSession().vault` is a per-request copy of the key, closed when the handler or stream finishes. That is what lets logout mid-`turn` finish and save safely. If you start work that outlives the request (a detached promise), `forkVault()` your own copy and `closeVault()` it in a `finally`. Otherwise the work fails loudly with `session_ended`, which is the intended failure.
 - **T01 triage: raw HTTP needs the JSON content type.** `POST /api/*` without `Content-Type: application/json` is a 415 (CSRF guard), even with an empty body. Use `curl -H 'content-type: application/json' -d '{}' ...`.
+- **T01 frontend: where web code goes.** `web/src/api/` is the only code that talks to the server: `api.call(name, args)`, `api.stream(name, args)` (NDJSON, yields events, throws `ApiError` on an `error` event, a dropped connection or a missing `done`) and `api.binaryUrl()` for `<img src>`. Give the UI a new command by adding one line to the `Commands` / `StreamCommands` maps in `web/src/api/types.ts`; names and args are then type-checked. Views go in `web/src/features/<area>/`, routes in `web/src/app/routes.tsx` (a tiny History router in `web/src/lib/router.tsx`: `usePath`, `matchPath("/c/:id")`, `navigate`, `<Link>`), shared bits in `web/src/components/` (Button, TextField, Notice, `toast.error()` for errors with no inline home). Colors are semantic Tailwind tokens from `web/src/index.css` (`bg-canvas`, `bg-panel`, `bg-raised`, `border-line`, `text-muted`, ...).
+- **T01 frontend: the API client is DOM-free on purpose.** `web/src/api/*.ts` use only fetch, streams and TextDecoder, with explicit `.ts` imports, so `test/web-api.test.ts` imports them straight into `node:test` and runs them against `startTestServer()`. Keep `window`/`document` out of that folder.
+- **T01 frontend: Chrome checks.** Open pages with `new_page({isolatedContext: "<name>"})` for a clean cookie jar; a second page in the same context shares the session (good for cross-tab cases). The app re-checks `auth.whoami` when the tab gains focus; trigger that with `evaluate_script(() => window.dispatchEvent(new Event("focus")))`. Chrome logs every 4xx fetch as a console error, so a wrong-password 401 there is expected.

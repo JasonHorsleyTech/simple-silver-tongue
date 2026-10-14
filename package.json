@@ -15,7 +15,8 @@
     "ss": "node src/cli/main.ts",
     "mock": "node src/dev/mock-venice.ts",
     "test": "node --test --test-concurrency=1 \"test/**/*.test.ts\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && npm --prefix web run --silent typecheck",
+    "web:dev": "npm --prefix web run dev"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",
