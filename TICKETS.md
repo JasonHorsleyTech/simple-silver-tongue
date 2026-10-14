@@ -51,6 +51,8 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 - `prompt.preview` shows system, then framed user/assistant pairs, with no extra text.
 - One live round trip on `deepseek-v4-1-flash` works.
 
+- Handle the empty-system-prompt leak (design.md hard rule 1, T01 QA-1): warn in `prompt.preview` and pre-fill a non-empty system prompt.
+
 **Frontend scope:** Sidebar conversation list, "New conversation" form (title + system prompt), and the chat view with routing at `/c/<id>`. Markdown-rendered scrollback, a composer (Enter sends, Shift+Enter adds a newline), live token streaming, collapsible reasoning, and a running cost per conversation.
 
 **Deferred in:** *(none yet)*
