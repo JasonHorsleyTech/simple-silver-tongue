@@ -13,16 +13,29 @@ import { conversationId, systemPrompt } from "./conversations.ts";
  * uses the change. A brain that has spoken can't be deleted, and its kind is locked.
  */
 
-export const brainRef = z.string().min(1).describe("Brain name or id (default: the conversation's default brain)");
-const brainTarget = z.string().min(1).describe("Brain name (case-insensitive) or id (b_...)");
+/** A blank ref is a mistake, not "the default brain": only an omitted --brain means that (T04 QA-2). */
+const ref = (blank: string) => z.string().refine((s) => s.trim() !== "", blank);
+export const brainRef = ref("A blank brain names no one: give a brain's name or id, or leave it out for the default brain").describe(
+  "Brain name or id (default: the conversation's default brain)",
+);
+const brainTarget = ref("A blank brain names no one: give a brain's name or id").describe("Brain name (case-insensitive) or id (b_...)");
 
 /** Venice's documented reasoning effort levels. Each model supports a subset (./ss models.list --type text). */
 export const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 /** The word message.add --as uses for you, so no brain can be called that. */
 export const PLAYER = "player";
+/** message.add --as: you, or a brain. */
+export const authorRef = ref(`Say who wrote it: "${PLAYER}" (you), or a brain's name or id`);
 
-const name = z.string().trim().min(1).max(60);
+/** One line of visible text: it is framed into every other brain's prompt and listed in every view (T04 QA-3). */
+const name = z
+  .string()
+  .trim()
+  .min(1)
+  .max(60)
+  .refine((s) => !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(s), "A brain name is one line, with no line breaks, tabs or control characters")
+  .refine((s) => /[\p{L}\p{N}\p{P}\p{S}]/u.test(s), "A brain name needs at least one visible character");
 const color = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Colors look like #60a5fa").describe("Badge color, #rrggbb");
 const kind = z.enum(["text", "image"]);
 const reasoning = z

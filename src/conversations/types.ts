@@ -163,3 +163,12 @@ export type ChatRequest = {
   }>;
   tool_choice?: { type: "function"; function: { name: string } };
 };
+
+/**
+ * The exact request that retries a reply whose stream broke: the same command with the same brain (a turn)
+ * or the same message and steer (a regenerate). It rides on the stream's error event as `error.details.retry`,
+ * so a client's Retry replays it instead of guessing who should answer (T04 QA-1).
+ */
+export type RetryRequest =
+  | { command: "turn"; args: { conversation: string; brain: string } }
+  | { command: "message.regenerate"; args: { conversation: string; message: string; steer?: string } };

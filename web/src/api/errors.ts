@@ -1,3 +1,5 @@
+import type { RetryRequest } from "./types.ts";
+
 /**
  * Every failure the API client reports is an ApiError, so a view can always show `message`.
  * `code` is the server's error code (bad_args, wrong_password, conflict, venice_error, ...) or one of the
@@ -16,6 +18,16 @@ export class ApiError extends Error {
     this.code = code;
     this.details = details;
   }
+}
+
+/**
+ * The request that retries a reply whose stream broke, from the error itself: the same brain for a turn, the
+ * same message and steer for a regenerate (T04 QA-1). Null for any other error. Retry should replay this
+ * rather than a bare `turn`, which would go to the default brain.
+ */
+export function retryOf(err: unknown): RetryRequest | null {
+  const retry = err instanceof ApiError ? (err.details as { retry?: RetryRequest } | undefined)?.retry : undefined;
+  return retry && typeof retry === "object" ? retry : null;
 }
 
 /** True for the error fetch throws when its AbortSignal fires. Callers that cancel usually want to ignore it. */

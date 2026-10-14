@@ -115,7 +115,8 @@ describe("streaming chat end to end: CLI → server → mock Venice", () => {
     r = await t.cli(["turn", "--conversation", conv.id, "--content", "MOCK_MIDSTREAM_ERROR please"]);
     assert.equal(r.code, 1);
     // The error says what was kept and how to retry (T02 QA-8).
-    assert.match(r.stderr, /stream broke off .*Your message is saved; the reply isn't\. To retry, send again with no new message: turn without --content, or Retry in the browser\./);
+    const brainId = (await get(conv.id)).defaultBrainId;
+    assert.match(r.stderr, new RegExp(`stream broke off .*Your message is saved; the reply isn't\\. To retry, send again to Assistant with no new message: turn --brain ${brainId} without --content, or Retry in the browser\\.`));
     const saved = await get(conv.id);
     assert.deepEqual(saved.messages.map((m) => m.author.type), ["player"]);
   });

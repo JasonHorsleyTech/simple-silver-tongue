@@ -20,7 +20,7 @@ import {
   untilAborted,
   type Reply,
 } from "../conversations/turn.ts";
-import type { ChatRequest, Conversation, LedgerMessage, Usage } from "../conversations/types.ts";
+import type { ChatRequest, Conversation, LedgerMessage, RetryRequest, Usage } from "../conversations/types.ts";
 import { STOP_BILL_NOTE } from "../conversations/wording.ts";
 import { badRequest, CommandError } from "../lib/errors.ts";
 import { newId } from "../lib/ids.ts";
@@ -98,9 +98,9 @@ turn: it sees the whole ledger, its own replies as assistant and everyone else's
 shows exactly what it gets). Without --content the brain just responds to the ledger as it stands; that is
 refused only when its request would end with its own reply (a brain with a final reminder always has one to
 answer). Your message is saved once Venice accepts the request. If the reply then fails, your message stays
-and no reply is saved: run turn again without --content to retry. One reply at a time per conversation (409
-if busy). The reply prints to stdout as it streams; reasoning and status lines go to stderr. Another terminal
-or a reloaded browser can watch it with generation.follow.`,
+and no reply is saved: to retry, run turn again with the same --brain and no --content (the error says so).
+One reply at a time per conversation (409 if busy). The reply prints to stdout as it streams; reasoning and
+status lines go to stderr. Another terminal or a reloaded browser can watch it with generation.follow.`,
   args: turnArgs,
   examples: [
     './ss turn --conversation c_k3j9x0q2ma --content "Hello there"',
@@ -141,7 +141,9 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
 
   const reply = yield* collectReply(vault, conv.id, upstream, gen, {
     kept: plan.player ? "Your message is saved; the reply isn't." : "No reply was saved.",
-    retry: "To retry, send again with no new message: turn without --content, or Retry in the browser.",
+    // Name the brain: with several, a bare "turn" goes to the default brain, which may be another one (T04 QA-1).
+    retry: `To retry, send again to ${plan.brain.name} with no new message: turn --brain ${plan.brain.id} without --content, or Retry in the browser.`,
+    again: { command: "turn", args: { conversation: conv.id, brain: plan.brain.id } },
   });
   const message = newMessage({ type: "brain", brainId: plan.brain.id }, "text", generatedVersion(reply, plan.body.model), messageId);
   const spentUsd = await saveReply(vault, conv.id, reply, (c) => {
@@ -196,7 +198,11 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
   const start: StreamEvent = { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId: id, regenerate: true };
   if (plan.steer !== undefined) start.steer = plan.steer;
   yield start;
-  const reply = yield* collectReply(vault, conv.id, upstream, gen, { kept: `No new version was saved; ${keeps}`, retry: "To retry, regenerate again." });
+  const reply = yield* collectReply(vault, conv.id, upstream, gen, {
+    kept: `No new version was saved; ${keeps}`,
+    retry: "To retry, regenerate again.",
+    again: { command: "message.regenerate", args: { conversation: conv.id, message: id, ...(plan.steer !== undefined ? { steer: plan.steer } : {}) } },
+  });
 
   const version = generatedVersion(reply, plan.body.model);
   if (plan.steer !== undefined) Object.assign(version, { steer: plan.steer, steeredFrom: plan.steeredFrom });
@@ -239,15 +245,16 @@ export { STOP_BILL_NOTE };
 
 /**
  * Relay the reply and return it whole. A broken stream says what was kept and how to retry, in the message
- * the user actually reads (T02 QA-8). A stop keeps what had arrived; with no reply text there is nothing to
- * keep, so it ends as a "stopped" error instead, and only the cost is recorded, by the drain.
+ * the user actually reads (T02 QA-8), and carries the retry request itself in `details.retry`. A stop keeps
+ * what had arrived; with no reply text there is nothing to keep, so it ends as a "stopped" error instead,
+ * and only the cost is recorded, by the drain.
  */
 async function* collectReply(
   vault: Vault,
   convId: string,
   upstream: AsyncIterable<ChatEvent>,
   gen: GenerationHandle,
-  say: { kept: string; retry: string },
+  say: { kept: string; retry: string; again: RetryRequest },
 ): AsyncGenerator<StreamEvent, Reply> {
   let reply: Reply;
   try {
@@ -255,7 +262,8 @@ async function* collectReply(
     if (reply.rest) gen.keepUpstream(); // the drain reads it from here; release() must not cut it
   } catch (err) {
     if (err instanceof CommandError && err.code === "venice_error") {
-      throw new CommandError(err.status, err.code, `${err.message} ${say.kept} ${say.retry}`, err.details);
+      const details = { ...(err.details && typeof err.details === "object" ? err.details : {}), retry: say.again };
+      throw new CommandError(err.status, err.code, `${err.message} ${say.kept} ${say.retry}`, details);
     }
     throw err;
   }

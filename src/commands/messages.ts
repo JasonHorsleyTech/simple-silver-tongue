@@ -7,7 +7,7 @@ import type { Author, Conversation, LedgerMessage } from "../conversations/types
 import { CommandError, notFound } from "../lib/errors.ts";
 import { nowIso } from "../lib/ids.ts";
 import { command } from "../registry.ts";
-import { PLAYER } from "./brains.ts";
+import { authorRef, PLAYER } from "./brains.ts";
 import { conversationId } from "./conversations.ts";
 
 /**
@@ -48,7 +48,7 @@ framed with its name, exactly as if it had written them. Then send a turn, to an
 Refused while a reply is being generated (it would land after your message, answering what came before it).`,
   args: z.object({
     conversation: conversationId,
-    as: z.string().min(1).describe(`Who says it: "${PLAYER}" (you), or a brain's name or id`),
+    as: authorRef.describe(`Who says it: "${PLAYER}" (you), or a brain's name or id`),
     content: messageText("The message can't be empty", "The message (Markdown; @file.md or - for stdin)"),
   }),
   examples: [

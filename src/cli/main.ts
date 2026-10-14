@@ -298,6 +298,12 @@ async function offlineHelp(rest: string[], io: Io): Promise<number> {
 }
 
 if (import.meta.main) {
+  // `./ss ... | head` closes stdout early: exit quietly, as cat does, instead of a stack trace (T04 QA-4).
+  // The server never waits on us, so a reply still being streamed finishes and is saved.
+  process.stdout.on("error", (e: NodeJS.ErrnoException) => {
+    if (e.code !== "EPIPE") throw e;
+    process.exit(0);
+  });
   let stdinCache: Promise<string> | null = null;
   const code = await run(process.argv.slice(2), {
     env: process.env,

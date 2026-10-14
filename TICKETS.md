@@ -92,7 +92,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T04: Multiple brains, setup messages and templates (CP3) · `triage`
+## T04: Multiple brains, setup messages and templates (CP3) · `frontend`
 
 **Engineer scope**
 - `brain.add` / `.update` / `.delete` / `.set-default`. Delete is refused while the ledger references the brain. (`brain.update` exists since T02 for name, color, system prompt, reasoning and reminder; T04 extends it with kind, tool text and safe mode. The default brain is `conversation.defaultBrainId`.) Kind is locked once the brain has messages. The final reminder is enabled by default on non-default brains, pre-filled with an editable `<!-- System reminder -->` example.
@@ -121,6 +121,10 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
   - `message.add {conversation, as: "player" | <brain name or id>, content}` → `MessageView`: "write as…" for the GM's opener. 409 while a reply is being generated, like edit.
   - `turn {conversation, brain, content?}` with empty content just invokes the brain, and a brain with its reminder on always has something to answer. The `start` event's `brainName` says who is writing.
   - Image brains can be created and edited now, but `turn`, `message.add` and regenerate refuse them (`not_supported`) until T05.
+
+- **From T04 triage:**
+  - **Retry must keep the brain.** Today `ChatView` retries with `chat.send("")`, which goes to the default brain: with per-brain Send buttons, a failed Dice Master reply would be retried by the GM (T04 QA-1). A broken reply's error now carries the exact retry request: `retryOf(err)` (`web/src/api/errors.ts`) gives `{command: "turn", args: {conversation, brain}}` or `{command: "message.regenerate", args: {conversation, message, steer?}}` (`RetryRequest`). Keep it on the failed live reply and replay it on Retry (for a turn, `send("", retry.args.brain)`); `live.brainId` from `start` names the same brain.
+  - Brain names are now one line of visible text (no line breaks, tabs, control characters or zero-width-only names): `brain.add` / `.update` answer 400 `bad_args` with a per-field message, so show `errorMessage(err)` inline. A blank `message.add --as` or `--brain` is a 400 too, not "the default brain": omit the field for the default.
 
 **Frontend scope (T02 built the base: `SettingsPanel`, `BrainEditor`, `TemplatesEditor`, `PayloadDialog`, per-brain `Composer` buttons, `BrainBadge`):** A conversation settings drawer: title, text and image model pickers from `models.list`, reasoning effort, a templates editor, a setup-messages editor (add, reorder, edit, delete), and a brains editor (name, color, kind, system prompt, reasoning on/off + effort, reminder checkbox + text, default, delete only when unused). The composer gets a big Send to the default brain plus a button per other brain. Messages get colored author badges. An "Exact payload" modal per brain renders `prompt.preview`.
 
@@ -181,5 +185,4 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 **Frontend scope:** The same playthrough in Chrome, plus visual polish, empty states, keyboard niceties and error toasts. Screenshots go in `reports/screens/`.
 
-**Deferred in:**
-- CLI: `./ss generation.follow --json | head -3` (any streaming command piped into something that closes early) crashes with an unhandled `EPIPE` stack trace. It is harmless, carries no user content and predates T03. Exit quietly on `EPIPE` instead (T03 QA, "Outside this ticket").
+**Deferred in:** *(none yet)*

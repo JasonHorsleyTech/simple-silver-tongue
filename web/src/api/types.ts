@@ -6,10 +6,10 @@
  * The conversation document and model types are the server's own (type-only imports of dependency-free
  * files), so the UI can't drift from what is on disk. Command args are still written out here by hand.
  */
-import type { Brain, ChatMessage, ChatRequest, Conversation, LedgerMessage, MessageVersion, Templates } from "../../../src/conversations/types.ts";
+import type { Brain, ChatMessage, ChatRequest, Conversation, LedgerMessage, MessageVersion, RetryRequest, Templates } from "../../../src/conversations/types.ts";
 import type { ModelInfo } from "../../../src/venice/models.ts";
 
-export type { Brain, ChatMessage, ChatRequest, Conversation, LedgerMessage, MessageVersion, ModelInfo, Templates };
+export type { Brain, ChatMessage, ChatRequest, Conversation, LedgerMessage, MessageVersion, ModelInfo, RetryRequest, Templates };
 
 /** The server's own sentence for what a stop does and doesn't save (shown next to Stop, and with its result). */
 export { STOP_BILL_NOTE } from "../../../src/conversations/wording.ts";
@@ -148,6 +148,7 @@ export type StreamEvent =
    * conversation's running total once this reply's cost was added (a stopped reply's cost comes later).
    */
   | { type: "done"; message: LedgerMessage | null; note?: string; spentUsd?: number }
+  /** A broken reply (`venice_error`) from turn or message.regenerate carries `details.retry`: see `retryOf`. */
   | { type: "error"; error: { code: string; message: string; details?: unknown } };
 
 /** What a stream consumer receives: every event except `error`, which arrives as a thrown ApiError. */

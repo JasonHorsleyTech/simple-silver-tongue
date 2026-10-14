@@ -171,6 +171,42 @@ describe("multiple brains, setup messages and hand-written lines: CLI → server
     await fails(["message.add", "--conversation", c, "--as", "Nobody", "--content", "x"], /No brain "Nobody"/);
   });
 
+  test("a broken reply's retry names the brain that failed, in the text and as details.retry (T04 QA-1)", async () => {
+    const { c, dice } = await dnd();
+    await ok(["brain.update", "--conversation", c, "--brain", dice.id, "--final-reminder.content", "MOCK_MIDSTREAM_ERROR"]);
+    const r = await t.cli(["turn", "--conversation", c, "--brain", "Dice Master", "--content", "I read her intentions.", "--json"]);
+    assert.equal(r.code, 1);
+    const end = JSON.parse(r.stdout.trim().split("\n").at(-1)!);
+    assert.equal(end.type, "error");
+    assert.match(end.error.message, new RegExp(`send again to Dice Master with no new message: turn --brain ${dice.id} without --content`));
+    assert.deepEqual(end.error.details.retry, { command: "turn", args: { conversation: c, brain: dice.id } });
+    // Replaying it reaches the Dice Master, not the default brain.
+    assert.equal((await json(["prompt.preview", "--conversation", c, "--brain", end.error.details.retry.args.brain])).brainName, "Dice Master");
+
+    // A regenerate's retry is the same message with the same steer.
+    await ok(["brain.update", "--conversation", c, "--brain", dice.id, "--final-reminder.content", DICE_REMINDER]);
+    await ok(["turn", "--conversation", c, "--brain", "Dice Master"]);
+    const last = (await get(c)).messages.at(-1)!.id;
+    const g = await t.cli(["message.regenerate", "--conversation", c, "--steer", "MOCK_MIDSTREAM_ERROR roll again", "--json"]);
+    assert.equal(g.code, 1);
+    const gEnd = JSON.parse(g.stdout.trim().split("\n").at(-1)!);
+    assert.deepEqual(gEnd.error.details.retry, { command: "message.regenerate", args: { conversation: c, message: last, steer: "MOCK_MIDSTREAM_ERROR roll again" } });
+  });
+
+  test("names and refs: a brain name is one line of visible text; a blank --as or --brain is refused, not the default (T04 QA-2, QA-3)", async () => {
+    const { c } = await dnd();
+    for (const bad of ["Line\nBreak", "Tab\there", "\u200b", "\u200b\u200d"]) {
+      await fails(["brain.add", "--conversation", c, "--name", bad, "--system-prompt", "x"], /one line|visible character/);
+    }
+    await fails(["brain.update", "--conversation", c, "--brain", "Dice Master", "--name", "Dice\nMaster"], /one line/);
+    await ok(["brain.add", "--conversation", c, "--name", "Bard 🎲", "--system-prompt", "x"]);
+    const before = (await get(c)).messages.length;
+    await fails(["message.add", "--conversation", c, "--as", "   ", "--content", "Who said this?"], /Say who wrote it/);
+    await fails(["turn", "--conversation", c, "--brain", " ", "--content", "x"], /blank brain names no one/);
+    await fails(["brain.delete", "--conversation", c, "--brain", " "], /blank brain names no one/);
+    assert.equal((await get(c)).messages.length, before, "nothing was added");
+  });
+
   test("while a brain writes a reply, it can't be deleted or change kind, and nothing can be added to the ledger; other brains can go", async () => {
     const { c } = await dnd();
     // No reminder, so the mock sees MOCK_SLOW in the last message.
