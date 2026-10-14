@@ -413,6 +413,39 @@ Jason's loop: the player sends an uncertain action to a brain that names the odd
 
 Verified live in T09 engineer (2026-10-14), `deepseek-v4-1-flash`, reasoning off, on a clone of the Gilded Goat (encrypted `dev-` user, the example's prompts unchanged): the GM answered a lie with "That's a Deception check."; the Dice Master, asked "What do I roll?", answered "**Deception check:** roll 1d20 + 5, DC 14"; `turn --brain "Game Master" --roll` rolled 18 and the GM narrated her believing the courier story (18 + 5 ≥ 14). Then the roll was edited to "🎲 I rolled a d20: **3**" and the GM's reply re-rolled: she saw through it ("No, you're not"), awkwardly but not disastrously, as the GM's prompt asks. Four text calls, $0.0017.
 
+## Presets (T10)
+
+A **preset** is a ready-made kit of brains with good default instructions and no world: no World Bible and no story. Jason's two uses: start a campaign from one ("Chinatown, film noir": pick the tabletop preset, write the World Bible, play), and drop any one of its brains into a conversation he already has.
+
+- **A preset is a campaign file (T07) with no setup and no messages**, committed in `presets/<name>.json` and edited in the repo like `examples/`. It is read and checked by the same `parseCampaign` + `toConversation` as an example. A file with setup or messages is refused, where it is listed and wherever it is used ("a preset has brains and no world… A campaign with them belongs in examples/"). **Why a folder of its own**, not examples with a flag: the two answer different questions (an empty world to fill, against a campaign ready to play), the browser offers them apart, and each list stays plain. Nothing new is in the file format except `about` on a brain.
+- **`about` on a brain** (campaign files: presets and examples alike) is one line on its job, for `presets.list`, `examples.list` and the browser's pickers. Like the file's own `about`, it is never sent and never stored.
+- **`presets.list`** (no login) → `{presets: [{name, title, about, brains: [{name, kind, color, about}]}]}`.
+- **`conversation.import --preset <name> [--title]`**: the preset's brains, settings and templates; no setup, no messages. The CLI's text for any import or clone that has no setup ends with a pointer to `setup.add`, since every brain reads the World Bible.
+- **`brain.import --conversation (--preset <name> | --example <name>) --brain <its name in the file> [--name <new name>]`**: one brain, whole (system prompt, reminder, kind, reasoning, stop sequences, tool text, safe mode), exactly as an import of its file would make it (the whole file is checked). It gets a fresh id, is never the default, and keeps its color unless a brain there already has it (then `nextColor`). A name clash is `brain.add`'s 409 (`checkName`), whose message gives the way out ("Add this one under another name with --name"). **Nothing else comes over**, and the answer's `notes` say so: when the file's templates differ from the conversation's (naming which), and, for an example's brain, that its prompt was written for that campaign. `→ {conversationId, brain, from: {preset | example, title}, notes}`.
+- **Templates.** The Tabletop RPG preset uses the default templates, and its prompts don't lean on them: they name the human "the player (the user)", so `<!-- from: the user -->` and the Gilded Goat's `<!-- from: the player -->` read the same. A preset brain dropped into any conversation therefore reads the table as it would in the preset, and the add's note is only information.
+
+### The Tabletop RPG preset (`presets/tabletop-rpg.json`)
+
+Genre-free: the World Bible makes it noir or fantasy. Every word was tuned live against `deepseek-v4-1-flash` (T10 engineer report), adapting Sassy Text's coaching (`docs/sassy-text-source.md`) and dropping its machinery.
+
+| Brain | Job | Source and key choices |
+|---|---|---|
+| Game Master (default) | Second person, present tense. Narrates the consequence of the player's choice, up to the next interesting choice, and stops. Never acts, speaks, decides or feels for the player's character, and doesn't end on "What do you do?". Uncertain action, no roll yet: narrates up to the moment before the outcome and ends with *(That's a roll.)*. Odds then a 🎲 roll: narrates what the number earned, never re-rolls or softens. May keep its plans in a hidden note. | §1.1 "The loop", "House law", "Seven turns"; §1.2's advice; the Storyteller's locked verdict. |
+| Co-GM | Answers the player's questions about the scene ("How far is the drop?") in one to three sentences, out of the story. Nothing happens on its turn. Settles details nobody has settled yet. | §2.1 Part one ("Do not answer a question by advancing the plot"), §2.2, the charter's Sidebar. **Answers "from the player's side of the screen": hidden notes keep it consistent, never a source** (live, "keep the secret" leaked a sheet's ties twice; this framing held). |
+| Show Me the Odds | One sentence, exactly one of: "There's no chance of that.", "No roll needed.", "Roll a d20: 14 or higher succeeds, 19 or higher is a hard success, under 14 fails." Never rolls. | §2.1 Part two (when a roll earns its place; the stall, the cheapened moment, the re-roll), with targets instead of the engine's bands. **No label**: live, a bold label ("Talking Wren down…") put a name from the sheet in front of the player, even when told to use the player's words; the GM reads the action right above it anyway. |
+| Character Creator | Answers with one ```` ```hidden ```` block and nothing else: the full sheet of the newest character (or the one the player's note names). | §3.1 (sketch, not biography; obvious for the circumstances; surface and underneath; tells) blended with §4.2 (wants / holds / knows) and the ticket's fields (Gaps 3). Lines: Known to the player as, Name, Age/ancestry/beliefs, **Looks** (paintable, no secrets: the painters copy it), Voice, Surface, Underneath, Flaws, Hopes and fears, Wants right now, **Keeps** (fact, key and reason, never "never mention X"), Knows, Doesn't know, Tells, Ties. |
+| Character Actor | First person, as the character the player is dealing with, from the sheet; starts with the name the player knows them by, in bold. Holds what the sheet keeps. Never narrates the world or the player's character. **Reasoning on, effort low** (below). | §4.1 "Playing them", "What will not give", "What is real", "What is not yours"; §4.1b (short turns, a silence is an answer). |
+| Scene Painter (image) | One prompt for the moment the story has reached, as the player's character sees it. | §5.1–5.4, §5.9. **Several people (Gaps 1, written here):** each takes their Looks line in the same words every time, a place in the frame, a clause of their own and clothes of a different colour. |
+| Character Portraitist (image) | One head-and-shoulders portrait of the newest character (or the named one), from the Looks line. | §5.2–5.4, §5.10: expression as anatomy, two feelings at low intensity; hands out. |
+
+Rules every brain shares: a paragraph, "At this table", at the end of each prompt: who writes what (the framing comments are labels, never written by a brain), hidden notes (folded for the player, read by every helper: use them, don't recite them), and **call people what the player knows them as until the story has told the player their name** (live, the GM and the odds both used a name only the sheet had). Text brains keep `["<!-- from:"]`. Image brains' tool text and prompts say **the player reads the prompt as the picture's caption**, so it holds only what can be seen. Painters make their own style line from the World Bible (technique, not genre names) and reuse an earlier picture's word for word; the examples in the prompt are deliberately from other worlds (live, a noir example was copied verbatim into a portrait). Every reminder is on.
+
+**The Actor thinks with reasoning on (effort low), chosen on live evidence.** Jason asked for it to "think hard". The same requests were sent with reasoning on and off. Both played the sheet; under pressure (a lie and a threat to get the secret for free) both held it, but the reasoning reply caught the lie (the player had just said nobody sent him) in two sentences, while the reasoning-off reply ran long and theatrical. Reasoning was never cut by the stop sequence in 3 live replies, it is folded in the terminal and collapsed in the browser (T08 triage), and the cost is small (1.5 to 2.2 times the output tokens in the probes). The provider's hidden instruction is the price, and it stays visible: the brain card and `presets.list` say "reasoning", the payload view carries `REASONING_NOTE` and `STOP_REASONING_NOTE`. One click turns it off.
+
+**Secrets can leak, and that's accepted** (Jason, 2026-10-14): every brain reads every sheet. The craft above keeps leaks rare; nothing stops them.
+
+Verified live in T10 engineer (2026-10-14), `deepseek-v4-1-flash` + `z-image-turbo`, an encrypted `dev-` user, a three-line noir World Bible (Los Angeles 1938, a teahouse in Chinatown, a hooded figure who sells information): the GM answered "I approach the hooded figure" in the second person and stopped on "Sit."; the Creator wrote one closed 15-line hidden note; the Actor answered in the first person, using the sheet's tells and what she didn't know (the photograph); Show Me the Odds gave "Roll a d20: 13 or higher succeeds, 5 or lower is a hard failure."; `turn --roll` rolled 15 and the GM narrated the success, on her terms; the Co-GM answered "How far is the drop?" with twenty feet of wet cobbles and nothing else; the Portraitist's prompt held no name and no secret, and its picture matched the sheet; a two-person scene kept the two apart and reused the portrait's style line.
+
 ## Command surface
 
 Commands live in one registry. Each has a name, a zod args schema, an optional `stream: true`, and a handler. Two adapters expose them:
@@ -494,9 +527,9 @@ Initial command list (tickets add to it, and `./ss help` is the live reference):
 ```
 help · health · venice.balance · models.list
 user.create · user.list · user.delete · user.change-password · auth.login · auth.logout · auth.whoami
-conversation.create · conversation.list · conversation.get · conversation.update · conversation.delete · conversation.clone · conversation.import · examples.list
+conversation.create · conversation.list · conversation.get · conversation.update · conversation.delete · conversation.clone · conversation.import · examples.list · presets.list
 setup.list · setup.add · setup.update · setup.delete · setup.move
-brain.list · brain.add · brain.update · brain.delete · brain.set-default
+brain.list · brain.add · brain.update · brain.delete · brain.set-default · brain.import
 turn · message.add · message.roll · message.edit · message.delete · message.regenerate · message.select-version
 image.get · image.retry
 prompt.preview
@@ -516,6 +549,12 @@ Implemented in T09 (`src/conversations/dice.ts`, `turn.ts`; `src/commands/chat.t
 - `turn --roll`: roll a d20 and send it; the roll is a second player message after your text. `prompt.preview --roll` shows the request with `{{roll}}` where the number will go, plus `ROLL_PREVIEW_NOTE`; with `--regenerate` it is a 400, like `--content`.
 - `message.roll --conversation`: roll a d20 and add it as your message, asking no brain. Returns the message (`MessageView`).
 - `conversation.update --templates.roll` (needs `{{roll}}`). Schema 3: older files and campaign files get the default.
+
+Implemented in T10 (`src/commands/campaigns.ts`, `presets/`): see "Presets".
+- `presets.list` (no login): the committed presets, each brain with its `about` line.
+- `conversation.import --preset <name>`: a conversation from a preset (no setup, no messages). One of `--example`, `--preset`, `--campaign`.
+- `brain.import --conversation (--preset | --example) --brain [--name]`: one brain from a committed file, whole; a clash is a 409 until `--name`.
+- `examples.list`'s brains carry `about` too. The Gilded Goat's Dice Master no longer offers to roll for the player ("You never roll: the player rolls a real d20 with the app's die"; one live check).
 
 ## Web app (`web/`)
 

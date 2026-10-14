@@ -38,6 +38,45 @@ From the terminal instead: `./ss auth.login --username jason`, then `./ss conver
 
 The Game Master's system prompt holds the evening's secrets, so the Payload view and the GM's settings will spoil them. When you try something uncertain (a lie, a sneak, a song), the GM names the check and stops. Ask the Dice Master what to roll ("Persuasion check: roll 1d20 + 5, DC 12"), then press the **die** beside the pen (or ⌥R) and **Roll & send**: the server rolls a real d20, the roll lands in the scrollback as a die showing its number, and the GM tells you how it goes. From the terminal, `./ss turn --roll` does the same in one go.
 
+## Start from a preset
+
+A **preset** is a kit of brains with good instructions and no world: no World Bible and no story. The first one, **Tabletop RPG**, is seven genre-free brains for one player:
+
+- **Game Master** (the default): narrates in the second person ("You step into the rain") up to your next choice, then stops. When you try something uncertain, it stops just before the outcome with *(That's a roll.)*.
+- **Co-GM**: answers your questions about the scene ("How far is the drop?") without moving the story.
+- **Show Me the Odds**: one sentence for your latest action: no chance, no roll needed, or a d20 target ("Roll a d20: 14 or higher succeeds, …"). You roll with the die, then send the roll to the Game Master, who narrates what it earned.
+- **Character Creator**: writes the newest character's full sheet (or the one your note names) as a hidden note, folded on your screen. Every brain reads it.
+- **Character Actor**: speaks as the person you're dealing with, in the first person, from their sheet. It thinks before it speaks (reasoning on, which adds a small hidden instruction from the provider; switch it off in its settings if you'd rather).
+- **Scene Painter** and **Character Portraitist**: paint the moment, or the newest character, from the sheets. The prompt is the picture's caption, so they keep the sheets' secrets out of it.
+
+Every brain reads every sheet, so a secret can slip out now and then; the prompts are written to keep that rare.
+
+From the terminal:
+
+```bash
+./ss presets.list                                                   # the presets, and what each brain does
+./ss conversation.import --preset tabletop-rpg --title "Chinatown"  # seven brains, no World Bible, no story
+export SS_CONVERSATION=c_...
+./ss setup.add --content @world.md                                  # your World Bible: the world, the tone, who you play
+./ss turn --content "I approach the hooded figure."
+./ss turn --brain "Character Creator"                               # the figure's sheet, as a hidden note
+./ss turn --brain "Character Actor" --content "\"Seen this woman?\" I slide the photograph across."
+./ss turn --brain "Show Me the Odds" --content "I try to talk him down to half price."
+./ss turn --brain "Game Master" --roll                              # rolls a real d20 and sends it: the GM narrates what it earned
+./ss turn --brain "Co-GM" --content "How far is the drop?"
+./ss turn --brain "Character Portraitist"
+```
+
+**Add one brain from a preset** to a conversation you already have (the Gilded Goat could use a Character Actor):
+
+```bash
+./ss brain.import --preset tabletop-rpg --brain "Character Actor"
+./ss brain.import --preset tabletop-rpg --brain "Character Actor" --name "Second Actor"   # if one by that name is already there
+./ss brain.import --example dnd-tavern --brain "Dice Master"                             # an example campaign's brains work too
+```
+
+The whole brain comes over (its prompt, reminder, reasoning, stop sequence, and an image brain's tool text and safe mode), and nothing else: the conversation keeps its own World Bible and templates, and the command says when those differ.
+
 ## Play
 
 In the browser:

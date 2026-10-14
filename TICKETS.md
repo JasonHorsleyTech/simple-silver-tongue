@@ -357,7 +357,7 @@ Any brain can be sent a roll, image brains included (Jason: "sure, why not"). It
 
 ---
 
-## T10: Presets · `todo`
+## T10: Presets · `qa`
 
 Jason, 2026-10-14: typing in a campaign's brains by hand is the slow part. A **preset** is a ready-made kit of brains with good default instructions and no world: no World Bible, no story. You can start a new conversation from one ("Chinatown, film noir": pick the tabletop preset, write the World Bible, play). You can also add any one of a preset's brains to a conversation you already have.
 
@@ -415,5 +415,11 @@ Rules for every brain:
   Judge whether each brain does its job, not its style.
 
 **Frontend scope:** The new-conversation page offers the presets (title, about, the brains as badges) next to the example campaigns and the from-scratch form. Pick one, give it a title, and the new conversation opens with a pointer to write its World Bible (the Setup tab), since a preset has none. "Add a brain" in settings gets a "From a preset" choice: the preset brains (and the example brains, if the engineer added them), each with one line on its job. The name can be edited before adding, and the new brain's card opens. README to match.
+
+- **From T10 engineer** (report: `reports/T10-engineer.md`):
+  - Built: `presets/tabletop-rpg.json` (the seven brains, tuned live; design.md, "Presets"); `presets.list` (no login); `conversation.import --preset <name> [--title]`; `brain.import --conversation (--preset | --example) --brain <name in the file> [--name]` (the whole brain; a clash is the usual 409 until `--name`; `notes` say what stayed behind). Campaign-file brains take an `about` line (never sent, not stored), the Gilded Goat's included. The Gilded Goat's Dice Master no longer offers to roll for the player.
+  - **Engineer's calls:** presets have their own folder (`presets/`), refused there if they carry setup or messages. The preset uses the default templates and its prompts don't lean on them, so a preset brain reads any conversation alike. **The Character Actor ships with reasoning on (low)**, the only brain that does, on live evidence (it caught a lie the reasoning-off reply didn't; never cut by the stop sequence in 3 live replies); every other brain is off. **Show Me the Odds has no label** (a label leaked a sheet-only name live). The Creator's sheet starts with "Known to the player as".
+  - **For QA:** `npm run up:mock` exercises the plumbing; the prompts can only be judged live (the mock echoes). Leak hunting is welcome, but leaks are accepted (Jason): report how rare, not that they exist. Check `brain.import` against a conversation whose templates are its own (the Goat) and the defaults (a preset conversation), and of an image brain.
+  - **For Frontend:** `web/src/api/types.ts` already has `presets.list` (`PresetInfo`, brains as `LibraryBrain` with `about`), `conversation.import`'s `preset`, and `brain.import` (`BrainImport`: show `notes` after adding, they are sentences for the user). `examples.list`'s brains have `about` too. A 409 `conflict` from `brain.import` is the name clash: offer the name field. The new conversation from a preset has `setup: []`: that is the pointer to the Setup tab. README has the terminal paragraphs ("Start from a preset"); the browser ones are yours.
 
 **Deferred in:** *(none yet)*

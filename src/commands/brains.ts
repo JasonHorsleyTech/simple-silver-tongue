@@ -72,12 +72,15 @@ export const stop = z
   );
 export const safeMode = z.boolean().describe("Image brains: Venice safe_mode, which blurs adult content (default on)");
 
-/** A new or changed name must be unique (case-insensitive), not look like an id, and not be "player". */
-function checkName(conv: Conversation, value: string, self?: Brain): void {
+/**
+ * A new or changed name must be unique (case-insensitive), not look like an id, and not be "player". `hint` ends the
+ * clash's message with the way out (brain.import: "Add it under another name with --name").
+ */
+export function checkName(conv: Conversation, value: string, self?: Brain, hint = ""): void {
   if (/^b_[a-z0-9]+$/.test(value)) throw badRequest("A brain name can't look like a brain id (b_...).");
-  if (value.toLowerCase() === PLAYER) throw badRequest(`"${value}" is reserved: message.add --as player means you.`);
+  if (value.toLowerCase() === PLAYER) throw badRequest(`"${value}" is reserved: message.add --as player means you.${hint}`);
   const clash = conv.brains.find((b) => b !== self && b.name.toLowerCase() === value.toLowerCase());
-  if (clash) throw conflict(`Another brain is already called "${clash.name}".`);
+  if (clash) throw conflict(`Another brain is already called "${clash.name}".${hint}`);
 }
 
 const messagesBy = (conv: Conversation, brain: Brain) => conv.messages.filter((m) => m.author.type === "brain" && m.author.brainId === brain.id).length;
@@ -97,10 +100,10 @@ function applyImageFields(brain: Brain, args: { safeMode?: boolean; tool?: z.out
 }
 
 /** What a brain with reasoning on should know: the provider's hidden text, and that stop sequences cut reasoning too. */
-const reasoningNotes = (b: Brain) => (b.reasoning.enabled ? `\n${REASONING_NOTE}${b.stop.length ? `\n${STOP_REASONING_NOTE}` : ""}` : "");
+export const reasoningNotes = (b: Brain) => (b.reasoning.enabled ? `\n${REASONING_NOTE}${b.stop.length ? `\n${STOP_REASONING_NOTE}` : ""}` : "");
 
 /** The CLI's one-line summary of a brain. */
-function brainLine(b: Brain, conv?: Pick<Conversation, "defaultBrainId">): string {
+export function brainLine(b: Brain, conv?: Pick<Conversation, "defaultBrainId">): string {
   const bits = [`${b.name} (${b.id})`, b.kind];
   if (conv?.defaultBrainId === b.id) bits.push("default");
   bits.push(`reasoning ${b.reasoning.enabled ? b.reasoning.effort : "off"}`, `final reminder ${b.finalReminder.enabled && b.finalReminder.content.trim() ? "on" : "off"}`);

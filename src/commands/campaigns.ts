@@ -4,7 +4,7 @@ import { z } from "zod";
 import { ROOT, DEFAULT_IMAGE_MODEL, DEFAULT_TEXT_MODEL } from "../config.ts";
 import { rebuild } from "../conversations/campaign.ts";
 import { DEFAULT_TEMPLATES, newBrain, nextColor } from "../conversations/defaults.ts";
-import { createConversationFile, loadConversation } from "../conversations/store.ts";
+import { createConversationFile, loadConversation, mutateConversation } from "../conversations/store.ts";
 import { lookupModel } from "../conversations/turn.ts";
 import { SCHEMA_VERSION, type Brain, type Conversation, type ImageSettings, type LedgerMessage, type MessageVersion } from "../conversations/types.ts";
 import { readImageFile, removeImageFiles, saveImageFile } from "../images/files.ts";
@@ -12,17 +12,29 @@ import { imageSettingsProblem } from "../images/request.ts";
 import { badRequest, CommandError, notFound } from "../lib/errors.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { command, type Ctx } from "../registry.ts";
-import { PLAYER, brainName, color, finalReminder, kind, reasoning, safeMode, stop, tool } from "./brains.ts";
+import { PLAYER, brainLine, brainName, checkName, color, finalReminder, kind, reasoning, reasoningNotes, safeMode, stop, tool } from "./brains.ts";
 import { conversationId, imageSettings, systemPrompt, templates, title } from "./conversations.ts";
 
 /**
  * Starting a campaign from another one's setup (T07): a committed example (examples/*.json), a campaign file of
  * your own (any conversation.get --json), or one of your conversations (clone). The result is an ordinary
  * conversation: every brain, setup message and template is editable as always.
+ *
+ * T10: a preset (presets/*.json) is a campaign file with brains and no world: no setup, no messages. You start a
+ * conversation from one and write its World Bible, or take one of its brains into a conversation you already have
+ * (brain.import, which takes an example's brains too).
  */
 
 export const EXAMPLES_DIR = join(ROOT, "examples");
-const EXAMPLE_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
+export const PRESETS_DIR = join(ROOT, "presets");
+const FILE_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/** The two folders of committed campaign files. Examples are ready to play; presets are brains with no world (T10). */
+type Library = "example" | "preset";
+const LIBRARY = {
+  example: { dir: EXAMPLES_DIR, folder: "examples", list: "examples.list", flag: "--example" },
+  preset: { dir: PRESETS_DIR, folder: "presets", list: "presets.list", flag: "--preset" },
+} as const;
 
 // ── The campaign file: a conversation document (conversation.get --json), with ids and dates optional ──
 
@@ -67,6 +79,8 @@ const campaignSchema = z.object({
       z.object({
         id: z.string().min(1).optional(),
         name: brainName,
+        /** T10: one line on the brain's job, for examples.list, presets.list and the browser. Not sent, not stored. */
+        about: z.string().optional(),
         color: color.optional(),
         kind: kind.default("text"),
         reasoning: reasoning.optional(),
@@ -185,15 +199,17 @@ function toConversation(doc: Campaign, where: string): Conversation {
   return conv;
 }
 
-async function readExample(name: string): Promise<{ raw: unknown; where: string }> {
-  if (!EXAMPLE_NAME.test(name)) throw badRequest("Example names are lowercase letters, digits and dashes. See ./ss examples.list.");
-  const where = `examples/${name}.json`;
+/** A committed campaign file, by name: examples/<name>.json or presets/<name>.json. The name is checked first. */
+async function readLibrary(lib: Library, name: string): Promise<{ raw: unknown; where: string }> {
+  const { dir, folder, list } = LIBRARY[lib];
+  if (!FILE_NAME.test(name)) throw badRequest(`${lib === "preset" ? "Preset" : "Example"} names are lowercase letters, digits and dashes. See ./ss ${list}.`);
+  const where = `${folder}/${name}.json`;
   let text: string;
   try {
-    text = await readFile(join(EXAMPLES_DIR, `${name}.json`), "utf8");
+    text = await readFile(join(dir, `${name}.json`), "utf8");
   } catch {
-    const names = await exampleNames();
-    throw notFound(`No example "${name}". ${names.length ? `Examples: ${names.join(", ")}.` : "There are none in examples/."}`);
+    const names = await libraryNames(lib);
+    throw notFound(`No ${lib} "${name}". ${names.length ? `${lib === "preset" ? "Presets" : "Examples"}: ${names.join(", ")}.` : `There are none in ${folder}/.`}`);
   }
   try {
     return { raw: JSON.parse(text), where };
@@ -202,42 +218,59 @@ async function readExample(name: string): Promise<{ raw: unknown; where: string 
   }
 }
 
-async function exampleNames(): Promise<string[]> {
-  const files = await readdir(EXAMPLES_DIR).catch(() => [] as string[]);
-  return files.filter((f) => f.endsWith(".json") && EXAMPLE_NAME.test(f.slice(0, -5))).map((f) => f.slice(0, -5)).sort();
+async function libraryNames(lib: Library): Promise<string[]> {
+  const files = await readdir(LIBRARY[lib].dir).catch(() => [] as string[]);
+  return files.filter((f) => f.endsWith(".json") && FILE_NAME.test(f.slice(0, -5))).map((f) => f.slice(0, -5)).sort();
+}
+
+/** A committed file, parsed and checked. A preset is brains with no world: setup or messages make it an example. */
+async function readCampaign(lib: Library, name: string): Promise<{ doc: Campaign; where: string }> {
+  const { raw, where } = await readLibrary(lib, name);
+  const doc = parseCampaign(raw, where);
+  if (lib === "preset" && (doc.setup.length || doc.messages.length)) {
+    throw badRequest(`${where}: a preset has brains and no world, so no setup and no messages. A campaign with them belongs in examples/.`);
+  }
+  return { doc, where };
 }
 
 // ── Commands ──
 
-/** A brain's color is its badge (T07 frontend: the browser shows the cast before you start). */
-type ExampleInfo = { name: string; title: string; about?: string; brains: Array<{ name: string; kind: string; color?: string }>; setup: string[]; messages: number; error?: string };
+/** A brain's color is its badge (T07 frontend: the browser shows the cast before you start); `about` is its job (T10). */
+type BrainInfo = { name: string; kind: string; color?: string; about?: string };
+type ExampleInfo = { name: string; title: string; about?: string; brains: BrainInfo[]; setup: string[]; messages: number; error?: string };
+type PresetInfo = { name: string; title: string; about?: string; brains: BrainInfo[]; error?: string };
+
+/** Every committed file of a library, each parsed and checked as an import would; a bad one is listed with why. */
+async function listLibrary(lib: Library): Promise<ExampleInfo[]> {
+  const out: ExampleInfo[] = [];
+  for (const name of await libraryNames(lib)) {
+    try {
+      const { doc } = await readCampaign(lib, name);
+      out.push({
+        name,
+        title: doc.title ?? name,
+        about: doc.about,
+        brains: doc.brains.map((b) => ({ name: b.name, kind: b.kind, ...(b.color ? { color: b.color } : {}), ...(b.about ? { about: b.about } : {}) })),
+        setup: doc.setup.map((s) => s.label),
+        messages: doc.messages.length,
+      });
+    } catch (err) {
+      out.push({ name, title: name, brains: [], setup: [], messages: 0, error: (err as Error).message });
+    }
+  }
+  return out;
+}
+
+const brainNames = (brains: BrainInfo[]) => brains.map((b) => (b.kind === "image" ? `${b.name} (image)` : b.name)).join(", ");
 
 export const examplesList = command({
   name: "examples.list",
   description: `List the example campaigns that come with the app (examples/*.json), ready to import.
-Start one with ./ss conversation.import --example <name>. Nothing here is yours: they are committed files.`,
+Start one with ./ss conversation.import --example <name>. Nothing here is yours: they are committed files.
+Their brains can also join a conversation of yours one at a time: ./ss brain.import --example <name> --brain <brain>.`,
   auth: false,
   args: z.object({}),
-  handler: async (): Promise<{ examples: ExampleInfo[] }> => {
-    const examples: ExampleInfo[] = [];
-    for (const name of await exampleNames()) {
-      try {
-        const { raw, where } = await readExample(name);
-        const doc = parseCampaign(raw, where);
-        examples.push({
-          name,
-          title: doc.title ?? name,
-          about: doc.about,
-          brains: doc.brains.map((b) => ({ name: b.name, kind: b.kind, ...(b.color ? { color: b.color } : {}) })),
-          setup: doc.setup.map((s) => s.label),
-          messages: doc.messages.length,
-        });
-      } catch (err) {
-        examples.push({ name, title: name, brains: [], setup: [], messages: 0, error: (err as Error).message });
-      }
-    }
-    return { examples };
-  },
+  handler: async (): Promise<{ examples: ExampleInfo[] }> => ({ examples: await listLibrary("example") }),
   format: ({ examples }: { examples: ExampleInfo[] }) =>
     examples.length
       ? examples
@@ -247,7 +280,7 @@ Start one with ./ss conversation.import --example <name>. Nothing here is yours:
               : [
                   `${e.name}: ${e.title}`,
                   e.about ? `  ${e.about}` : "",
-                  `  Brains: ${e.brains.map((b) => (b.kind === "image" ? `${b.name} (image)` : b.name)).join(", ")}`,
+                  `  Brains: ${brainNames(e.brains)}`,
                   `  Setup: ${e.setup.join(", ") || "none"} · ${e.messages} message${e.messages === 1 ? "" : "s"}`,
                   `  Start it: ./ss conversation.import --example ${e.name}`,
                 ]
@@ -256,6 +289,37 @@ Start one with ./ss conversation.import --example <name>. Nothing here is yours:
           )
           .join("\n\n")
       : "No examples in examples/.",
+});
+
+export const presetsList = command({
+  name: "presets.list",
+  description: `List the presets that come with the app (presets/*.json): kits of brains with good instructions and no world.
+A preset has no World Bible and no story. Start a conversation from one, then write its World Bible (setup.add):
+./ss conversation.import --preset <name> --title "Chinatown". Or add one of its brains to a conversation you
+already have: ./ss brain.import --preset <name> --brain <brain>. Nothing here is yours: they are committed files.`,
+  auth: false,
+  args: z.object({}),
+  handler: async (): Promise<{ presets: PresetInfo[] }> => ({
+    presets: (await listLibrary("preset")).map(({ setup: _s, messages: _m, ...p }) => p),
+  }),
+  format: ({ presets }: { presets: PresetInfo[] }) =>
+    presets.length
+      ? presets
+          .map((p) =>
+            p.error
+              ? `${p.name}: can't be used (${p.error})`
+              : [
+                  `${p.name}: ${p.title}`,
+                  p.about ? `  ${p.about}` : "",
+                  ...p.brains.map((b) => `  · ${b.name}${b.kind === "image" ? " (image)" : ""}${b.about ? `: ${b.about}` : ""}`),
+                  `  Start one: ./ss conversation.import --preset ${p.name} --title "..."`,
+                  `  Add one brain: ./ss brain.import --conversation c_... --preset ${p.name} --brain "${p.brains[0]?.name ?? "..."}"`,
+                ]
+                  .filter(Boolean)
+                  .join("\n"),
+          )
+          .join("\n\n")
+      : "No presets in presets/.",
 });
 
 const withoutMessages = z.boolean().describe("Leave the ledger out: brains, setup messages, templates and settings only");
@@ -278,35 +342,111 @@ async function checkSettings(ctx: Ctx, conv: Conversation, where: string): Promi
 
 export const conversationImport = command({
   name: "conversation.import",
-  description: `Start a new conversation from a campaign file: an example (--example) or your own (--campaign @file.json).
---example names a committed example (./ss examples.list); --campaign takes any campaign document, and any
-conversation.get --json is one. You get its brains, setup messages, templates, settings and opening messages,
-with fresh ids; it has cost nothing yet. Everything is
-editable afterwards, as in any conversation. A file holds prompts, not pictures: an imported image message
-shows its prompt, ready to paint again with image.retry. --without-messages leaves the ledger out.
+  description: `Start a new conversation from a campaign file: an example, a preset, or your own file.
+--example names a committed example (./ss examples.list): brains, a World Bible and an opening, ready to play.
+--preset names a committed preset (./ss presets.list): brains only, no World Bible and no story, so write the
+World Bible next (setup.add). --campaign takes any campaign document, and any conversation.get --json is one.
+You get its brains, setup messages, templates, settings and opening messages, with fresh ids; it has cost nothing
+yet. Everything is editable afterwards, as in any conversation. A file holds prompts, not pictures: an imported
+image message shows its prompt, ready to paint again with image.retry. --without-messages leaves the ledger out.
 Your own file stays where it is, in plaintext: the imported copy is encrypted like the rest of your data.`,
   args: z.object({
     example: z.string().min(1).optional().describe("A committed example, by name (./ss examples.list), e.g. dnd-tavern"),
+    preset: z.string().min(1).optional().describe("A committed preset, by name (./ss presets.list), e.g. tabletop-rpg"),
     campaign: z.record(z.string(), z.unknown()).optional().describe("A campaign document as JSON: @file.json reads a file, - reads stdin"),
     title: title.optional().describe("Title for the new conversation (default: the campaign's)"),
     withoutMessages: withoutMessages.optional(),
   }),
   examples: [
     "./ss conversation.import --example dnd-tavern",
+    './ss conversation.import --preset tabletop-rpg --title "Chinatown"   # then: ./ss setup.add --content @world.md',
     './ss conversation.import --example dnd-tavern --title "Pathfinder night" --without-messages',
     "./ss conversation.import --campaign @my-campaign.json",
   ],
   handler: async (args, ctx): Promise<Conversation> => {
     const { vault } = ctx.requireSession();
-    if ((args.example === undefined) === (args.campaign === undefined)) throw badRequest("Pass one of --example <name> (./ss examples.list) or --campaign @file.json.");
-    const { raw, where } = args.example !== undefined ? await readExample(args.example) : { raw: args.campaign, where: "The campaign" };
-    const draft = toConversation(parseCampaign(raw, where), where);
+    const given = [args.example, args.preset, args.campaign].filter((x) => x !== undefined).length;
+    if (given !== 1) throw badRequest("Pass one of --example <name> (./ss examples.list), --preset <name> (./ss presets.list) or --campaign @file.json.");
+    const { doc, where } =
+      args.example !== undefined
+        ? await readCampaign("example", args.example)
+        : args.preset !== undefined
+          ? await readCampaign("preset", args.preset)
+          : { doc: parseCampaign(args.campaign, "The campaign"), where: "The campaign" };
+    const draft = toConversation(doc, where);
     await checkSettings(ctx, draft, where);
     const { conv } = rebuild(draft, { title: args.title ?? draft.title, messages: !args.withoutMessages, images: "none" });
     await createConversationFile(vault, conv);
     return conv;
   },
   format: (c: Conversation) => started("Imported", c),
+});
+
+/** brain.import's answer: the brain as added, where it came from, and what it left behind. */
+export type BrainImport = { conversationId: string; brain: Brain; from: { preset?: string; example?: string; title: string }; notes: string[] };
+
+const TEMPLATE_NAMES = ["player", "otherBrainText", "otherBrainImage", "steer", "roll"] as const;
+
+export const brainImport = command({
+  name: "brain.import",
+  description: `Add one brain from a preset (or an example campaign) to a conversation you already have.
+The whole brain comes over, as its file has it: system prompt, final reminder, kind, reasoning, stop sequences,
+and for an image brain its tool text and safe mode. Nothing else does: the file's templates, World Bible and
+settings stay behind, and the answer says so when they differ from this conversation's. It gets a fresh id, keeps
+its color unless a brain here already has it, and is never the default. A brain here with the same name is a 409:
+--name adds it under another name. Edit it afterwards like any brain (brain.update).`,
+  args: z.object({
+    conversation: conversationId,
+    preset: z.string().min(1).optional().describe("The preset it comes from (./ss presets.list), e.g. tabletop-rpg"),
+    example: z.string().min(1).optional().describe("Or the example campaign it comes from (./ss examples.list), e.g. dnd-tavern"),
+    brain: z
+      .string()
+      .refine((s) => s.trim() !== "", "Name the brain to bring over, as the preset or example calls it")
+      .describe("The brain's name in that file (case-insensitive), e.g. \"Character Actor\""),
+    name: brainName.optional().describe("Add it under this name instead (when this conversation already has a brain by its name)"),
+  }),
+  examples: [
+    './ss brain.import --conversation c_k3j9x0q2ma --preset tabletop-rpg --brain "Character Actor"',
+    './ss brain.import --conversation c_k3j9x0q2ma --preset tabletop-rpg --brain "Character Actor" --name "Second Actor"',
+    './ss brain.import --conversation c_k3j9x0q2ma --example dnd-tavern --brain "Dice Master"',
+  ],
+  handler: async (args, ctx): Promise<BrainImport> => {
+    const { vault } = ctx.requireSession();
+    if ((args.preset === undefined) === (args.example === undefined)) throw badRequest("Pass one of --preset <name> (./ss presets.list) or --example <name> (./ss examples.list).");
+    const lib: Library = args.preset !== undefined ? "preset" : "example";
+    const fileName = (args.preset ?? args.example)!;
+    const { doc, where } = await readCampaign(lib, fileName);
+    // The whole file is checked as an import would check it, so a brain comes over exactly as it would there.
+    const src = toConversation(doc, where);
+    const title = doc.title ?? fileName;
+    const wanted = args.brain.trim().toLowerCase();
+    const found = src.brains.find((b) => b.name.toLowerCase() === wanted);
+    if (!found) throw notFound(`${lib === "preset" ? "The preset" : "The example"} "${title}" has no brain called "${args.brain.trim()}". Its brains: ${src.brains.map((b) => b.name).join(", ")}.`);
+
+    const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
+      const brain: Brain = { ...structuredClone(found), id: newId("b"), name: args.name ?? found.name };
+      checkName(c, brain.name, undefined, args.name === undefined ? ` Add this one under another name with --name (e.g. --name "${found.name} 2").` : "");
+      if (c.brains.some((b) => b.color.toLowerCase() === brain.color.toLowerCase())) brain.color = nextColor(c);
+      c.brains.push(brain);
+      return brain;
+    });
+
+    const notes: string[] = [];
+    const differ = TEMPLATE_NAMES.filter((k) => src.templates[k] !== conv.templates[k]);
+    if (differ.length) {
+      notes.push(
+        `Only the brain came over: this conversation keeps its own templates, which differ from "${title}"'s (${differ.join(", ")}), so ${result.name} reads the table as this conversation frames it. Settings → Templates (conversation.update --templates.<name>) changes them.`,
+      );
+    }
+    if (lib === "example") notes.push(`It was written for "${title}", so its prompt may name that campaign's world and people: brain.list shows it, and brain.update changes it.`);
+    return { conversationId: conv.id, brain: result, from: { [lib]: fileName, title }, notes };
+  },
+  format: (r: BrainImport) =>
+    [
+      `Added brain ${brainLine(r.brain)} from ${r.from.preset !== undefined ? "the preset" : "the example"} "${r.from.title}".`,
+      ...r.notes,
+      `Talk to it with turn --brain "${r.brain.name}"; prompt.preview --brain "${r.brain.name}" shows what it sees.${reasoningNotes(r.brain)}`,
+    ].join("\n"),
 });
 
 export const conversationClone = command({
@@ -358,9 +498,11 @@ function started(verb: string, c: Conversation): string {
     `${verb} ${c.id} "${c.title}" · ${c.settings.textModel} · images ${c.settings.imageModel}`,
     `Brains: ${brains}`,
     `Setup: ${c.setup.map((s) => s.label).join(", ") || "none"} · ${c.messages.length} message${c.messages.length === 1 ? "" : "s"}${images ? ` (${images} image prompt${images === 1 ? "" : "s"} still to paint: image.retry --message <id> paints one)` : ""}`,
+    // T10: a preset brings brains and no world. Every brain reads the setup messages, so the World Bible comes first.
+    ...(c.setup.length ? [] : [`No World Bible yet: write one before you play (every brain reads it): ./ss setup.add --conversation ${c.id} --content @world.md`]),
     `Play in the browser: http://localhost:4747/c/${c.id}`,
     `Or here: export SS_CONVERSATION=${c.id}, then ./ss turn --content "..." (and turn --brain "${c.brains.find((b) => b.id !== c.defaultBrainId)?.name ?? c.brains[0]!.name}", prompt.preview, ...)`,
   ].join("\n");
 }
 
-export default [examplesList, conversationImport, conversationClone];
+export default [examplesList, presetsList, conversationImport, conversationClone, brainImport];

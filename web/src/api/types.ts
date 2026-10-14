@@ -177,16 +177,29 @@ export type BrainUpdate = BrainFields & { conversation: string; brain?: string }
 /** Every setup command answers with the whole ordered list: replace conv.setup with it. */
 export type SetupListing = { conversationId: string; setup: SetupMessage[]; changed?: string; deleted?: string };
 
+/** A brain as examples.list and presets.list show it: its badge, and (T10) one line on its job, for pickers. */
+export type LibraryBrain = { name: string; kind: Brain["kind"]; color?: string; about?: string };
+
 /** examples.list (T07): a committed campaign in examples/, ready to import. `error`: the file can't be imported. */
 export type ExampleInfo = {
   name: string;
   title: string;
   about?: string;
-  brains: Array<{ name: string; kind: Brain["kind"]; color?: string }>;
+  brains: LibraryBrain[];
   setup: string[];
   messages: number;
   error?: string;
 };
+
+/** presets.list (T10): a committed kit of brains in presets/, with no setup and no messages. `error`: the file can't be used. */
+export type PresetInfo = { name: string; title: string; about?: string; brains: LibraryBrain[]; error?: string };
+
+/**
+ * brain.import (T10): the brain as added (fresh id, never the default; its file's color unless one here has it), where
+ * it came from, and `notes`, sentences for the user: the templates it left behind when they differ, and for an
+ * example's brain, that its prompt was written for that campaign.
+ */
+export type BrainImport = { conversationId: string; brain: Brain; from: { preset?: string; example?: string; title: string }; notes: string[] };
 
 /** For commands that take no arguments: they can then be called as api.call("auth.whoami"). */
 export type NoArgs = Record<string, never>;
@@ -214,9 +227,15 @@ export type Commands = {
   "conversation.delete": { args: { id: string }; result: { deleted: string } };
   /** T07: the committed example campaigns. No login needed. */
   "examples.list": { args: NoArgs; result: { examples: ExampleInfo[] } };
-  /** T07: a new conversation from an example (or a campaign document): its brains, setup, templates, settings and opening. */
+  /** T10: the committed presets: brains with good instructions and no world. No login needed. */
+  "presets.list": { args: NoArgs; result: { presets: PresetInfo[] } };
+  /**
+   * T07: a new conversation from an example (or a campaign document): its brains, setup, templates, settings and opening.
+   * T10: or from a preset (`preset`): its brains, no setup and no messages, so point at the Setup tab for the World Bible.
+   * Exactly one of example, preset and campaign.
+   */
   "conversation.import": {
-    args: { example?: string; campaign?: Record<string, unknown>; title?: string; withoutMessages?: boolean };
+    args: { example?: string; preset?: string; campaign?: Record<string, unknown>; title?: string; withoutMessages?: boolean };
     result: Conversation;
   };
   /** T07: a new conversation from one of yours: same brains, setup, templates and settings; the ledger and images too unless withoutMessages. */
@@ -227,6 +246,11 @@ export type Commands = {
   /** Only a brain that has never spoken, isn't the default and isn't writing (409 brain_in_use / default_brain / conflict). */
   "brain.delete": { args: { conversation: string; brain: string }; result: { conversationId: string; deleted: string; name: string; brains: string[] } };
   "brain.set-default": { args: { conversation: string; brain: string }; result: Brain };
+  /**
+   * T10: one brain from a preset (or an example: exactly one of the two), whole, by its name in that file
+   * (case-insensitive). A brain here with that name is a 409 `conflict`; `name` adds it under another one.
+   */
+  "brain.import": { args: { conversation: string; preset?: string; example?: string; brain: string; name?: string }; result: BrainImport };
   /** Without content: pre-filled "<!-- This is the <label>. -->" (label default "World Bible"). Positions are 1-based. */
   "setup.add": { args: { conversation: string; label?: string; content?: string; position?: number }; result: SetupListing };
   "setup.update": { args: { conversation: string; setup: string; label?: string; content?: string }; result: SetupListing };
