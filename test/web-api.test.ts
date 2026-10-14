@@ -10,8 +10,11 @@ import { readNdjson } from "../web/src/api/ndjson.ts";
 import { STOP_BILL_NOTE as SERVER_STOP_NOTE } from "../src/commands/chat.ts";
 import { BRAIN_COLORS as SERVER_COLORS } from "../src/conversations/defaults.ts";
 import { REASONING_NOTE as SERVER_REASONING_NOTE } from "../src/conversations/prompt.ts";
+import { IMAGE_STOP_NOTE as SERVER_IMAGE_STOP_NOTE } from "../src/conversations/wording.ts";
+import type { LedgerMessage } from "../src/conversations/types.ts";
 import {
   BRAIN_COLORS,
+  IMAGE_STOP_NOTE,
   REASONING_NOTE,
   STOP_BILL_NOTE,
   type Commands,
@@ -275,6 +278,89 @@ describe("web API client against the real server", () => {
   test("an unreachable server is a network ApiError", async () => {
     const api = createClient({ baseUrl: "http://127.0.0.1:9" });
     await assert.rejects(api.call("health"), (e: unknown) => e instanceof ApiError && e.code === "network" && e.status === 0);
+  });
+});
+
+describe("web API client and image brains (T05 frontend)", () => {
+  let t: Awaited<ReturnType<typeof startTestServer>>;
+  before(async () => {
+    t = await startTestServer({ mock: { imageSlowMs: 300 } });
+    assert.equal((await t.cli(["user.create", "--username", "web-img", "--password", "pw-img"])).code, 0);
+  });
+  after(() => t.close());
+
+  test("an image turn's reply ends at image_pending; image.follow, edit, retry, stop and image_busy are what the browser relies on", async () => {
+    const jar = cookieJar();
+    const api = createClient({ baseUrl: t.url, fetch: jar.fetch });
+    await api.call("auth.login", { username: "web-img", password: "pw-img" }); // encrypted: image.get decrypts
+    const conv = await api.call("conversation.create", { title: "T05 web", systemPrompt: "You are the GM." });
+    const painter = await api.call("brain.add", { conversation: conv.id, name: "Scene Painter", systemPrompt: "You paint.", kind: "image", finalReminder: { enabled: false } });
+    const states: LedgerMessage[] = []; // every copy of the image message the browser would receive, in order
+
+    // The turn: start (kind image), the prompt as words, then image_pending with the saved message. useChat stops reading there.
+    const seen: StreamYield[] = [];
+    for await (const ev of api.stream("turn", { conversation: conv.id, brain: painter.id, content: "MOCK_IMAGE_SLOW the hearth" })) {
+      seen.push(ev);
+      if (ev.type === "image_pending") break;
+    }
+    const start = seen.find((e) => e.type === "start");
+    assert.ok(start?.type === "start" && start.kind === "image" && start.brainId === painter.id);
+    const prompt = seen.flatMap((e) => (e.type === "prompt" ? [e.delta] : [])).join("");
+    const pending = seen.at(-1)!;
+    assert.ok(pending.type === "image_pending");
+    const m = pending.message;
+    states.push(m);
+    assert.deepEqual([m.versions[0]!.content, m.versions[0]!.image?.status, m.versions[0]!.image?.id], [prompt, "pending", pending.imageId]);
+
+    // The table is free meanwhile: the GM answers while the image is being made.
+    const gm = await collectStream(api.stream("turn", { conversation: conv.id, content: "What do I see?" }));
+    assert.equal(gm.at(-1)!.type, "done");
+    // What would replace or remove it waits, with its own code (not "conflict", which means a reply is being written).
+    await assert.rejects(api.call("message.delete", { conversation: conv.id, message: m.id }), (e: unknown) => e instanceof ApiError && e.status === 409 && e.code === "image_busy");
+    await assert.rejects(api.call("message.edit", { conversation: conv.id, message: m.id, content: "another" }), (e: unknown) => e instanceof ApiError && e.code === "image_busy");
+    // A stop has nothing to stop: it names the image being made, and the browser shows the server's note.
+    const stop = await api.call("generation.stop", { conversation: conv.id });
+    assert.deepEqual([stop.stopped, stop.painting], [false, [{ messageId: m.id, imageId: pending.imageId }]]);
+    assert.equal(IMAGE_STOP_NOTE, SERVER_IMAGE_STOP_NOTE);
+
+    // The browser's watcher: image.follow ends with the message as saved, and the bytes are there for <img src>.
+    const followed = await collectStream(api.stream("image.follow", { conversation: conv.id, message: m.id }));
+    assert.deepEqual(followed.map((e) => e.type), ["image_pending", "image_done", "done"]);
+    const done = followed.at(-1)!;
+    assert.ok(done.type === "done" && done.message);
+    states.push(done.message);
+    assert.equal(done.message.versions[0]!.image!.status, "done");
+    assert.ok(done.spentUsd! >= 0.01, "the total includes the image");
+    const res = await jar.fetch(api.binaryUrl("image.get", { id: pending.imageId }));
+    assert.deepEqual([res.status, res.headers.get("content-type")], [200, "image/png"]);
+    // Nothing being made: it answers at once with the message as it is.
+    assert.deepEqual((await collectStream(api.stream("image.follow", { conversation: conv.id, message: m.id }))).map((e) => e.type), ["done"]);
+
+    // An edit answers at once: the new prompt, its image pending, the old one kept as `previous` until it lands.
+    const edited = await api.call("message.edit", { conversation: conv.id, message: m.id, content: "MOCK_IMAGE_SLOW A brand new prompt." });
+    states.push(edited.message);
+    assert.deepEqual([edited.painting?.imageId, edited.message.versions[0]!.image?.status, edited.message.versions[0]!.image?.previous?.id], [edited.message.versions[0]!.image?.id, "pending", pending.imageId]);
+    const afterEdit = (await collectStream(api.stream("image.follow", { conversation: conv.id, message: m.id }))).at(-1)!;
+    assert.ok(afterEdit.type === "done" && afterEdit.message);
+    states.push(afterEdit.message);
+
+    // Paint again (image.retry of a finished image): a new version with the same prompt, which the pager labels.
+    let again: LedgerMessage | null = null;
+    for await (const ev of api.stream("image.retry", { conversation: conv.id, message: m.id })) {
+      if (ev.type === "image_pending") {
+        again = ev.message;
+        break;
+      }
+    }
+    assert.ok(again);
+    states.push(again);
+    assert.deepEqual([again.versions.length, again.activeVersion, again.versions[1]!.repaintOf, again.versions[1]!.content], [2, 1, 0, "MOCK_IMAGE_SLOW A brand new prompt."]);
+    const last = (await collectStream(api.stream("image.follow", { conversation: conv.id, message: m.id }))).at(-1)!;
+    assert.ok(last.type === "done" && last.message);
+    states.push(last.message);
+
+    // Each later copy of the message has a later (or equal) updatedAt: the browser keeps the newer of two copies by it.
+    for (let i = 1; i < states.length; i++) assert.ok(states[i]!.updatedAt >= states[i - 1]!.updatedAt, `copy ${i} is not older than copy ${i - 1}`);
   });
 });
 

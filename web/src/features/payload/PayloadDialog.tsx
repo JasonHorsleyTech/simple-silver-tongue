@@ -21,6 +21,10 @@ export type PayloadRequest = { kind: "turn"; draft: string } | { kind: "regenera
  *
  * For Send, a row of brain badges switches whose point of view it is, so "what does the Dice Master see of
  * the GM's last line?" is one click: its own lines are `assistant`, everyone else's are framed `user` messages.
+ *
+ * An image brain's request (T05) is followed by the second one its answer leads to: POST /image/generate with
+ * the prompt from its tool call, word for word, and the parameters shown (`preview.image`), with any notes on
+ * settings this image model doesn't take.
  */
 export function PayloadDialog({
   conversationId,
@@ -156,9 +160,12 @@ export function PayloadDialog({
             </Notice>
           )}
           {view === "json" ? (
-            <pre className="overflow-x-auto rounded-lg border border-line bg-canvas p-4 font-mono text-[12px] leading-[1.6] whitespace-pre-wrap text-muted">
-              {JSON.stringify(body, null, 2)}
-            </pre>
+            <>
+              <pre className="overflow-x-auto rounded-lg border border-line bg-canvas p-4 font-mono text-[12px] leading-[1.6] whitespace-pre-wrap text-muted">
+                {JSON.stringify(body, null, 2)}
+              </pre>
+              {preview.image && <ImageRequest image={preview.image} brain={brain} />}
+            </>
           ) : (
             <>
               <section>
@@ -177,11 +184,44 @@ export function PayloadDialog({
                   ))}
                 </ol>
               </section>
+              {preview.image && <ImageRequest image={preview.image} brain={brain} />}
             </>
           )}
         </div>
       ) : null}
     </Dialog>
+  );
+}
+
+/**
+ * The image request an image brain's answer leads to: every field but the prompt, which is the one its tool
+ * call writes and goes in word for word. Notes say what this model doesn't take of the conversation's settings.
+ */
+function ImageRequest({ image, brain }: { image: NonNullable<Preview["image"]>; brain: Brain }) {
+  const tool = brain.tool?.name ?? "generate_image";
+  const entries = Object.entries(image.params);
+  return (
+    <section>
+      <h3 className="mb-1 text-[11px] font-semibold tracking-[0.08em] text-faint uppercase">
+        Then <span className="font-mono tracking-normal normal-case">POST {image.path}</span>
+      </h3>
+      <p className="mb-2 text-[12.5px] leading-5 text-faint">
+        Once {brain.name} has called <code className="font-mono text-[11.5px] text-muted">{tool}</code>, its prompt goes to the image model word for word, with
+        these parameters and nothing else. Every other brain sees that prompt, framed.
+      </p>
+      {image.notes.map((n) => (
+        <Notice key={n} tone="warn" className="mb-2">
+          {n}
+        </Notice>
+      ))}
+      <pre className="overflow-x-auto rounded-lg border border-line bg-canvas px-4 py-3 font-mono text-[12px] leading-[1.6] break-all whitespace-pre-wrap text-muted">
+        {"{\n"}
+        {entries.map(([k, v]) => `  ${JSON.stringify(k)}: ${JSON.stringify(v)},\n`).join("")}
+        {"  "}
+        <span className="text-fg">"prompt"</span>: <span className="text-sky-200/80">‹the prompt from its {tool} call, word for word›</span>
+        {"\n}"}
+      </pre>
+    </section>
   );
 }
 

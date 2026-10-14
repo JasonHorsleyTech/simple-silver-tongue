@@ -261,7 +261,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     res.end("data: [DONE]\n\n");
   }
 
-  type ImageBody = { model?: string; prompt?: string; width?: number; height?: number; resolution?: string; return_binary?: boolean; safe_mode?: boolean };
+  type ImageBody = { model?: string; prompt?: string; width?: number; height?: number; resolution?: string; aspect_ratio?: string; return_binary?: boolean; safe_mode?: boolean };
 
   async function image(res: ServerResponse, body: ImageBody, n: number) {
     const model = MOCK_MODELS.find((m) => m.id === body?.model && m.type === "image");
@@ -282,11 +282,16 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     const cost = p.generation?.usd ?? p.resolutions?.[res0]?.usd ?? 0;
     state.balanceUsd -= cost;
 
-    const w = clamp(body.width ?? 64, 8, 256);
-    const h = clamp(body.height ?? 64, 8, 256);
+    // Sized by width × height (capped at 256 px), or by aspect ratio for the resolution-sized models.
+    const [aw, ah] = (body.aspect_ratio ?? "1:1").split(":").map(Number) as [number, number];
+    const ratio = aw > 0 && ah > 0 ? aw / ah : 1;
+    const want = { w: body.width ?? (ratio >= 1 ? 128 : 128 * ratio), h: body.height ?? (ratio >= 1 ? 128 / ratio : 128) };
+    const scale = Math.min(1, 256 / Math.max(want.w, want.h)); // keep the asked shape, at most 256 px a side
+    const w = clamp(want.w * scale, 8, 256);
+    const h = clamp(want.h * scale, 8, 256);
     // Venice's safe_mode defaults to on. A blurred image comes back grey here, so it looks different too.
     const blurred = prompt.includes("MOCK_BLURRED") && body.safe_mode !== false;
-    const bytes = solidPng(w, h, blurred ? [128, 128, 128] : colorFor(prompt));
+    const bytes = blurred ? solidPng(w, h, [128, 128, 128]) : gradientPng(w, h, colorFor(prompt), colorFor(`${prompt}\u0000`));
     const headers = {
       ...IMAGE_HEADERS,
       "x-venice-is-blurred": String(blurred),
@@ -358,16 +363,40 @@ const words = (s: string) => s.match(/\S+\s*/g) ?? [];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(v)));
 
-function colorFor(s: string): [number, number, number] {
+function colorFor(s: string): Rgb {
   const h = crc32(s);
   return [h & 0xff, (h >> 8) & 0xff, (h >> 16) & 0xff];
 }
 
+type Rgb = [number, number, number];
+
 /** Minimal valid RGB PNG of one color. */
-export function solidPng(w: number, h: number, [r, g, b]: [number, number, number]): Buffer {
-  const row = Buffer.alloc(1 + w * 3);
-  for (let x = 0; x < w; x++) row.set([r, g, b], 1 + x * 3);
-  const raw = Buffer.concat(Array.from({ length: h }, () => row));
+export function solidPng(w: number, h: number, rgb: Rgb): Buffer {
+  return png(w, h, () => rgb);
+}
+
+/**
+ * A soft diagonal blend of two colors with a darker rim (T05 frontend): still a tiny, deterministic image per
+ * prompt, but one that reads as a picture in the browser rather than a flat swatch.
+ */
+export function gradientPng(w: number, h: number, a: Rgb, b: Rgb): Buffer {
+  return png(w, h, (x, y) => {
+    const t = (x / Math.max(1, w - 1) + y / Math.max(1, h - 1)) / 2;
+    const dx = x / Math.max(1, w - 1) - 0.5;
+    const dy = y / Math.max(1, h - 1) - 0.5;
+    const shade = 1 - 0.55 * Math.min(1, (dx * dx + dy * dy) * 2);
+    return [0, 1, 2].map((i) => Math.round((a[i]! * (1 - t) + b[i]! * t) * shade)) as Rgb;
+  });
+}
+
+function png(w: number, h: number, at: (x: number, y: number) => Rgb): Buffer {
+  const rows: Buffer[] = [];
+  for (let y = 0; y < h; y++) {
+    const row = Buffer.alloc(1 + w * 3);
+    for (let x = 0; x < w; x++) row.set(at(x, y), 1 + x * 3);
+    rows.push(row);
+  }
+  const raw = Buffer.concat(rows);
   const chunk = (type: string, data: Buffer) => {
     const len = Buffer.alloc(4);
     len.writeUInt32BE(data.length);
@@ -393,6 +422,8 @@ if (import.meta.main) {
   const mock = await startMockVenice({
     port,
     delayMs: process.env.MOCK_DELAY_MS ? Number(process.env.MOCK_DELAY_MS) : undefined,
+    // T05 frontend: how long a MOCK_IMAGE_SLOW image takes, to watch a pending image (and reload mid-paint) by hand.
+    imageSlowMs: process.env.MOCK_IMAGE_SLOW_MS ? Number(process.env.MOCK_IMAGE_SLOW_MS) : undefined,
     log: true,
   });
   console.log(`${new Date().toISOString()} mock Venice listening on ${mock.url}`);

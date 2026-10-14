@@ -2,6 +2,7 @@ import { RotateCw, X } from "lucide-react";
 import type { Brain } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Markdown } from "../../components/Markdown.tsx";
+import { LiveImage, type Aspect } from "./ImageCard.tsx";
 import { BrainMessageFrame, SteerNote } from "./MessageFrame.tsx";
 import { Reasoning } from "./Reasoning.tsx";
 import type { LiveReply as Live } from "./useChat.ts";
@@ -13,16 +14,23 @@ import type { LiveReply as Live } from "./useChat.ts";
  *
  * A regenerate renders in the regenerated message's own slot (`slot`): its header says which version is
  * being written and with what steer, and a failure leaves the message's saved versions as they were.
+ *
+ * An image brain's reply (`live.image`) is its prompt: the frame the picture will fill, and the prompt
+ * streaming in under it as plain text. It ends when the prompt is saved; the saved message then shows the
+ * image being painted, and the composer is free.
  */
 export function LiveReply({
   live,
   brain,
   slot,
+  aspect,
   onRetry,
   onDismiss,
 }: {
   live: Live;
   brain?: Brain;
+  /** An image reply's frame: the shape the image is expected to have. */
+  aspect: Aspect;
   slot?: { nextVersion: number; fromVersion: number | null };
   onRetry(): void;
   onDismiss(): void;
@@ -52,7 +60,9 @@ export function LiveReply({
         reasoning={live.reasoning ? <Reasoning text={live.reasoning} live={live.phase === "reasoning"} /> : null}
         footer={failed ? null : FOOTER_SPACE}
       >
-        {live.content ? (
+        {live.image ? (
+          <LiveImage prompt={live.content} aspect={aspect} color={brain?.color} failed={failed} />
+        ) : live.content ? (
           <div className={failed ? "opacity-55" : "ss-caret"}>
             <Markdown text={live.content} />
           </div>
@@ -62,7 +72,7 @@ export function LiveReply({
         {failed && (
           <div role="alert" className="mt-3 rounded-lg border border-red-400/25 bg-red-400/[0.07] px-3.5 py-3 text-[13px] leading-5 text-red-100">
             <p>
-              {live.content ? "The text above is partial and was not saved. " : ""}
+              {live.content ? (live.image ? "The prompt above is partial and was not saved, so no image was made. " : "The text above is partial and was not saved. ") : ""}
               {live.error}
             </p>
             <div className="mt-2.5 flex gap-2">

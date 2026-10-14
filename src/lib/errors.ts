@@ -23,6 +23,11 @@ export const sessionEnded = () =>
   new CommandError(401, "session_ended", "Your session ended (you logged out or logged in again) before this work could use your data.");
 export const notFound = (message: string) => new CommandError(404, "not_found", message);
 export const conflict = (message: string) => new CommandError(409, "conflict", message);
+/**
+ * T05 frontend: a change that would replace or remove an image Venice is still making (409). Its own code, so a
+ * client can tell "wait for this image" from "wait for the reply being written" (conflict) without reading words.
+ */
+export const imageBusy = (message: string) => new CommandError(409, "image_busy", message);
 export const upstreamError = (message: string, details?: unknown) =>
   new CommandError(502, "venice_error", message, details);
 

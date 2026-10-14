@@ -10,10 +10,12 @@ import { Spinner } from "../../components/Spinner.tsx";
 import { navigate } from "../../lib/router.tsx";
 import { compactNumber } from "../../lib/format.ts";
 import { patchConversation, refreshConversations } from "../conversations/store.ts";
+import { ImageSettings } from "./ImageSettings.tsx";
 
 /**
  * The conversation itself: title, the text and image models (one each, from Venice's live list), the reply
- * limits every brain shares, and delete. A model change applies to the next request of every brain.
+ * limits every brain shares, how images are made (size, format, watermark, negative prompt), and delete. A
+ * model change applies to the next request of every brain, and to the next image.
  */
 export function ConversationTab({
   conv,
@@ -99,15 +101,28 @@ export function ConversationTab({
         </div>
       </div>
 
-      <ModelPicker
-        id="cv-image-model"
-        label="Image model"
-        description="What image brains' prompts are painted with. Image replies arrive in T05."
-        value={st.imageModel}
-        list={imageModels}
-        detail={(m) => [m.price, m.privacy].join(" · ")}
-        onPick={async (imageModel) => void (await save({ settings: { imageModel } }))}
-      />
+      <section id="cv-images" className="scroll-mt-3 space-y-5 rounded-xl border border-line bg-raised/25 p-4">
+        <div>
+          <h4 className="text-[13px] font-semibold text-fg">Images</h4>
+          <p className="mt-0.5 text-[12.5px] leading-5 text-faint">
+            How image brains' prompts become pictures. Every image brain in this conversation uses these; each brain has its own safe mode (Brains).
+          </p>
+        </div>
+        <ModelPicker
+          id="cv-image-model"
+          label="Image model"
+          description="The prompt goes to it word for word. The next image uses a change."
+          value={st.imageModel}
+          list={imageModels}
+          detail={(m) => [m.price, m.privacy].join(" · ")}
+          onPick={async (imageModel) => void (await save({ settings: { imageModel } }))}
+        />
+        <ImageSettings
+          conv={conv}
+          model={imageModels.models ? (imageModels.models.find((m) => m.id === st.imageModel) ?? null) : undefined}
+          onSave={(image) => save({ settings: { image } })}
+        />
+      </section>
 
       <dl className="text-[13px]">
         <div className="flex gap-2">

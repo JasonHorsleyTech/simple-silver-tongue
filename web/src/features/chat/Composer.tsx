@@ -1,4 +1,4 @@
-import { ArrowUp, Check, PenLine, Plus, Square, X } from "lucide-react";
+import { ArrowUp, Check, ImageIcon, PenLine, Plus, Square, X } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { STOP_BILL_NOTE, type Brain } from "../../api/types.ts";
 import { Spinner } from "../../components/Spinner.tsx";
@@ -16,11 +16,13 @@ export const AS_PLAYER = "player";
  * Send targets: the default brain gets the big button (and Enter); every other brain gets a chip in its own
  * color (and ⌥1…⌥9, in chip order). With nothing typed, a chip asks that brain to just respond to the table
  * as it stands (also how a failed reply is retried); the server explains when there is nothing to answer.
- * Image brains' chips are there but off until image replies exist (T05).
+ * An image brain's chip (with a small picture icon) asks it for a picture: your text, if any, is its note.
+ * Once its prompt is saved the composer is free again, while the image is painted in the scrollback.
  *
  * "Write as…" (the pen) switches to adding words without generating anything: in a brain's mouth (the GM's
  * opening scene) or as your own message. The brain sees them as its own past reply; everyone else, framed
- * with its name. Enter adds; Escape or × goes back to playing.
+ * with its name. Written as an image brain, the words are its prompt and are painted as written. Enter adds;
+ * Escape or × goes back to playing.
  *
  * While a reply is being written (sent here, regenerated, or followed from the CLI) the chips give way to who
  * is writing, and the big button is Stop. Its caption and tooltip are the server's own sentence: a stop saves
@@ -67,6 +69,8 @@ export function Composer({
   const others = brains.filter((b) => b !== main);
   const author = writeAs === AS_PLAYER ? null : (brains.find((b) => b.id === writeAs) ?? null);
   const writing = writeAs !== null && (writeAs === AS_PLAYER || author !== null);
+  /** Writing as an image brain: the words are a prompt, and they are painted. */
+  const paints = author?.kind === "image";
   const empty = value.trim() === "";
   const several = brains.length > 1;
 
@@ -100,7 +104,7 @@ export function Composer({
   }
 
   const sendTo = (b: Brain) => {
-    if (busy || b.kind !== "text") return;
+    if (busy) return;
     onSend(b.id);
   };
 
@@ -147,12 +151,14 @@ export function Composer({
             <span
               className="hidden min-w-0 truncate sm:inline"
               title={
-                author
-                  ? `${author.name} sees these words as its own past reply; every other brain sees them framed with its name. Nothing is generated.`
-                  : "Added as your own message. No brain is asked to reply."
+                paints && author
+                  ? `Your words become ${author.name}'s image prompt, word for word: the image model paints them, and every other brain sees them framed as ${author.name}'s prompt. No brain is asked to write anything.`
+                  : author
+                    ? `${author.name} sees these words as its own past reply; every other brain sees them framed with its name. Nothing is generated.`
+                    : "Added as your own message. No brain is asked to reply."
               }
             >
-              · nothing is generated
+              {paints ? "· your words are its prompt, painted as written" : "· nothing is generated"}
             </span>
             <button
               type="button"
@@ -178,7 +184,15 @@ export function Composer({
             if (addError) setAddError(null);
           }}
           onKeyDown={onKeyDown}
-          placeholder={writing ? (author ? `${author.name}'s words… (the opening scene, a line you'd rather write yourself)` : "Your message, added without asking anyone to reply…") : `Message ${main?.name ?? "the brain"}…`}
+          placeholder={
+            writing
+              ? paints
+                ? `${author!.name}'s image prompt… (what the picture shows, in detail)`
+                : author
+                  ? `${author.name}'s words… (the opening scene, a line you'd rather write yourself)`
+                  : "Your message, added without asking anyone to reply…"
+              : `Message ${main?.name ?? "the brain"}…`
+          }
           className="block max-h-[40vh] w-full resize-none bg-transparent px-4 pt-3.5 pb-1 text-[15px] leading-[1.6] text-fg outline-none placeholder:text-faint"
         />
         {addError && <p className="px-4 pt-1 text-[12.5px] leading-5 text-red-200">{addError}</p>}
@@ -201,7 +215,7 @@ export function Composer({
               </p>
             ) : writing ? (
               <p className="hidden min-w-0 truncate text-[11.5px] text-faint sm:block">
-                <Kbd>Enter</Kbd> adds it · <Kbd>Esc</Kbd> back to sending
+                <Kbd>Enter</Kbd> {paints ? "paints it" : "adds it"} · <Kbd>Esc</Kbd> back to sending
               </p>
             ) : several ? (
               others.map((b, i) => <BrainChip key={b.id} brain={b} index={i} empty={empty} onClick={() => sendTo(b)} />)
@@ -230,11 +244,15 @@ export function Composer({
                 type="button"
                 onClick={() => void add()}
                 disabled={adding || empty}
-                title={`Add it as ${authorName === "you" ? "your message" : `${authorName}'s line`} (Enter). Nothing is generated.`}
+                title={
+                  paints
+                    ? `Add it as ${authorName}'s prompt and paint it (Enter). No brain is asked to write anything.`
+                    : `Add it as ${authorName === "you" ? "your message" : `${authorName}'s line`} (Enter). Nothing is generated.`
+                }
                 className="inline-flex h-8 max-w-[16rem] items-center gap-1.5 rounded-lg bg-silver px-3 text-[13px] font-medium text-canvas shadow-[inset_0_1px_0_rgb(255_255_255/0.55)] transition-colors hover:bg-silver-hi disabled:cursor-not-allowed disabled:bg-hover disabled:text-faint disabled:shadow-none"
               >
                 {adding ? <Spinner className="size-3.5" /> : <Plus aria-hidden className="size-4 shrink-0" strokeWidth={2.25} />}
-                <span className="truncate">{author ? `Add as ${author.name}` : "Add"}</span>
+                <span className="truncate">{author ? `${paints ? "Paint" : "Add"} as ${author.name}` : "Add"}</span>
               </button>
             ) : (
               <button
@@ -262,22 +280,23 @@ export function Composer({
   );
 }
 
-/** A small send button in a brain's own color. */
+/** A small send button in a brain's own color. An image brain's has a picture icon: it answers with an image. */
 function BrainChip({ brain: b, index, empty, onClick }: { brain: Brain; index: number; empty: boolean; onClick(): void }) {
-  const image = b.kind !== "text";
+  const image = b.kind === "image";
   const key = index < 9 ? ` (⌥${index + 1})` : "";
   const title = image
-    ? `${b.name} is an image brain. Image replies aren't built yet (T05).`
+    ? empty
+      ? `Ask ${b.name} for a picture of the scene as it stands${key}`
+      : `Send to ${b.name}: it paints a picture, with your message as its note${key}`
     : empty
       ? `Ask ${b.name} to respond, with no new message${key}`
       : `Send to ${b.name}${key}`;
   return (
     <button
       type="button"
-      disabled={image}
       onClick={onClick}
       title={title}
-      aria-label={image ? title : empty ? `Ask ${b.name} to respond` : `Send to ${b.name}`}
+      aria-label={image ? (empty ? `Ask ${b.name} for a picture` : `Send to ${b.name} for a picture`) : empty ? `Ask ${b.name} to respond` : `Send to ${b.name}`}
       className="inline-flex h-7 max-w-[11rem] items-center gap-1.5 rounded-md border px-2 text-[12.5px] font-medium transition-colors enabled:hover:brightness-125 disabled:cursor-not-allowed disabled:opacity-40"
       style={{
         color: `color-mix(in oklab, ${b.color} 55%, white)`,
@@ -285,13 +304,17 @@ function BrainChip({ brain: b, index, empty, onClick }: { brain: Brain; index: n
         backgroundColor: `color-mix(in oklab, ${b.color} 9%, transparent)`,
       }}
     >
-      <span aria-hidden className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: b.color }} />
+      {image ? (
+        <ImageIcon aria-hidden className="size-3.5 shrink-0" style={{ color: b.color }} />
+      ) : (
+        <span aria-hidden className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: b.color }} />
+      )}
       <span className="truncate">{b.name}</span>
     </button>
   );
 }
 
-/** The pen: pick who the next words are from. Text brains, or you; image brains come with T05. */
+/** The pen: pick who the next words are from: a brain (an image brain's words are its prompt, painted), or you. */
 function WriteAsMenu({
   open,
   onOpen,
@@ -353,20 +376,19 @@ function WriteAsMenu({
           }}
           className="absolute bottom-full left-0 z-30 mb-2 w-72 rounded-xl border border-line-strong bg-panel p-1.5 shadow-2xl shadow-black/60"
         >
-          <p className="px-2 pt-1 pb-1.5 text-[11.5px] leading-4 text-faint">Write as… Added to the ledger as written; nothing is generated.</p>
+          <p className="px-2 pt-1 pb-1.5 text-[11.5px] leading-4 text-faint">Write as… Added to the ledger as written. No brain writes anything; an image prompt is painted.</p>
           {brains.map((b) => (
             <button
               key={b.id}
               type="button"
               role="menuitemradio"
               aria-checked={current === b.id}
-              disabled={b.kind !== "text"}
-              title={b.kind !== "text" ? "Image brains' lines (an image prompt) arrive with T05" : `${b.name} sees it as its own past reply`}
+              title={b.kind === "image" ? `Your words become ${b.name}'s image prompt, and are painted as written` : `${b.name} sees it as its own past reply`}
               onClick={() => onPick(b.id)}
               className={item}
             >
               <BrainBadge name={b.name} color={b.color} className="min-w-0" />
-              {b.kind !== "text" && <span className="text-[11.5px] text-faint">image</span>}
+              {b.kind === "image" && <span className="shrink-0 text-[11.5px] text-faint">image prompt</span>}
               {current === b.id && <Check aria-hidden className="ml-auto size-3.5 text-muted" />}
             </button>
           ))}

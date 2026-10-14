@@ -136,8 +136,10 @@ export function ChatView({ id }: { id: string }) {
   const liveBrain = live?.brainName ?? brain.name;
   const status =
     live?.kind === "regenerate" && live.messageId
-      ? `${liveBrain} is writing version ${(conv.messages.find((m) => m.id === live.messageId)?.versions.length ?? 0) + 1}`
-      : `${liveBrain} is replying`;
+      ? `${liveBrain} is writing version ${(conv.messages.find((m) => m.id === live.messageId)?.versions.length ?? 0) + 1}${live.image ? "'s prompt" : ""}`
+      : live?.image
+        ? `${liveBrain} is writing an image prompt`
+        : `${liveBrain} is replying`;
   const notice = chat.notice;
   const panel = (
     <SettingsPanel

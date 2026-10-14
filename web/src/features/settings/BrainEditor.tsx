@@ -24,10 +24,12 @@ export function BrainEditor({
   messageCount,
   writing,
   model,
+  imagePlan,
   onSaved,
   onDefault,
   onDeleted,
   onPayload,
+  onImageSettings,
 }: {
   conversationId: string;
   brain: Brain;
@@ -37,10 +39,14 @@ export function BrainEditor({
   /** It is writing a reply right now. */
   writing: boolean;
   model: ModelInfo | null | undefined;
+  /** How this conversation paints (image model and size), for an image brain: "z-image-turbo · 1216 × 832". */
+  imagePlan: string;
   onSaved(b: Brain): void;
   onDefault(brainId: string): void;
   onDeleted(brainId: string): void;
   onPayload(): void;
+  /** Open the conversation's image settings (model, size, format). */
+  onImageSettings(): void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -139,7 +145,7 @@ export function BrainEditor({
             : writing
               ? `Locked while ${brain.name} is writing a reply.`
               : brain.kind === "image"
-                ? "Answers with a forced generate_image call. Image replies aren't built yet (T05); set it up now."
+                ? "Answers with a picture: a forced generate_image call writes the prompt, which every other brain sees, and the image model paints it. Can change until it first speaks."
                 : "Answers in words. Can change until it first speaks."}
         </p>
       </div>
@@ -222,11 +228,17 @@ export function BrainEditor({
           <Switch
             id={id("safe")}
             label="Safe mode"
-            description="Venice blurs adult content in this brain's images. On by default."
+            description="On by default: Venice blurs adult content in this brain's images (sent as safe_mode). A blurred image says so, with a way to paint it again with safe mode off."
             checked={brain.safeMode !== false}
             busy={busy === "safe"}
             onChange={(safeMode) => void update({ safeMode }, "safe")}
           />
+          <p className="-mt-2 text-[12.5px] leading-5 text-faint">
+            Painted with <span className="text-muted">{imagePlan}</span>, like every image brain here.{" "}
+            <button type="button" onClick={onImageSettings} className="text-muted underline decoration-line-strong underline-offset-4 hover:text-fg">
+              Image model and size
+            </button>
+          </p>
           <div>
             <h4 className="text-[13px] font-medium text-fg">Tool text</h4>
             <p className="mt-0.5 text-[12.5px] leading-5 text-faint">

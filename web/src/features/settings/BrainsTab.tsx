@@ -25,6 +25,7 @@ export function BrainsTab({
   onBrain,
   onPatch,
   onPayload,
+  onImageSettings,
 }: {
   conv: Conversation;
   model: ModelInfo | null | undefined;
@@ -35,7 +36,11 @@ export function BrainsTab({
   onBrain(b: Brain): void;
   onPatch(fn: (c: Conversation) => Conversation): void;
   onPayload(brainId: string): void;
+  onImageSettings(): void;
 }) {
+  const img = conv.settings.image;
+  const size = img.width && img.height ? `${img.width} × ${img.height}` : img.resolution || img.aspectRatio ? [img.resolution, img.aspectRatio].filter(Boolean).join(" · ") : "its default size";
+  const imagePlan = `${conv.settings.imageModel} · ${size}`;
   const [openId, setOpenId] = useState<string | null>(() => (conv.brains.length === 1 ? conv.brains[0]!.id : null));
   const [adding, setAdding] = useState(false);
   const counts = useMemo(() => {
@@ -73,6 +78,8 @@ export function BrainsTab({
               messageCount={counts.get(b.id) ?? 0}
               writing={writingBrainId === b.id}
               model={model}
+              imagePlan={imagePlan}
+              onImageSettings={onImageSettings}
               onSaved={onBrain}
               onDefault={(id) => onPatch((c) => ({ ...c, defaultBrainId: id }))}
               onDeleted={(id) => onPatch((c) => ({ ...c, brains: c.brains.filter((x) => x.id !== id) }))}
@@ -128,6 +135,7 @@ function BrainCard({
   const tags = [
     isDefault && "default",
     brain.kind === "image" && "image",
+    brain.kind === "image" && brain.safeMode === false && "safe mode off",
     brain.reasoning.enabled && `reasoning ${brain.reasoning.effort}`,
     brain.finalReminder.enabled && brain.finalReminder.content.trim() && "reminder",
   ].filter((t): t is string => !!t);
@@ -146,12 +154,15 @@ function BrainCard({
           className={cx("min-w-0 flex-1 rounded-xl px-3.5 text-left", open ? "py-3" : "pt-3 pb-2.5")}
         >
           <span className="flex min-w-0 items-center gap-2">
-            <BrainBadge name={brain.name} color={brain.color} className="min-w-0" />
-            {tags.map((t) => (
-              <span key={t} className={cx("shrink-0 text-[11.5px]", t === "default" ? "text-muted" : "text-faint")}>
-                {t}
-              </span>
-            ))}
+            {/* The name keeps its room; the tags give way (clipped) when the card is narrow. */}
+            <BrainBadge name={brain.name} color={brain.color} className="max-w-[60%] shrink-0" />
+            <span className="flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap">
+              {tags.map((t) => (
+                <span key={t} className={cx("shrink-0 text-[11.5px]", t === "default" ? "text-muted" : t === "safe mode off" ? "text-amber-200/75" : "text-faint")}>
+                  {t}
+                </span>
+              ))}
+            </span>
             {writing && <span className="shimmer shrink-0 text-[11.5px] font-medium">writing…</span>}
             {open && <span className="ml-auto shrink-0 text-[11.5px] text-faint/80 tabular-nums">{plural(messageCount, "message")}</span>}
           </span>
@@ -254,7 +265,8 @@ function AddBrainForm({ conversationId, onAdded, onCancel }: { conversationId: s
       />
       <p className="text-[12.5px] leading-5 text-faint">
         It joins mid-campaign too: from its first request it sees everything said so far. Its final reminder starts on, with an example you can edit.
-        {kind === "image" && " Image brains get editable tool text and safe mode; their replies arrive in T05."}
+        {kind === "image" &&
+          " An image brain answers with a picture: it writes a prompt, which every other brain sees, and the conversation's image model paints it. Safe mode starts on, and its tool text is editable."}
       </p>
       {error && <Notice tone="error">{error}</Notice>}
       <div className="flex items-center justify-end gap-1.5">

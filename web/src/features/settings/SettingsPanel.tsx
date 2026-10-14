@@ -105,6 +105,17 @@ export function SettingsPanel({
               onBrain={onBrain}
               onPatch={onPatch}
               onPayload={onPayload}
+              onImageSettings={() => {
+                onTab("conversation");
+                // Scroll the panel only: scrollIntoView would scroll the page itself too, and push the header off screen.
+                setTimeout(() => {
+                  const body = document.getElementById("settings-body");
+                  const section = document.getElementById("cv-images");
+                  if (!body || !section) return;
+                  const top = body.scrollTop + section.getBoundingClientRect().top - body.getBoundingClientRect().top - 12;
+                  body.scrollTo({ top, behavior: "smooth" });
+                }, 60);
+              }}
             />
           </>
         )}

@@ -27,7 +27,7 @@ import {
 import type { Brain, ChatRequest, Conversation, LedgerMessage, MessageVersion, RetryRequest, Usage } from "../conversations/types.ts";
 import { IMAGE_STOP_NOTE, STOP_BILL_NOTE } from "../conversations/wording.ts";
 import { badRequest, CommandError } from "../lib/errors.ts";
-import { newId } from "../lib/ids.ts";
+import { newId, nowIso } from "../lib/ids.ts";
 import { command, streamCommand, type Ctx, type StreamEvent } from "../registry.ts";
 import { closeVault, forkVault, type Vault } from "../storage/vault.ts";
 import { openChatStream, type ChatEvent } from "../venice/chat.ts";
@@ -238,7 +238,7 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
     if (!m) throw new CommandError(409, "conflict", `${id} was deleted while its new version was being written, so the new version wasn't saved.`);
     m.versions.push(version);
     m.activeVersion = m.versions.length - 1;
-    m.updatedAt = version.createdAt;
+    m.updatedAt = nowIso(); // stamped in the write queue, so a later write always has a later updatedAt (the browser merges by it)
     return m;
   };
   if (painter) return yield* paintReply(ctx, gen, conv.id, reply, { painter, brain: plan.brain, textModel: plan.body.model, say, head }, addVersion);

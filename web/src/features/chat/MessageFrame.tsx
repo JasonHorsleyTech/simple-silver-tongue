@@ -87,11 +87,24 @@ export function BrainMessageFrame({
  * Where a version came from: the steer that produced it (and which version it revised), or a plain re-roll.
  * Display only: the steer was sent once, with the request that wrote this version, and never again.
  */
-export function SteerNote({ steer, fromVersion, reroll }: { steer?: string | null; fromVersion?: number | null; reroll?: boolean }) {
-  if (!steer && !reroll) return null;
+export function SteerNote({
+  steer,
+  fromVersion,
+  reroll,
+  repaintOf,
+}: {
+  steer?: string | null;
+  fromVersion?: number | null;
+  reroll?: boolean;
+  /** An image version painted again from version N's prompt (image.retry of a finished image), 1-based. */
+  repaintOf?: number | null;
+}) {
+  if (!steer && !reroll && !repaintOf) return null;
   const title = steer
     ? `The steer behind this version${fromVersion ? `, which revised version ${fromVersion}` : ""}. It was sent once, with that request only.`
-    : "A plain re-roll: written again from the messages before it, without a steer.";
+    : repaintOf
+      ? `Painted again from version ${repaintOf}'s prompt, word for word: another image of the same prompt. Both images are kept.`
+      : "A plain re-roll: written again from the messages before it, without a steer.";
   return (
     <span title={title} className="flex min-w-0 items-center gap-1 text-[12px] text-faint">
       <span aria-hidden className="text-line-strong">
@@ -104,6 +117,8 @@ export function SteerNote({ steer, fromVersion, reroll }: { steer?: string | nul
           <span className="min-w-0 truncate text-muted">“{steer}”</span>
           {fromVersion ? <span className="shrink-0">on v{fromVersion}</span> : null}
         </>
+      ) : repaintOf ? (
+        <span>same prompt as v{repaintOf}</span>
       ) : (
         <span>re-roll</span>
       )}

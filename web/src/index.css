@@ -370,3 +370,48 @@
   background: var(--color-silver);
   animation: ss-blink 1s steps(1) infinite;
 }
+
+/* An image prompt still streaming in (features/chat/ImageCard.tsx): the same caret, inline in plain text. */
+.ss-caret-inline {
+  display: inline-block;
+  width: 0.45em;
+  height: 1em;
+  margin-left: 0.15em;
+  vertical-align: -0.12em;
+  border-radius: 2px;
+  background: var(--color-silver);
+  animation: ss-blink 1s steps(1) infinite;
+}
+
+/*
+ * The frame an image is painted into, while it waits: a slow sheen in the painter's color (--paint), so the
+ * space the picture will take is visible from the first word of its prompt.
+ */
+@keyframes ss-paint {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+.ss-paint {
+  background:
+    radial-gradient(120% 90% at 30% 20%, color-mix(in oklab, var(--paint, var(--color-focus)) 9%, transparent), transparent 70%),
+    linear-gradient(
+        110deg,
+        transparent 0%,
+        transparent 35%,
+        color-mix(in oklab, var(--paint, var(--color-focus)) 7%, rgb(255 255 255 / 0.03)) 50%,
+        transparent 65%,
+        transparent 100%
+      )
+      0 0 / 200% 100%,
+    var(--color-panel);
+  animation: ss-paint 2.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ss-paint {
+    animation: none;
+  }
+}

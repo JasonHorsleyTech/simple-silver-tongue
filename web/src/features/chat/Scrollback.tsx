@@ -1,7 +1,8 @@
 import { ArrowDown } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Conversation } from "../../api/types.ts";
 import { Markdown } from "../../components/Markdown.tsx";
+import { expectedAspect } from "./ImageCard.tsx";
 import { LiveReply } from "./LiveReply.tsx";
 import { MessageItem } from "./MessageItem.tsx";
 import { PlayerBubble } from "./MessageFrame.tsx";
@@ -33,6 +34,9 @@ export function Scrollback({
   const [away, setAway] = useState(false);
   const brains = new Map(conv.brains.map((b) => [b.id, b]));
   const { live, pendingPlayer } = chat;
+  // A new object only when the size settings change, so the memo'd messages don't all re-render.
+  const { width, height, aspectRatio, resolution } = conv.settings.image;
+  const aspect = useMemo(() => expectedAspect({ width, height, aspectRatio, resolution }), [width, height, aspectRatio, resolution]);
 
   const toBottom = useCallback((smooth = false) => {
     const el = box.current;
@@ -76,7 +80,7 @@ export function Scrollback({
   // which message). Anything else, or a regenerate of a message we don't have, goes at the bottom.
   const inSlot = live?.kind === "regenerate" && live.messageId && conv.messages.some((m) => m.id === live.messageId) ? live.messageId : null;
   const atBottom = live && !inSlot ? live : null;
-  const canRegenerate = !!last && last.author.type === "brain" && last.kind === "text" && !atBottom && pendingPlayer === null;
+  const canRegenerate = !!last && last.author.type === "brain" && !atBottom && pendingPlayer === null;
 
   return (
     <div className="relative min-h-0 flex-1">
@@ -96,6 +100,7 @@ export function Scrollback({
                     live={m.id === inSlot ? live! : undefined}
                     busy={chat.busy}
                     actions={chat.actions}
+                    aspect={aspect}
                     onPreviewRegenerate={onPreviewRegenerate}
                     onDismissLive={chat.dismissLive}
                   />
@@ -113,6 +118,7 @@ export function Scrollback({
                   <LiveReply
                     live={atBottom}
                     brain={atBottom.brainId ? brains.get(atBottom.brainId) : undefined}
+                    aspect={aspect}
                     onRetry={onRetry}
                     onDismiss={chat.dismissLive}
                   />

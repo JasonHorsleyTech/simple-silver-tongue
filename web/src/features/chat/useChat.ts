@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client.ts";
 import { ApiError, errorMessage, isAbortError, retryOf } from "../../api/errors.ts";
-import type { Brain, Conversation, LedgerMessage, RetryRequest, StreamYield } from "../../api/types.ts";
+import { IMAGE_STOP_NOTE, type Brain, type Conversation, type LedgerMessage, type RetryRequest, type StreamYield } from "../../api/types.ts";
 import { refreshConversations } from "../conversations/store.ts";
 
 /**
@@ -14,6 +14,13 @@ import { refreshConversations } from "../conversations/store.ts";
  * Coming back calls generation.follow, which replays what has streamed so far and then streams the rest.
  * A regenerate's live reply carries the id of the message it rewrites, so the scrollback paints it in that
  * message's slot rather than at the bottom (also when it was re-attached by generation.follow).
+ *
+ * Image brains (T05): the live reply is the prompt streaming in. Once it is saved (`image_pending`) the
+ * generation is over and the conversation is free: the live reply ends there, so Send and the chips come back
+ * at once, and the image is followed on its own. Every message whose image is pending in this copy of the
+ * ledger, however it got there (a turn, a regenerate, an edit, an add, a retry, a reload), has a watcher on
+ * `image.follow`, which ends with the message as saved. Messages from different streams can arrive out of
+ * order, so an older copy of a message (an earlier `updatedAt`) never replaces a newer one.
  */
 
 export type LiveReply = {
@@ -36,6 +43,8 @@ export type LiveReply = {
    * brain for a turn, the same message and steer for a regenerate. Null when the server sent none.
    */
   retry: RetryRequest | null;
+  /** An image brain's reply: `content` is its image prompt, streaming in; the image is made once it is saved. */
+  image: boolean;
 };
 
 /** A line above the composer: an up-front send failure (error), or what a stop did and didn't save (info). */
@@ -49,6 +58,13 @@ export type MessageActions = {
   selectVersion(messageId: string, version: number): Promise<string | null>;
   /** A new version of the last message, streaming in its place. Resolves to an up-front failure's message. */
   regenerate(messageId: string, steer: string): Promise<string | null>;
+  /**
+   * image.retry: paint an image message's prompt again. A failed, blurred or flagged image is replaced; a
+   * finished one is kept and the repaint becomes a new version. With `safeModeOff`, the brain's safe mode is
+   * turned off first (brain.update), for a blurred image. Resolves once the image is being made (it is then
+   * followed like any pending image), or to the reason it wasn't.
+   */
+  repaint(messageId: string, opts?: { safeModeOff?: boolean }): Promise<string | null>;
 };
 
 export type Chat = {
@@ -97,6 +113,39 @@ export type Chat = {
 export const BUSY_LEDGER =
   "A reply is being written from the messages as they are now, so they can't change until it's done. Wait for it to finish, or stop it.";
 
+/**
+ * What the browser says when a change would replace or remove an image Venice is still making (the server's
+ * 409 image_busy): an edit of its prompt, its retry, the message's delete.
+ */
+export const IMAGE_BUSY =
+  "Its image is still being made. Venice is already making it (and billing it), so it will be kept: try again once it has landed.";
+
+/** True while any version of this message has an image being made. `active`: only the version on show. */
+export function imagePending(m: LedgerMessage, which: "active" | "any" = "any"): boolean {
+  if (m.kind !== "image") return false;
+  const versions = which === "any" ? m.versions : [m.versions[m.activeVersion]];
+  return versions.some((v) => v?.image?.status === "pending");
+}
+
+/** Keep our copy of a message when the incoming one is older: events from different streams can cross. */
+const newer = (incoming: LedgerMessage, ours: LedgerMessage | undefined) => !ours || incoming.updatedAt >= ours.updatedAt;
+
+/** A re-read conversation, keeping any message of ours that is newer than what the read saw. */
+function mergeRead(ours: Conversation | null, read: Conversation): Conversation {
+  if (!ours || ours.id !== read.id) return read;
+  const mine = new Map(ours.messages.map((m) => [m.id, m]));
+  return { ...read, messages: read.messages.map((m) => (newer(m, mine.get(m.id)) ? m : mine.get(m.id)!)) };
+}
+
+/** A failed image.follow is tried again after this long (doubling, per message), unless the page reloads it first. */
+const WATCH_RETRY_MS = [1000, 2000, 4000, 8000, 15000, 30000];
+
+/**
+ * At most this many image.follow streams at once. Each holds a connection, and the browser allows six per host
+ * over HTTP/1.1: with more, the next turn would queue behind them. The others start as these finish.
+ */
+const MAX_WATCHERS = 3;
+
 const EMPTY_BUF = { content: "", reasoning: "" };
 
 /** After a stop, Venice's bill arrives later (the server's drain). Re-read the conversation on this schedule. */
@@ -144,13 +193,19 @@ export function useChat(id: string): Chat {
     if (frame.current === null) frame.current = requestAnimationFrame(flush);
   }, [flush]);
 
-  /** Add a saved message, or replace it by id (a regenerate, an edit or a version switch returns an existing one). */
-  const upsertMessage = useCallback((m: LedgerMessage) => {
+  /**
+   * Add a saved message, or replace it by id (a regenerate, an edit or a version switch returns an existing one).
+   * An older copy than ours is ignored. `known`: only replace, never add (an image landing for a message that
+   * was deleted meanwhile must not bring it back).
+   */
+  const upsertMessage = useCallback((m: LedgerMessage, opts?: { known?: boolean }) => {
     setConv((c) => {
       if (!c) return c;
       const i = c.messages.findIndex((x) => x.id === m.id);
+      if (i === -1 && opts?.known) return c;
+      if (i !== -1 && !newer(m, c.messages[i])) return c;
       const messages = i === -1 ? [...c.messages, m] : c.messages.map((x, j) => (j === i ? m : x));
-      return { ...c, messages, updatedAt: m.updatedAt };
+      return { ...c, messages, updatedAt: m.updatedAt > c.updatedAt ? m.updatedAt : c.updatedAt };
     });
   }, []);
 
@@ -160,9 +215,10 @@ export function useChat(id: string): Chat {
    * reply has no cost yet; the re-reads after a stop pick it up.
    */
   const saveReply = useCallback(
-    (m: LedgerMessage, spentUsd: number | undefined) => {
-      upsertMessage(m);
-      if (spentUsd !== undefined) setConv((c) => c && { ...c, spentUsd });
+    (m: LedgerMessage, spentUsd: number | undefined, opts?: { known?: boolean }) => {
+      upsertMessage(m, opts);
+      // The total only grows; a stream that read it a moment before another's save can't shrink it.
+      if (spentUsd !== undefined) setConv((c) => c && { ...c, spentUsd: Math.max(spentUsd, c.spentUsd ?? 0) });
     },
     [upsertMessage],
   );
@@ -170,7 +226,7 @@ export function useChat(id: string): Chat {
   /** Re-read the whole conversation, unless a reply started meanwhile (its events are then the fresher truth). */
   const reload = useCallback(async () => {
     const next = await api.call("conversation.get", { id }, { signal: alive.current.signal });
-    if (!busyRef.current) setConv(next);
+    if (!busyRef.current) setConv((c) => mergeRead(c, next));
   }, [id]);
 
   const watchCost = useCallback(() => {
@@ -178,9 +234,13 @@ export function useChat(id: string): Chat {
     costTries.current = 0;
   }, []);
 
-  /** The one reducer for turn, message.regenerate and generation.follow events. */
+  /**
+   * The one reducer for turn, message.regenerate and generation.follow events. Returns true at `image_pending`:
+   * the image brain's generation is over there (its prompt is saved, the conversation is free), so the caller
+   * stops reading and the image is followed on its own (the watchers below).
+   */
   const apply = useCallback(
-    (ev: StreamYield) => {
+    (ev: StreamYield): boolean => {
       switch (ev.type) {
         case "following":
           setNotice((n) => (n?.tone === "info" ? null : n)); // an earlier stop's note is old news once a new reply runs
@@ -196,6 +256,7 @@ export function useChat(id: string): Chat {
             phase: "waiting",
             error: null,
             retry: null,
+            image: false,
           });
           break;
         case "message":
@@ -205,6 +266,7 @@ export function useChat(id: string): Chat {
           void refreshConversations();
           break;
         case "start":
+          if (ev.imageOnly) break; // only an image is being made (no text streams): the watchers show it
           flush();
           setNotice((n) => (n?.tone === "info" ? null : n));
           setLive((l) => ({
@@ -214,6 +276,7 @@ export function useChat(id: string): Chat {
             brainId: ev.brainId,
             brainName: ev.brainName,
             messageId: ev.messageId,
+            image: ev.kind === "image",
           }));
           break;
         case "reasoning":
@@ -221,8 +284,22 @@ export function useChat(id: string): Chat {
           schedule();
           break;
         case "delta":
+        case "prompt": // an image brain's prompt, as words: it streams in like a reply
           buf.current.content += ev.delta;
           schedule();
+          break;
+        case "image_pending":
+          // The prompt is saved and the image is with Venice. The reply is over: the composer is free again.
+          flush();
+          upsertMessage(ev.message);
+          setLive(null);
+          void refreshConversations();
+          return true;
+        case "image_done":
+        case "image_error":
+          // Only reaches a live reply when no image was requested (a stopped or cut-off prompt): it's an error image.
+          flush();
+          upsertMessage(ev.message);
           break;
         case "done":
           flush();
@@ -230,9 +307,8 @@ export function useChat(id: string): Chat {
           setLive(null);
           void refreshConversations();
           break;
-        default:
-          break; // prompt and image events: image brains (T05), not shown yet
       }
+      return false;
     },
     [upsertMessage, saveReply, flush, schedule],
   );
@@ -274,10 +350,13 @@ export function useChat(id: string): Chat {
           // Nothing running. If our copy ends with the player's message, the reply may have been saved between
           // our conversation.get and this call: fetch once more to be sure.
           const last = convRef.current?.messages.at(-1);
-          if (last?.author.type === "player") setConv(await api.call("conversation.get", { id }, { signal }));
+          if (last?.author.type === "player") {
+            const read = await api.call("conversation.get", { id }, { signal });
+            setConv((c) => mergeRead(c, read));
+          }
           return;
         }
-        apply(ev);
+        if (apply(ev)) return; // an image brain's prompt is saved: its image is followed on its own
       }
     } catch (err) {
       if (isAbortError(err) || stoppedEarly(err)) return;
@@ -303,6 +382,62 @@ export function useChat(id: string): Chat {
       if (frame.current !== null) cancelAnimationFrame(frame.current);
     };
   }, [id, follow]);
+
+  // Every pending image in our copy is followed to its end with image.follow, one watcher per message, whatever
+  // made it pending: a turn or regenerate (their streams stop at image_pending), an edit, an add, a retry, a
+  // reload mid-image, or the CLI. image.follow can't miss a result: with nothing being made it answers at once
+  // with the message as saved. When a watcher ends, the next pass looks again (a new image may have started).
+  const watching = useRef(new Map<string, AbortController>());
+  const watchRetry = useRef(new Map<string, { tries: number; at: number }>());
+  const [watchPass, setWatchPass] = useState(0);
+  const watchImages = useCallback(
+    async (messageId: string) => {
+      if (watching.current.has(messageId)) return;
+      const ac = new AbortController();
+      const parent = alive.current.signal;
+      const abort = () => ac.abort();
+      parent.addEventListener("abort", abort);
+      watching.current.set(messageId, ac);
+      let retryIn: number | null = null;
+      try {
+        for await (const ev of api.stream("image.follow", { conversation: id, message: messageId }, { signal: ac.signal })) {
+          if (ev.type === "done") {
+            if (ev.message) saveReply(ev.message, ev.spentUsd, { known: true });
+          } else if (ev.type === "image_pending" || ev.type === "image_done" || ev.type === "image_error") {
+            upsertMessage(ev.message, { known: true });
+          }
+        }
+        watchRetry.current.delete(messageId);
+        void refreshConversations();
+      } catch (err) {
+        if (isAbortError(err)) return;
+        if (err instanceof ApiError && err.code === "not_found") {
+          void reload().catch(() => {}); // the message (or the conversation) is gone: show what is there now
+        } else {
+          const r = watchRetry.current.get(messageId) ?? { tries: 0, at: 0 };
+          retryIn = WATCH_RETRY_MS[Math.min(r.tries, WATCH_RETRY_MS.length - 1)]!;
+          watchRetry.current.set(messageId, { tries: r.tries + 1, at: Date.now() + retryIn });
+        }
+      } finally {
+        parent.removeEventListener("abort", abort);
+        watching.current.delete(messageId);
+        if (!ac.signal.aborted) {
+          if (retryIn === null) setWatchPass((n) => n + 1);
+          else setTimeout(() => setWatchPass((n) => n + 1), retryIn);
+        }
+      }
+    },
+    [id, reload, saveReply, upsertMessage],
+  );
+  useEffect(() => {
+    if (!conv) return;
+    const now = Date.now();
+    for (const m of conv.messages) {
+      if (watching.current.size >= MAX_WATCHERS) break;
+      if (!imagePending(m) || watching.current.has(m.id) || (watchRetry.current.get(m.id)?.at ?? 0) > now) continue;
+      void watchImages(m.id);
+    }
+  }, [conv, watchPass, watchImages]);
 
   // Back to the tab: the CLI or another tab may have changed the conversation, or started a reply.
   useEffect(() => {
@@ -369,6 +504,7 @@ export function useChat(id: string): Chat {
         phase: "waiting",
         error: null,
         retry: null,
+        image: target?.kind === "image",
       });
       let saved = false;
       let started = false;
@@ -377,7 +513,7 @@ export function useChat(id: string): Chat {
         for await (const ev of api.stream("turn", args, { signal: alive.current.signal })) {
           if (ev.type === "message") saved = true;
           if (ev.type === "start") started = true;
-          apply(ev);
+          if (apply(ev)) break; // the prompt is saved: the image is followed on its own, and the table is free
         }
         return null;
       } catch (err) {
@@ -422,13 +558,14 @@ export function useChat(id: string): Chat {
         phase: "waiting",
         error: null,
         retry: null,
+        image: m?.kind === "image",
       });
       let started = false;
       try {
         const args = { conversation: id, message: messageId, ...(trimmed ? { steer: trimmed } : {}) };
         for await (const ev of api.stream("message.regenerate", args, { signal: alive.current.signal })) {
           if (ev.type === "start") started = true;
-          apply(ev);
+          if (apply(ev)) break; // the new prompt is saved: its image is followed on its own
         }
         return null;
       } catch (err) {
@@ -459,6 +596,9 @@ export function useChat(id: string): Chat {
         const head = r.message ? "Stopped. What had arrived is kept." : (r.error?.message ?? "Stopped.");
         setNotice({ tone: "info", message: head, ...(r.note ? { note: r.note } : {}) });
         watchCost();
+      } else if (r.painting?.length) {
+        // The prompt was already saved when the stop arrived: what is left is an image, which no stop touches.
+        setNotice({ tone: "info", message: "Nothing to stop: the prompt is saved, and its image is being made.", note: IMAGE_STOP_NOTE });
       }
     } catch (err) {
       setNotice({ tone: "error", message: `Couldn't stop the reply. ${errorMessage(err)}` });
@@ -470,6 +610,10 @@ export function useChat(id: string): Chat {
   /** A ledger command's failure, in words for where it happened. A 409 also starts showing that reply. */
   const ledgerFailure = useCallback(
     (err: unknown): string => {
+      if (err instanceof ApiError && err.code === "image_busy") {
+        void reload().catch(() => {}); // an image we didn't know was being made (the CLI, another tab): show it
+        return IMAGE_BUSY;
+      }
       if (err instanceof ApiError && err.code === "conflict") {
         void follow(); // a reply this tab didn't know about (the CLI, another tab): show it as it streams
         return BUSY_LEDGER;
@@ -483,7 +627,10 @@ export function useChat(id: string): Chat {
   const edit = useCallback(
     async (messageId: string, content: string) => {
       if (busyRef.current) return BUSY_LEDGER;
+      const m = convRef.current?.messages.find((x) => x.id === messageId);
+      if (m && imagePending(m, "active")) return IMAGE_BUSY;
       try {
+        // An image message's new prompt answers at once with its image pending: the watchers follow it.
         upsertMessage((await api.call("message.edit", { conversation: id, message: messageId, content })).message);
         void refreshConversations();
         return null;
@@ -497,6 +644,8 @@ export function useChat(id: string): Chat {
   const remove = useCallback(
     async (messageId: string) => {
       if (busyRef.current) return BUSY_LEDGER;
+      const m = convRef.current?.messages.find((x) => x.id === messageId);
+      if (m && imagePending(m)) return IMAGE_BUSY;
       try {
         await api.call("message.delete", { conversation: id, message: messageId });
         setConv((c) => c && { ...c, messages: c.messages.filter((m) => m.id !== messageId) });
@@ -523,7 +672,38 @@ export function useChat(id: string): Chat {
     [id, upsertMessage, ledgerFailure],
   );
 
-  const actions = useMemo<MessageActions>(() => ({ edit, remove, selectVersion, regenerate }), [edit, remove, selectVersion, regenerate]);
+  const repaint = useCallback(
+    async (messageId: string, opts?: { safeModeOff?: boolean }) => {
+      const c = convRef.current;
+      const m = c?.messages.find((x) => x.id === messageId);
+      if (!c || !m) return "That message is gone.";
+      if (imagePending(m, "active")) return IMAGE_BUSY;
+      try {
+        if (opts?.safeModeOff && m.author.type === "brain") {
+          const brain = await api.call("brain.update", { conversation: id, brain: m.author.brainId, safeMode: false });
+          setConv((x) => x && { ...x, brains: x.brains.map((b) => (b.id === brain.id ? brain : b)) });
+        }
+        for await (const ev of api.stream("image.retry", { conversation: id, message: messageId }, { signal: alive.current.signal })) {
+          if (ev.type === "image_pending") {
+            upsertMessage(ev.message); // pending (in place, or as a new version): the watchers follow it from here
+            break;
+          }
+          if (ev.type === "done" && ev.message) saveReply(ev.message, ev.spentUsd);
+        }
+        void refreshConversations();
+        return null;
+      } catch (err) {
+        if (isAbortError(err)) return null;
+        return ledgerFailure(err);
+      }
+    },
+    [id, upsertMessage, saveReply, ledgerFailure],
+  );
+
+  const actions = useMemo<MessageActions>(
+    () => ({ edit, remove, selectVersion, regenerate, repaint }),
+    [edit, remove, selectVersion, regenerate, repaint],
+  );
 
   const retry = useCallback(async () => {
     const l = liveRef.current;
@@ -534,9 +714,15 @@ export function useChat(id: string): Chat {
       if (problem) setNotice({ tone: "error", message: problem });
       return;
     }
+    if (r?.command === "image.retry") {
+      setLive(null);
+      const problem = await repaint(r.args.message);
+      if (problem) setNotice({ tone: "error", message: problem });
+      return;
+    }
     // A turn: the brain the server names, else the one this reply was from. Never a bare turn (the default brain).
     await send("", r?.command === "turn" ? r.args.brain : (l.brainId ?? undefined));
-  }, [regenerate, send]);
+  }, [regenerate, repaint, send]);
 
   const add = useCallback(
     async (as: string, content: string) => {

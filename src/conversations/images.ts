@@ -1,4 +1,4 @@
-import { conflict } from "../lib/errors.ts";
+import { imageBusy } from "../lib/errors.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { findImageFile, removeImageFiles } from "../images/files.ts";
 import type { StreamEvent } from "../registry.ts";
@@ -65,7 +65,7 @@ export function assertImageIdle(vault: Vault, m: LedgerMessage, which: "active" 
   const versions = which === "all" ? m.versions : [m.versions[m.activeVersion]];
   const busy = versions.map((v) => v?.image?.id).find((id) => id !== undefined && painting.has(keyOf(vault, id)));
   if (busy) {
-    throw conflict(
+    throw imageBusy(
       `Can't ${doing} ${m.id} yet: its image ${busy} is still being made. Venice is already making it (and billing it), so it will be kept. Wait for it to arrive (image.follow watches it), then try again.`,
     );
   }

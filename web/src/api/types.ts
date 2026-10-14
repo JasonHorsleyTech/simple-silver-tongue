@@ -25,10 +25,11 @@ import type { ModelInfo } from "../../../src/venice/models.ts";
 export type { Brain, BrainTool, ChatMessage, ChatRequest, Conversation, ImageRecord, ImageRequest, LedgerMessage, MessageVersion, ModelInfo, RetryRequest, SetupMessage, Templates };
 
 /**
- * The server's own words and values, shown as they are: what a stop does and doesn't save, the reasoning
- * warning, the badge palette new brains get their colors from, and the setup message pre-fill's default label.
+ * The server's own words and values, shown as they are: what a stop does and doesn't save (and why an image
+ * isn't stopped), the reasoning warning, the badge palette new brains get their colors from, and the setup
+ * message pre-fill's default label.
  */
-export { BRAIN_COLORS, DEFAULT_SETUP_LABEL, REASONING_NOTE, STOP_BILL_NOTE } from "../../../src/conversations/wording.ts";
+export { BRAIN_COLORS, DEFAULT_SETUP_LABEL, IMAGE_STOP_NOTE, REASONING_NOTE, STOP_BILL_NOTE } from "../../../src/conversations/wording.ts";
 
 export type User = { username: string; encrypted: boolean };
 export type Who = User | { username: null };
@@ -169,10 +170,20 @@ export type Commands = {
     args: { conversation: string; brain?: string; content?: string; regenerate?: boolean; message?: string; steer?: string };
     result: Preview;
   };
-  /** Any message, any depth: the active version's text, in place. 409 while a reply is being generated. */
+  /**
+   * Any message, any depth: the active version's text, in place. 409 while a reply is being generated. An image
+   * message's text is its prompt: a new one answers at once with `painting`, and its image follows (image.follow);
+   * 409 `image_busy` while that version's own image is still being made.
+   */
   "message.edit": { args: { conversation: string; message: string; content: string }; result: ImageMessageView };
-  /** Any message, with all its versions. Its cost stays in spentUsd. 409 while a reply is being generated. */
-  "message.delete": { args: { conversation: string; message: string }; result: { conversationId: string; deleted: string; messageCount: number } };
+  /**
+   * Any message, with all its versions (and their image files). Its cost stays in spentUsd. 409 while a reply is
+   * being generated, and 409 `image_busy` while any of its images is still being made.
+   */
+  "message.delete": {
+    args: { conversation: string; message: string };
+    result: { conversationId: string; deleted: string; messageCount: number; imagesDeleted?: string[] };
+  };
   /** `version` is 1-based (what the pager shows); the document's activeVersion is 0-based. 409 while generating. */
   "message.select-version": { args: { conversation: string; message: string; version: number }; result: MessageView };
   "generation.stop": { args: { conversation: string }; result: StopOutcome };

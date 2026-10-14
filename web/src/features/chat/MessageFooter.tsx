@@ -70,11 +70,11 @@ export function IconAction({
   );
 }
 
-export function CopyAction({ text }: { text: string }) {
+export function CopyAction({ text, label = "Copy the Markdown" }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <IconAction
-      label={copied ? "Copied" : "Copy the Markdown"}
+      label={copied ? "Copied" : label}
       onClick={async () => {
         if (await copyText(text)) {
           setCopied(true);
@@ -107,10 +107,30 @@ export function VersionPager({ index, count, onGo, pending, blocked }: { index: 
 }
 
 /** Inline "are you sure", in the footer row itself. It promises nothing about cost: the total keeps it. */
-export function DeleteConfirm({ versions, onConfirm, onCancel, pending }: { versions: number; onConfirm(): void; onCancel(): void; pending: boolean }) {
+export function DeleteConfirm({
+  versions,
+  images,
+  onConfirm,
+  onCancel,
+  pending,
+}: {
+  versions: number;
+  /** An image message: its images go with it. */
+  images?: boolean;
+  onConfirm(): void;
+  onCancel(): void;
+  pending: boolean;
+}) {
+  const what = images
+    ? versions > 1
+      ? `Delete this message, all ${versions} versions and their images?`
+      : "Delete this message and its image?"
+    : versions > 1
+      ? `Delete this message and all ${versions} versions?`
+      : "Delete this message?";
   return (
     <div role="alertdialog" aria-label="Delete this message?" className="flex items-center gap-1.5">
-      <span className="px-1 text-[12.5px] text-red-100/90">{versions > 1 ? `Delete this message and all ${versions} versions?` : "Delete this message?"}</span>
+      <span className="px-1 text-[12.5px] text-red-100/90">{what}</span>
       <Button
         size="sm"
         variant="danger"
@@ -129,12 +149,22 @@ export function DeleteConfirm({ versions, onConfirm, onCancel, pending }: { vers
   );
 }
 
-/** edited · stopped · 89 in · 33 out · $0.000066 (model and finish reason on hover). */
+/**
+ * edited · stopped · 89 in · 33 out · $0.000066 (model and finish reason on hover). An image message adds its
+ * image's price ("image $0.01"), with the image model and safe mode on hover.
+ */
 export function VersionMeta({ version: v }: { version: MessageVersion }) {
   const bits: string[] = [];
   if (v.usage) bits.push(`${v.usage.promptTokens} in`, `${v.usage.completionTokens} out`);
   if (v.costUsd !== undefined) bits.push(formatUsd(v.costUsd));
-  const title = [v.model, v.finishReason && `finish: ${v.finishReason}`, v.usage?.reasoningTokens && `${v.usage.reasoningTokens} reasoning tokens`]
+  const img = v.image;
+  if (img?.costUsd !== undefined) bits.push(`image ${formatUsd(img.costUsd)}`);
+  const title = [
+    v.model,
+    v.finishReason && `finish: ${v.finishReason}`,
+    v.usage?.reasoningTokens && `${v.usage.reasoningTokens} reasoning tokens`,
+    img && `image: ${img.model}${img.mime ? `, ${img.mime.replace("image/", "")}` : ""}, safe mode ${img.safeMode ? "on" : "off"}`,
+  ]
     .filter(Boolean)
     .join(" · ");
   return (

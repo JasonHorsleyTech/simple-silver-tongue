@@ -21,6 +21,7 @@ export function SteerBox({
   nextVersion,
   fromVersion,
   pending,
+  image,
 }: {
   value: string;
   onChange(v: string): void;
@@ -33,6 +34,8 @@ export function SteerBox({
   /** The version on screen, which a steer revises (1-based), when the message has more than one. */
   fromVersion: number | null;
   pending: boolean;
+  /** An image brain's message: a new prompt, then a new image. */
+  image?: boolean;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   useAutosize(ref, value, 180);
@@ -44,7 +47,10 @@ export function SteerBox({
   return (
     <div className="mt-2 rounded-xl border border-line-strong bg-raised/70 p-3 shadow-lg shadow-black/20">
       <div className="mb-2 flex items-baseline gap-2">
-        <h4 className="text-[12.5px] font-medium text-fg">Regenerate as version {nextVersion}</h4>
+        <h4 className="text-[12.5px] font-medium text-fg">
+          Regenerate as version {nextVersion}
+          {image && <span className="font-normal text-faint">: a new prompt and a new image</span>}
+        </h4>
         {fromVersion !== null && steered && <span className="text-[12px] text-faint">revising version {fromVersion}, the one shown</span>}
       </div>
       <textarea
@@ -53,7 +59,7 @@ export function SteerBox({
         value={value}
         name="steer"
         aria-label="Steer (optional)"
-        placeholder="Steer it, optionally: “Say it's blue.”"
+        placeholder={image ? "Steer it, optionally: “Night now, rain on the windows.”" : "Steer it, optionally: “Say it's blue.”"}
         disabled={pending}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
@@ -71,7 +77,9 @@ export function SteerBox({
       <p className="mt-1.5 text-[12px] leading-5 text-faint">
         {steered
           ? "Sent once, last, with this request only. Later requests see just the version it writes."
-          : "Empty: a plain re-roll from the messages before it."}{" "}
+          : image
+            ? "Empty: a fresh prompt from the messages before it. The current version keeps its image."
+            : "Empty: a plain re-roll from the messages before it."}{" "}
         <span className="hidden sm:inline">
           <Kbd>Enter</Kbd> regenerates · <Kbd>Esc</Kbd> closes
         </span>

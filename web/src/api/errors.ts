@@ -2,7 +2,7 @@ import type { RetryRequest } from "./types.ts";
 
 /**
  * Every failure the API client reports is an ApiError, so a view can always show `message`.
- * `code` is the server's error code (bad_args, wrong_password, conflict, venice_error, ...) or one of the
+ * `code` is the server's error code (bad_args, wrong_password, conflict, image_busy, venice_error, ...) or one of the
  * client's own: network, stream_broken, bad_stream, http_<status>.
  * `status` is the HTTP status, or 0 when there was none (network failure, or an error event mid-stream).
  */

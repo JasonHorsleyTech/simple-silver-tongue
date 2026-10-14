@@ -132,7 +132,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T05: Image brains (CP4) · `frontend`
+## T05: Image brains (CP4) · `done`
 
 **Engineer scope**
 - `kind: "image"` brains with a per-brain `safeMode` (default on) and editable tool text (`tool.description`, `tool.promptParamDescription`, `tool.resultContent`). The request carries `tools` and a forced `tool_choice`, with the tool args streamed.
@@ -209,6 +209,10 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 **Frontend scope:** The same playthrough in Chrome, plus visual polish, empty states, keyboard niceties and error toasts. Screenshots go in `reports/screens/`.
 
+- **From T05 frontend:**
+  - Image brains are fully playable in the browser: chips and "Write as…" for image brains, the image card (prompt caption, painting frame, fade-in, large view), edit/regenerate/"Paint again"/Retry, blurred and failed states, per-conversation image settings. The playthrough's "generate a scene image" and "edit the image prompt to regenerate" steps need no new UI.
+  - The example campaign's image brains: with the final reminder on (the `brain.add` default), the reminder is the last message the painter sees; that is fine live, but a mock trigger in the player's note then doesn't reach the image (AGENTS.md, T04/T05 lessons).
+  - Polish candidates seen in Chrome, none blocking: the scrollback's floating "Latest" button sits over the caption of an image card when you scroll up a little; the large view has no previous/next between a conversation's images; a pending image whose card is far up the scrollback gives no sign at the bottom that it landed.
 - (orchestrator) The default `otherBrainImage` template says the image "is now on the player's screen". Since T05 triage, the GM can answer while the image is still painting, so make the default wording accurate (e.g. "…called generate_image with this exact prompt:"). The example campaign should do the same.
 
 **Deferred in:** *(none yet)*

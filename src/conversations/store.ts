@@ -1,4 +1,4 @@
-import { CommandError, conflict, notFound, toErrorBody, type ErrorBody } from "../lib/errors.ts";
+import { CommandError, conflict, imageBusy, notFound, toErrorBody, type ErrorBody } from "../lib/errors.ts";
 import { nowIso } from "../lib/ids.ts";
 import type { StreamEvent } from "../registry.ts";
 import { listFiles, readJson, removeFile, writeJson, type Vault } from "../storage/vault.ts";
@@ -83,7 +83,7 @@ export async function deleteConversationFile(vault: Vault, id: string): Promise<
     if (generations.has(keyOf(vault, id))) throw busy(id); // checked inside the queue, like assertLedgerIdle
     const images = paintingIn(vault, id).length; // their jobs would find nothing to save into (T05 triage)
     if (images) {
-      throw conflict(`Conversation ${id} still has ${images === 1 ? "an image" : `${images} images`} being made. Venice is already making (and billing) ${images === 1 ? "it" : "them"}; wait a moment, then delete it.`);
+      throw imageBusy(`Conversation ${id} still has ${images === 1 ? "an image" : `${images} images`} being made. Venice is already making (and billing) ${images === 1 ? "it" : "them"}; wait a moment, then delete it.`);
     }
     const conv = await loadConversation(vault, id); // 404 if it isn't there
     await removeFile(vault, fileOf(id));

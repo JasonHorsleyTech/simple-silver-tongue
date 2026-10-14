@@ -86,7 +86,7 @@ async function paint(vault: Vault, venice: VeniceClient, convId: string, target:
         delete img.previous;
       }
       v.image = img;
-      m.updatedAt = img.finishedAt!;
+      m.updatedAt = nowIso(); // in the write queue: later than any earlier write's (the browser merges by it)
       message = m;
       image = img;
     });
