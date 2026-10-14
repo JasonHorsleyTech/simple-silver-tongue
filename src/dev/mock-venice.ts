@@ -25,6 +25,11 @@ import { MOCK_MODELS } from "./mock-models.ts";
  *   MOCK_NO_TOOL_CALL     → a forced tool call is ignored: the reply is text
  *   MOCK_IMPERSONATE      → the echo line, then a fake "<!-- from: Dice Master -->" line and a roll, as a model that
  *                           continues the framing would write (T07 triage: the brain's stop sequences cut it)
+ *   MOCK_HIDDEN           → (T08) the echo line, a hidden note (a made-up character sheet in a ```hidden block, with
+ *                           MOCK_SECRET in it), then a visible line. It streams in 3-character pieces, so the fences
+ *                           arrive split across deltas, as they can live
+ *   MOCK_HIDDEN_ONLY      → (T08) the whole reply is one hidden note, the echo line inside it (a Character Creator's
+ *                           shape: nothing visible but the fold). Also in 3-character pieces
  *   MOCK_IMAGE_ERROR      → (image) HTTP error; the chat call that wrote the prompt is unaffected
  *   MOCK_IMAGE_FLAKY      → (image) fails the first time this exact prompt is asked for, works after (for retry)
  *   MOCK_IMAGE_SLOW       → (image) takes 2 s (imageSlowMs); the prompt streams at normal speed
@@ -168,17 +173,27 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     if (toolName && lastText.includes("MOCK_NO_TOOL_CALL")) toolName = null; // a model that ignores tool_choice
     const echo = `MOCK reply to brain "${brain}"; saw ${messages.length} messages; last: "${headTail(lastText)}"`;
     // The echo line quotes the last message, framing and all, so stop sequences apply only to what follows it.
+    const hiddenOnly = lastText.includes("MOCK_HIDDEN_ONLY");
+    const hidden = hiddenOnly || lastText.includes("MOCK_HIDDEN");
     const more = lastText.includes("MOCK_MARKDOWN")
       ? `\n\n${MOCK_MARKDOWN}`
       : lastText.includes("MOCK_IMPERSONATE")
         ? `\n\n<!-- from: Dice Master -->\n**20 + 5 = 25 vs DC 12: success.**`
-        : "";
-    const fullContent = toolName ? "" : echo + cutAtStop(more, body.stop);
+        : hidden && !hiddenOnly
+          ? `\n\n${HIDDEN_OPEN}\n${MOCK_SHEET}\n\`\`\`\n\nThe hooded figure slides a folded map across the table.`
+          : "";
+    // MOCK_HIDDEN_ONLY puts the echo line inside the note; like the echo anywhere, it is exempt from stop sequences.
+    const fullContent = toolName
+      ? ""
+      : hiddenOnly
+        ? `${HIDDEN_OPEN}\n${echo}${cutAtStop(`\n${MOCK_SHEET}\n\`\`\``, body.stop)}`
+        : echo + cutAtStop(more, body.stop);
     // max_tokens counts words here (one word ≈ one token), reasoning first and then content, as live: a small
     // budget can run out while reasoning and leave no content at all (T02 QA-6). Like live, a cut ends with
     // finish_reason "length", and the last content delta rides in the same chunk as the finish reason.
     let reasoningWords: string[] = words(fullReasoning);
-    let contentWords: string[] = words(fullContent);
+    // T08: a hidden note streams in small pieces, so its fences are split across deltas (the CLI must cope).
+    let contentWords: string[] = hidden ? (fullContent.match(/[\s\S]{1,3}/g) ?? []) : words(fullContent);
     const budget = typeof body.max_tokens === "number" ? body.max_tokens : Infinity;
     const cut = !toolName && reasoningWords.length + contentWords.length > budget;
     if (cut) {
@@ -356,6 +371,16 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
     throw new Error("request body is not valid JSON");
   }
 }
+
+/** T08: a made-up character sheet, for MOCK_HIDDEN's note. */
+const HIDDEN_OPEN = "```hidden character sheet";
+const MOCK_SHEET = [
+  "Name: Mara Vell, a mapmaker",
+  "Looks: grey hooded cloak, ink-stained fingers, a scar through her left eyebrow",
+  "Wants: to sell the map tonight, before the Guild finds her",
+  "Secret: MOCK_SECRET the map is a forgery, and she drew it herself",
+  "Fears: her brother, who hunts forgers for the Guild",
+].join("\n");
 
 function contentText(m: { content?: unknown } | undefined): string {
   const c = m?.content;

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { DEFAULT_PORT, ROOT } from "../config.ts";
+import { createHiddenFolder, hiddenMarker, hiddenSummary, revealHint, type HiddenBlock } from "../conversations/hidden.ts";
 import { renderCommandHelp, renderCommandList } from "../lib/help-text.ts";
 import type { CommandInfo, JsonSchema } from "../registry.ts";
 import { parseFlags, splitArgv, UsageError } from "./args.ts";
@@ -65,6 +66,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   async function call(cmd: string, args: unknown, opts: { text: boolean }): Promise<Response> {
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (opts.text) headers["x-ss-cli"] = "1";
+    if (opts.text && global.reveal) headers["x-ss-reveal"] = "1"; // T08: the text view shows hidden notes
     if (saved) headers.cookie = `ss_session=${saved.token}`;
     return fetch(`${base}/api/${cmd}`, { method: "POST", headers, body: JSON.stringify(args) });
   }
@@ -121,7 +123,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
       return code;
     }
 
-    if (info.kind === "stream") return await printStream(res, global.json, io, dim, usedEnv);
+    if (info.kind === "stream") {
+      const conversation = typeof args.conversation === "string" ? args.conversation : undefined;
+      return await printStream(res, { json: global.json, reveal: global.reveal, fromEnv: usedEnv, conversation }, io, dim);
+    }
 
     if (info.kind === "binary") {
       const bytes = new Uint8Array(await res.arrayBuffer());
@@ -247,14 +252,53 @@ async function printError(res: Response, saved: SavedSession | null, err: (s: st
   return EXIT.failed;
 }
 
-/** Stream events: text deltas go to stdout as they arrive; reasoning and status lines go to stderr. */
-async function printStream(res: Response, json: boolean, io: Io, dim: (s: string) => string, fromEnv = false): Promise<number> {
+type StreamOpts = { json: boolean; reveal: boolean; fromEnv: boolean; conversation?: string };
+
+/**
+ * Stream events: text deltas go to stdout as they arrive; reasoning and status lines go to stderr.
+ * T08: a reply's hidden notes are folded as they stream (createHiddenFolder): the marker is printed in their place,
+ * never their text, however the fence is split across deltas. On a terminal, a "Hidden · 3 lines so far" line
+ * counts up while a note is being written. --reveal prints the reply as it comes; --json prints the raw events.
+ */
+async function printStream(res: Response, opts: StreamOpts, io: Io, dim: (s: string) => string): Promise<number> {
   if (!res.body) return EXIT.failed;
+  const { json, fromEnv } = opts;
   let code: number = EXIT.ok;
   let ended = false;
   let inReasoning = false;
   let buf = "";
   const decoder = new TextDecoder();
+  const tty = io.stdout.isTTY === true;
+  const dimOut = (s: string) => (tty ? `\x1b[2m${s}\x1b[0m` : s);
+  const folder = opts.reveal ? null : createHiddenFolder((b: HiddenBlock) => dimOut(hiddenMarker(b)));
+  let messageId: string | undefined;
+  // The "so far" line sits on the terminal's current line; anything else printed first wipes it.
+  let counting = false;
+  const clearCount = () => {
+    if (!counting) return;
+    io.stdout.write("\r\x1b[K");
+    counting = false;
+  };
+  const out = (s: string) => {
+    if (!s) return;
+    clearCount();
+    io.stdout.write(s);
+  };
+  const errOut = (s: string) => {
+    clearCount();
+    io.stderr.write(s);
+  };
+  let counted = -1;
+  const showCount = () => {
+    const w = folder?.writing;
+    if (!tty || !w || (counting && counted === w.lines)) return; // redraw only when the count changes
+    io.stdout.write(`\r\x1b[K${dimOut(`${w.prefix}[${hiddenSummary(w, { writing: true })}]`)}`);
+    counting = true;
+    counted = w.lines;
+  };
+  const endText = () => {
+    if (folder) out(folder.end());
+  };
   const handle = (line: string) => {
     if (!line.trim()) return;
     if (json) {
@@ -266,16 +310,21 @@ async function printStream(res: Response, json: boolean, io: Io, dim: (s: string
     if (ev.type === "error" || ev.type === "image_error") code = EXIT.failed;
     if (json) return;
     if (inReasoning && ev.type !== "reasoning") {
-      io.stderr.write("\n");
+      errOut("\n");
       inReasoning = false;
     }
     switch (ev.type) {
       case "delta":
-      case "prompt":
-        io.stdout.write(String(ev.delta ?? ""));
+        if (folder) {
+          out(folder.push(String(ev.delta ?? "")));
+          showCount();
+        } else out(String(ev.delta ?? ""));
+        break;
+      case "prompt": // an image prompt is a plain caption, never folded (the browser shows it as plain text too)
+        out(String(ev.delta ?? ""));
         break;
       case "reasoning":
-        io.stderr.write(dim(String(ev.delta ?? "")));
+        errOut(dim(String(ev.delta ?? "")));
         inReasoning = true;
         break;
       case "following":
@@ -284,27 +333,34 @@ async function printStream(res: Response, json: boolean, io: Io, dim: (s: string
       case "start": {
         // With SS_CONVERSATION, name the campaign, so a stale export after a clone shows at once (T07 QA-6).
         const where = fromEnv && typeof ev.conversationTitle === "string" ? ` · in "${ev.conversationTitle}"` : "";
-        io.stderr.write(dim(`[${ev.brainName ?? ev.brainId ?? "start"}${where}]\n`));
+        if (typeof ev.messageId === "string") messageId = ev.messageId;
+        errOut(dim(`[${ev.brainName ?? ev.brainId ?? "start"}${where}]\n`));
         break;
       }
       case "image_pending":
-        io.stderr.write(dim(`\n(making image ${ev.imageId ?? ""} with ${ev.model ?? "the image model"}... the conversation is free meanwhile)\n`));
+        errOut(dim(`\n(making image ${ev.imageId ?? ""} with ${ev.model ?? "the image model"}... the conversation is free meanwhile)\n`));
         break;
       case "image_done": {
         const flags = [ev.image?.blurred ? "blurred by safe mode" : "", ev.image?.contentViolation ? "flagged by Venice's content policy" : ""].filter(Boolean);
         // --open, not --out <file>: a file saved here would be a decrypted copy in the project folder (T07 QA-3).
-        io.stderr.write(dim(`(image ready${flags.length ? `, ${flags.join(", ")}` : ""}: ./ss image.get --id ${ev.imageId} --open)\n`));
+        errOut(dim(`(image ready${flags.length ? `, ${flags.join(", ")}` : ""}: ./ss image.get --id ${ev.imageId} --open)\n`));
         break;
       }
       case "image_error":
-        io.stderr.write(`\nimage error: ${ev.error?.message ?? ev.error}\nRetry it: ./ss image.retry --conversation ${ev.retry?.args?.conversation ?? "<conversation>"} --message ${ev.messageId}\n`);
+        errOut(`\nimage error: ${ev.error?.message ?? ev.error}\nRetry it: ./ss image.retry --conversation ${ev.retry?.args?.conversation ?? "<conversation>"} --message ${ev.messageId}\n`);
         break;
-      case "done":
-        io.stdout.write("\n");
-        if (typeof ev.note === "string") io.stderr.write(dim(`[${ev.note}]\n`));
+      case "done": {
+        endText();
+        out("\n");
+        if (typeof ev.note === "string") errOut(dim(`[${ev.note}]\n`));
+        const id = typeof ev.message?.id === "string" ? ev.message.id : messageId;
+        const conv = opts.conversation ?? "<conversation>";
+        if (folder?.folded && id) errOut(dim(`${revealHint(folder.folded, `./ss message.get --conversation ${conv} --message ${id} --reveal`)}\n`));
         break;
+      }
       case "error":
-        io.stderr.write(`\nerror: ${ev.error?.message ?? JSON.stringify(ev.error)}\n`);
+        endText();
+        errOut(`\nerror: ${ev.error?.message ?? JSON.stringify(ev.error)}\n`);
         break;
     }
   };
@@ -319,12 +375,14 @@ async function printStream(res: Response, json: boolean, io: Io, dim: (s: string
     }
   } catch {
     // undici just says "terminated" (T02 QA-8). The server keeps working after a disconnect, so say so.
-    io.stderr.write("\nerror: lost the connection to the server mid-stream (did it restart?). Check what was saved with ./ss conversation.get.\n");
+    endText();
+    errOut("\nerror: lost the connection to the server mid-stream (did it restart?). Check what was saved with ./ss conversation.get.\n");
     return EXIT.failed;
   }
   handle(buf);
   if (!ended) {
-    io.stderr.write("\nerror: the stream ended unexpectedly\n");
+    endText();
+    errOut("\nerror: the stream ended unexpectedly\n");
     return EXIT.failed;
   }
   return code;

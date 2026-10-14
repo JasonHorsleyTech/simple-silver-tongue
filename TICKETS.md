@@ -254,7 +254,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T08: Hidden notes · `todo`
+## T08: Hidden notes · `qa`
 
 Jason, 2026-10-14: brains need a way to write text that every brain reads but the player only sees on purpose. The T10 Character Creator answers with nothing else: a full character sheet, secrets included, that the GM and the Character Actor work from and the player must not read by accident. Any brain may keep notes this way (a GM's plans, what a clue really means), and so may the player.
 
@@ -284,6 +284,12 @@ Why a fence: models write fences reliably, Markdown parses it without HTML, and 
 - Unit tests cover the rule's edge cases: unclosed, inside a list or a quote, two blocks in one message, a block that is the whole message.
 
 **Frontend scope:** In the scrollback, a hidden block renders as a quiet folded bar that says it is hidden and how much (e.g. "Hidden · 14 lines"). Never show a peek at the text: a character's secrets are the point. A click (or Enter) unfolds it, rendered as Markdown, and another click folds it. Every page load starts folded. A message that is all hidden (the Character Creator's) is its badge plus the bar, not an "empty reply". A reply streaming into a hidden block shows the bar growing, never the text. Editing shows the raw source, as always, and the payload view stays raw.
+
+- **From T08 engineer** (report: `reports/T08-engineer.md`):
+  - Built: the rule in `src/conversations/hidden.ts` (design.md, "Hidden notes"): ```` ```hidden ```` or `~~~hidden`, any case, longer fences, inside lists and quotes; unclosed runs to the end of the message (or of its quote or list item); a fence with a language inside a note nests. The CLI folds `conversation.get`, `message.get`, `message.select-version` and every streamed reply (`turn`, `message.regenerate`, `generation.follow`) to `[Hidden · 5 lines]`, with a counting line on a terminal while a note streams; `--reveal` (CLI flag) shows everything, `--json` is raw. Mock: `MOCK_HIDDEN` (echo, note, visible line) and `MOCK_HIDDEN_ONLY` (one note, nothing else), both in 3-character pieces so fences split across deltas.
+  - **Engineer's calls:** `~~~hidden` counts (it is Markdown's other fence). **The fold doesn't show the label** after the word: live, a Character Creator told the label is shown to the player labelled its sheet with the character's real name, which the player hadn't learned. A note that needs code: a fenced block with a language (```` ```js ````) just works inside it (it nests); a bare ```` ``` ```` closes the note, so use ```` ````hidden ```` or `~~~hidden` around one.
+  - **For Frontend:** `web/src/api/types.ts` re-exports the rule. Render a message from `splitHidden(content)`: text parts as Markdown, each note as the bar (`hiddenSummary(block)`; while `block.open` and the reply is streaming, `hiddenSummary(block, {writing: true})` = "Hidden · 3 lines so far"), and `<Markdown text={block.body}>` only once it is opened. The note's words then never reach the renderer, mid-stream either, and the browser folds exactly what the terminal folds. `isAllHidden(content)` is the Character Creator's "badge plus the bar". A note inside a list or quote splits that list or quote around the bar (`block.prefix` tells you it was in one; indenting the bar to match is a nicety). Backstop: fold a Markdown `code` node whose `lang` passes `isHiddenInfo` too. Image prompts are never folded (plain captions). The payload view and the editor stay raw. `MOCK_HIDDEN_ONLY` to a brain whose reminder is off shows the all-hidden case; `MOCK_SLOW MOCK_HIDDEN` (~40 s at `up:mock`'s 250 ms) to watch the bar grow and reload mid-note.
+  - **For T10:** a brain that should keep notes needs the convention in its prompt (the live prompts in the report worked first time). Tell it the player's screen folds notes and every brain reads them; don't promise that a label is shown.
 
 **Deferred in:** *(none yet)*
 

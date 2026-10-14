@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { formatMessage, imageLine, type MessageView } from "../conversations/format.ts";
+import { formatMessage, imageLine, revealMessage, shown, type MessageView } from "../conversations/format.ts";
+import { revealHint } from "../conversations/hidden.ts";
 import { assertImageIdle, imageIdsOf } from "../conversations/images.ts";
 import { activeVersion, resolveBrain } from "../conversations/prompt.ts";
 import { addImageMessage, editImagePrompt, type Started } from "../conversations/repaint.ts";
@@ -207,10 +208,13 @@ Refused while a reply is being generated.`,
     });
     return viewOf(conv, result);
   },
-  format: (r: MessageView) => {
+  format: (r: MessageView, opts) => {
     const v = activeVersion(r.message);
     const why = v.steer !== undefined ? ` (steer: "${v.steer}")` : "";
-    return `${r.message.id} now shows version ${r.message.activeVersion + 1}/${r.message.versions.length}${why}. Every brain sees it from the next request.\n\n${v.content}`;
+    const count = { folded: 0 };
+    const text = shown(v.content, r.message.kind, opts, count);
+    const hint = count.folded ? `\n\n${revealHint(count.folded, revealMessage(r.conversationId, r.message.id))}` : "";
+    return `${r.message.id} now shows version ${r.message.activeVersion + 1}/${r.message.versions.length}${why}. Every brain sees it from the next request.\n\n${text}${hint}`;
   },
 });
 

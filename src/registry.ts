@@ -33,6 +33,9 @@ export type Ctx = {
 /** NDJSON stream events. Later tickets add the chat event types from docs/design.md. */
 export type StreamEvent = { type: string; [key: string]: unknown };
 
+/** How the CLI asked for the text view (x-ss-cli). `reveal` (./ss --reveal, header x-ss-reveal: 1): show hidden notes unfolded (T08). */
+export type FormatOpts = { reveal: boolean };
+
 export type BinaryResult = { contentType: string; bytes: Uint8Array; filename?: string };
 
 type Args = z.ZodObject<any, any>;
@@ -53,7 +56,7 @@ export type JsonCommand<A extends Args = Args, R = any> = Base<A> & {
   httpGet?: boolean;
   handler(args: z.output<A>, ctx: Ctx): Promise<R> | R;
   /** Plain-text rendering for the CLI. Without it the CLI prints a generic key/value view. */
-  format?(result: R): string;
+  format?(result: R, opts: FormatOpts): string;
 };
 
 export type StreamCommand<A extends Args = Args> = Base<A> & {

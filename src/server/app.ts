@@ -27,7 +27,8 @@ export const consoleLogger: Logger = (line) => console.log(`${new Date().toISOSt
  * HTTP adapter over the command registry.
  *   POST /api/<name>  JSON args in, JSON out (stream commands: NDJSON events).
  *   GET  /api/<name>  binary commands (and health), args from the query string.
- * Sending `x-ss-cli: 1` wraps JSON results as {result, text}, where text is the command's CLI rendering.
+ * Sending `x-ss-cli: 1` wraps JSON results as {result, text}, where text is the command's CLI rendering;
+ * `x-ss-reveal: 1` asks that rendering to show hidden notes instead of folding them (./ss --reveal, T08).
  * We never log args, results or bodies: only method, path, status and timing.
  */
 export function createApp(base: Omit<Deps, "commands">, commands: AnyCommand[], log: Logger = consoleLogger): Hono {
@@ -122,7 +123,8 @@ export function createApp(base: Omit<Deps, "commands">, commands: AnyCommand[], 
         const result = await cmd.handler(parsed.data, ctx);
         applySession();
         if (c.req.header("x-ss-cli")) {
-          return c.json({ result: result ?? null, text: cmd.format ? cmd.format(result) : toText(result) });
+          const opts = { reveal: c.req.header("x-ss-reveal") === "1" };
+          return c.json({ result: result ?? null, text: cmd.format ? cmd.format(result, opts) : toText(result) });
         }
         return c.json(result ?? null);
       }

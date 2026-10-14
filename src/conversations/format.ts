@@ -1,5 +1,7 @@
 import { table } from "../lib/text.ts";
+import type { FormatOpts } from "../registry.ts";
 import { usd } from "../venice/models.ts";
+import { foldHidden, revealHint } from "./hidden.ts";
 import { activeVersion } from "./prompt.ts";
 import { totalCost } from "./turn.ts";
 import type { ChatRequest, Conversation, ImageRecord, ImageRequest, LedgerMessage, MessageVersion } from "./types.ts";
@@ -52,7 +54,19 @@ export function formatList(list: ConversationSummary[], unreadable: UnreadableCo
   return out.join("\n");
 }
 
-export function formatConversation(c: Conversation): string {
+/**
+ * T08: a text message's content as the CLI shows it, hidden notes folded to one line unless --reveal. An image
+ * prompt is a plain caption (the browser doesn't render it as Markdown either), so it is never folded.
+ */
+export function shown(content: string, kind: LedgerMessage["kind"], opts: FormatOpts | undefined, count: { folded: number }): string {
+  if (opts?.reveal || kind !== "text") return content;
+  const f = foldHidden(content);
+  count.folded += f.folded;
+  return f.text;
+}
+
+export function formatConversation(c: Conversation, opts?: FormatOpts): string {
+  const count = { folded: 0 };
   const brainName = new Map(c.brains.map((b) => [b.id, b.name]));
   const out = [
     `${c.title} (${c.id}) · ${c.settings.textModel} · ${c.messages.length} messages · ${usd(totalCost(c))}`,
@@ -71,8 +85,9 @@ export function formatConversation(c: Conversation): string {
     const bits = [who, m.id];
     if (m.versions.length > 1) bits.push(`version ${m.activeVersion + 1}/${m.versions.length} (message.get shows all)`);
     if (m.author.type === "brain" && v.source === "authored") bits.push("written by you");
-    out.push("", `── ${[...bits, ...versionBits(v, m.kind)].join(" · ")} ──`, v.content);
+    out.push("", `── ${[...bits, ...versionBits(v, m.kind)].join(" · ")} ──`, shown(v.content, m.kind, opts, count));
   }
+  if (count.folded) out.push("", revealHint(count.folded, `./ss conversation.get --id ${c.id} --reveal`));
   return out.join("\n");
 }
 
@@ -101,14 +116,20 @@ export function imageLine(img: ImageRecord): string {
 /** One message as message.get, message.edit and message.select-version return it. */
 export type MessageView = { conversationId: string; author: string; message: LedgerMessage };
 
-export function formatMessage({ author, message: m }: MessageView): string {
+export function formatMessage({ conversationId, author, message: m }: MessageView, opts?: FormatOpts): string {
+  const count = { folded: 0 };
   const out = [`${author} · ${m.id} · ${m.versions.length} version${m.versions.length === 1 ? "" : "s"}, version ${m.activeVersion + 1} active`];
   m.versions.forEach((v, i) => {
     const bits = [`version ${i + 1}/${m.versions.length}${i === m.activeVersion ? " (active)" : ""}`, v.source, ...versionBits(v, m.kind)];
-    out.push("", `── ${bits.join(" · ")} ──`, v.content);
+    out.push("", `── ${bits.join(" · ")} ──`, shown(v.content, m.kind, opts, count));
   });
+  if (count.folded) out.push("", revealHint(count.folded, revealMessage(conversationId, m.id)));
   return out.join("\n");
 }
+
+/** The command that shows one message's hidden notes. */
+export const revealMessage = (conversationId: string, messageId: string) =>
+  `./ss message.get --conversation ${conversationId} --message ${messageId} --reveal`;
 
 export type Preview = {
   conversationId: string;

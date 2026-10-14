@@ -42,6 +42,23 @@ export {
 } from "../../../src/conversations/wording.ts";
 
 /**
+ * T08: the one rule for hidden notes (```hidden blocks), shared with the CLI so the two can't disagree about
+ * what is folded: `splitHidden(text)` cuts a message into visible text and notes (render each text part as
+ * Markdown and each note as a fold, so a note's words never reach the Markdown renderer, even mid-stream),
+ * `hiddenSummary(block, {writing})` is the fold's words, `isAllHidden(text)` spots a reply with nothing else, and
+ * `isHiddenInfo(lang)` recognises a note's fence word. See design.md, "Hidden notes".
+ */
+export {
+  HIDDEN_TITLE,
+  hiddenSummary,
+  isAllHidden,
+  isHiddenInfo,
+  splitHidden,
+  type HiddenBlock,
+  type HiddenSegment,
+} from "../../../src/conversations/hidden.ts";
+
+/**
  * T06 triage: the server ends a session after `minutes` without activity, `secondsLeft` from now if nothing uses it
  * (auth.whoami doesn't count as use). Null: sessions never time out (SS_SESSION_IDLE_MINUTES=0).
  */

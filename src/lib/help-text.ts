@@ -40,7 +40,8 @@ export function renderCommandList(commands: CommandInfo[], header?: string): str
   }
   out.push(
     "Run ./ss help <command> (or ./ss <command> --help) for its arguments.",
-    "Global flags: --json prints the raw JSON (or NDJSON events); --out <file> saves binary output; --open shows it (image.get).",
+    "Global flags: --json prints the raw JSON (or NDJSON events); --out <file> saves binary output; --open shows it (image.get);",
+    "  --reveal shows hidden notes (```hidden blocks), which messages and streamed replies otherwise fold to one line.",
     "Text values: --x @file.md reads a file, --x - reads stdin, @@ escapes a leading @.",
     "Playing from the terminal: export SS_CONVERSATION=c_... and --conversation can be left out of every command that takes it (and --id of conversation.get, .update and .clone).",
   );
