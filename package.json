@@ -1,0 +1,29 @@
+{
+  "name": "simple-silver",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-only Venice AI chat scratch pad",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "up": "node scripts/up.ts",
+    "up:mock": "node scripts/up.ts --mock",
+    "down": "node scripts/down.ts",
+    "logs": "touch .run/server.log 2>/dev/null; tail -n 100 -F .run/server.log",
+    "ss": "node src/cli/main.ts",
+    "mock": "node src/dev/mock-venice.ts",
+    "test": "node --test --test-concurrency=1 \"test/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "hono": "^4.13.13",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  }
+}

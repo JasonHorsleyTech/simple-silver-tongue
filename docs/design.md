@@ -29,7 +29,7 @@ This is the current best design for the data model, the prompt-assembly rules an
 ```
 data/
   users/<username>/
-    user.json                     # plaintext metadata only: username, encrypted flag, KDF params, salt, verifier. Never the password or the key.
+    user.json                     # plaintext metadata only: username, encrypted flag, KDF params + salt, wrapped data key. Never the password or a raw key.
     conversations/<convId>.json   # whole conversation document (encrypted users: binary ciphertext, see below)
     images/<imageId>.<ext>        # image bytes (encrypted users: ciphertext)
 .run/                             # gitignored runtime state: server.pid, server.log, cli-session.json, mock pid
@@ -41,17 +41,21 @@ data/
 
 ### Encryption
 
-- Key derivation: `scrypt(password, salt)` → 32-byte key (node:crypto, N ≥ 2^15). The salt and params go in `user.json`.
-- Password check: `user.json` stores a verifier, a small known plaintext encrypted with the key. If it decrypts, the password is right. Never store the password or the raw key.
-- File format: magic `SSENC1` + 12-byte random IV + 16-byte GCM tag + AES-256-GCM ciphertext. Use a fresh IV on every write.
+- Key derivation: `scrypt(password, salt)` → 32-byte key-encryption key (node:crypto, N = 2^17, r = 8, p = 1, about 200 ms). The salt and params go in `user.json`.
+- **Envelope (implemented in T01, replacing the planned verifier):** each encrypted user has a random 32-byte *data key* that encrypts their files. `user.json` stores only `wrappedKey`, the data key encrypted with the scrypt key in the file format below. A wrong password fails the GCM check on `wrappedKey`, so no separate verifier is needed, and a future password change only rewraps one small blob instead of re-encrypting every file. Never store the password or a raw key.
+- File format: magic `SSENC1` + 12-byte random IV + 16-byte GCM tag + AES-256-GCM ciphertext, with the magic as GCM additional data. Use a fresh IV on every write.
+- All user-file access goes through `src/storage/vault.ts` (`readJson` / `writeJson` / `readBytes` / `writeBytes` / `removeFile` / `listFiles` on a `Vault = {dir, key}`), which encrypts when the session has a key. It refuses plaintext files in an encrypted user's folder (and vice versa), refuses paths that escape the user's folder, and never touches `user.json`. Temp files from atomic writes are already ciphertext.
 - Everything under the user's dir except `user.json` is encrypted, images included. Titles too, since they live in the conversation doc.
 - The key lives only in server memory, in the session. A server restart means logging in again.
-- Never log message content, prompts or image bytes to `.run/server.log`.
+- Never log message content, prompts or image bytes to `.run/server.log`. The server logs only method, path, status and timing, plus error codes.
+- Every `/api` response carries `Cache-Control: no-store`, so the browser never writes decrypted conversations or images to its disk cache.
 
 ### Sessions
 
 - `auth.login` derives the key, then creates a random session token mapped in memory to `{username, key}`.
-- Browser: an httpOnly cookie. CLI: the token goes in `.run/cli-session.json`. Without the running server's memory, the token is useless.
+- The token only ever travels in the `ss_session` cookie (`HttpOnly; SameSite=Strict; Path=/`), never in a response body. The browser keeps it as a cookie. The CLI reads the same `Set-Cookie` header and saves the token in `.run/cli-session.json` (mode 0600), then sends it back as a cookie, so both clients take the identical path. Without the running server's memory, the token is useless.
+- When a request carries a token the server doesn't know (it restarted, or the user logged out elsewhere), the response has `x-ss-session: invalid`. The CLI then deletes its saved token and says why.
+- Logging in again replaces the caller's previous session. Logging out wipes the key from memory.
 
 ## Conversation document
 
@@ -184,7 +188,23 @@ Commands live in one registry. Each has a name, a zod args schema, an optional `
 - **CLI:** `./ss <command> --arg value ...`. This is a thin HTTP client over the same endpoints. `--content @file.md` reads a file and `--content -` reads stdin. `--json` prints raw JSON. Stream commands print text deltas live.
 
 Stream event shapes (NDJSON):
-`{type:"message", message}` (player message saved) · `{type:"start", brainId}` · `{type:"reasoning", delta}` · `{type:"delta", delta}` · `{type:"tool_args", delta}` · `{type:"image_pending", messageId, imageId}` · `{type:"image_done", messageId, imageId}` · `{type:"image_error", messageId, error}` · `{type:"done", message}` · `{type:"error", error}`
+`{type:"message", message}` (player message saved) · `{type:"start", brainId, brainName?}` · `{type:"reasoning", delta}` · `{type:"delta", delta}` · `{type:"tool_args", delta}` · `{type:"image_pending", messageId, imageId}` · `{type:"image_done", messageId, imageId}` · `{type:"image_error", messageId, error}` · `{type:"done", message}` · `{type:"error", error: {code, message}}`
+
+Every stream ends with exactly one `done` or `error` event; the CLI treats anything else as a broken stream. The CLI prints `delta` and `tool_args` to stdout as they arrive and `reasoning` and status lines to stderr, so `./ss turn ... > reply.md` captures only the reply.
+
+### HTTP contract (implemented in T01, `src/server/app.ts`)
+
+- `POST /api/<name>` with a JSON object body (an empty body means `{}`). Args are validated with the command's zod schema in strict mode, so unknown keys are a 400.
+- Success: the JSON result, status 200. Failure: `{"error": {"code", "message", "details?"}}` with a real status: 400 `bad_args`/`bad_json`, 401 `unauthenticated`/`wrong_password`, 404 `not_found`/`unknown_command`, 405, 409 `conflict`, 502 `venice_error`, 500 `internal` (whose details go only to the log).
+- Stream commands: the adapter pulls the first event *before* sending headers, so a failure up front (unknown id, 409 busy) is a normal HTTP error rather than a 200 stream with an error inside. After that, it keeps draining the generator even if the client disconnects, so work finishes and persists. Handlers that should stop on disconnect can watch `ctx.signal`.
+- `GET /api/<name>?k=v` works only for binary commands (so `<img src>` works) and `health`. State-changing commands can't be triggered by a link. Query values arrive as strings.
+- Local-only guard: requests whose `Host` isn't `localhost`, `127.0.0.1` or `[::1]` are refused (DNS rebinding), and so is any request with a non-loopback `Origin` (CSRF). The Vite dev server on another localhost port is still allowed.
+- `x-ss-cli: 1` asks for `{result, text}`, where `text` is the command's own `format()` rendering. The CLI uses it; the browser doesn't need it.
+- Everything else under `GET /` serves `web/dist` with an SPA fallback to `index.html`, or a placeholder page when there's no build.
+
+### Writing a command
+
+`command({...})`, `streamCommand({...})` or `binaryCommand({...})` from `src/registry.ts`, registered in `src/commands/index.ts`. Each one has a `name`, a `description` (the first line is the summary in `./ss help`), a zod `args` object, `auth` (default `true`, meaning login required) and optional `examples`. JSON commands can add `format(result)` for CLI text. Mark a password-like arg with `.meta({ secret: true, prompt: "Password for {username}: " })` and the CLI prompts for it with hidden input when it's omitted (`confirm: true` asks twice). Don't name args `json`, `help` or `out`, since those are CLI global flags. The catalog the CLI parses flags from is `help`, which returns each command's JSON Schema.
 
 Initial command list (tickets add to it, and `./ss help` is the live reference):
 
@@ -201,6 +221,15 @@ prompt.preview
 
 ## Mock Venice
 
-`src/dev/mock-venice.ts` is a small HTTP server that speaks the Venice protocol: `/models`, `/chat/completions` (SSE streaming, including reasoning and forced tool calls), `/image/generate` (a tiny real image) and `/api_keys/rate_limits`. `npm run up:mock` starts it and points the app at it with `VENICE_BASE_URL`.
+`src/dev/mock-venice.ts` is a small HTTP server that speaks the Venice protocol: `/models`, `/chat/completions` (SSE streaming, including reasoning and forced tool calls), `/image/generate` (a tiny real image) and `/api_keys/rate_limits`. `npm run up:mock` starts it on port 4748 and points the app at it with `VENICE_BASE_URL`. In mock mode the server never loads `.env`, so the real key can't reach the mock. Tests start it in-process with `startMockVenice({ port: 0, delayMs: 0 })`.
 
-Mock replies are deterministic and echo structure (for example `MOCK reply to brain "<system prompt first 30 chars>"; saw N messages; last: "<last message first 40 chars>"`). QA can then confirm what each brain saw without spending money. Automated tests always use the mock or pure functions, never the live API.
+Mock replies are deterministic and echo structure: `MOCK reply to brain "<system prompt, first 30 chars>"; saw N messages; last: "<last message, first 60 chars>"`. QA can then confirm what each brain saw without spending money. Automated tests always use the mock or pure functions, never the live API.
+
+Implemented in T01:
+- The model list is a handful of entries copied verbatim from the live `/models` response (`src/dev/mock-models.ts`): `deepseek-v4-1-flash` (reasoning effort), `venice-uncensored-1-2` (no reasoning), `gemini-3-6-flash` (anonymized) and three image models covering the three image-pricing shapes.
+- Chat streams match the live wire format captured on 2026-10-13: a role chunk, `reasoning_content` deltas (when the model reasons and `reasoning_effort` isn't `"none"`), `content` deltas or `tool_calls` argument fragments, a `finish_reason` chunk, then, with `stream_options.include_usage`, a final chunk with `choices: []`, `usage` and `cost: {usd, diem}`, then `data: [DONE]`. `stream: false` returns a plain `chat.completion`.
+- It **rejects** chat requests without `venice_parameters.include_venice_system_prompt: false`, so a regression on that hard rule fails tests.
+- Images are always PNG, whatever `format` asks for, with the size taken from `width`/`height` (capped at 256 px). T05 should sniff the content type from the magic bytes rather than trust the requested format. `return_binary: true` returns raw bytes.
+- A mock balance starts at $10 and goes down by each call's computed cost.
+- `GET /_mock/requests` returns the last 20 request bodies, newest first. Compare it with `prompt.preview` to prove the real send matches the preview.
+- Triggers in the last message (chat) or the prompt (image): `MOCK_ERROR` returns an HTTP error, `MOCK_SLOW` makes it slow (useful for 409 and stop tests), and `MOCK_MIDSTREAM_ERROR` drops the connection halfway through.

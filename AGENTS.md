@@ -53,17 +53,25 @@ The full data model and prompt-assembly rules are in **[docs/design.md](docs/des
 
 ```bash
 npm run up         # build the web app, (re)start the server in the background → http://localhost:4747
-npm run up:mock    # same, but against the local mock Venice (free, deterministic)
+npm run up:mock    # same, but against the local mock Venice on :4748 (free, deterministic)
 npm run down       # stop everything
 npm run logs       # tail .run/server.log
-./ss help          # every command
-./ss user.create --username jason      # prompts for a password; empty = unencrypted
-./ss auth.login --username jason
+./ss help          # every command (also: npm run ss -- help)
+./ss help user.create                  # one command's flags (or ./ss user.create --help)
+./ss user.create --username jason      # prompts for a password (hidden); empty = unencrypted
+./ss auth.login --username jason       # prompts; or --password '' / --password - (stdin)
+./ss auth.whoami
+./ss models.list --type image          # text and image models with price and privacy
+./ss venice.balance
 npm test           # node:test, never hits the live API
 npm run typecheck
 ```
 
-*(Planned interface. T01 makes it real. Keep this section accurate as it evolves.)*
+- `up` is idempotent: it stops whatever is running (only our own processes, found by pid file or by port), builds the web app, starts the server detached, waits for `/api/health` and prints the URL. If a foreign program holds port 4747 it says so and stops. The previous log is kept as `.run/server.log.1`.
+- **Web build contract:** if the root `package.json` has a `build:web` script, `up` runs it. Otherwise, if `web/package.json` has a `build` script, `up` runs `npm install` in `web/` (when `web/node_modules` is missing or older than the manifest) and then `npm run build` there. With neither, the server shows a placeholder page. The server serves `web/dist` with an SPA fallback.
+- CLI output: human text by default, `--json` for the raw result (or raw NDJSON for streams). Exit codes: 0 ok, 1 command failed, 2 usage error, 3 server not running. Flags: `--x-y` or `--xY`; booleans `--flag` / `--no-flag`; nested `--settings.text-model m`; text from `@file.md` or `-` (stdin).
+- Sessions live in server memory, so every restart (`npm run up*`) logs everyone out. The CLI notices and tells you to log in again.
+- Env overrides (mostly for tests): `SS_URL` (CLI target), `SS_PORT`, `SS_DATA_DIR`, `SS_RUN_DIR`, `MOCK_VENICE_PORT`, `MOCK_DELAY_MS`.
 
 ## Terminal-first development strategy
 
@@ -117,3 +125,9 @@ Rules for every pass:
 ## Lessons learned
 
 *(Append-only. One bullet per lesson, newest last. Note anything that would have saved the next agent time.)*
+
+- **T01: adding a command.** Use `command()` / `streamCommand()` / `binaryCommand()` from `src/registry.ts`, add it to `src/commands/index.ts`, and `./ss` picks it up with no CLI changes: the CLI fetches the catalog from `help` and parses flags against each command's JSON Schema. Give it a `format()` for readable CLI text. Use `ctx.requireSession().vault` with `src/storage/vault.ts` for user data, which handles encryption.
+- **T01: test harness.** `startTestServer()` in `test/helpers.ts` gives you an in-process server, an in-process mock Venice, temp data/run dirs and `cli(argv, {stdin, secrets})`, which runs the real CLI code in-process. Pass `commands: [...]` to test a command set on its own.
+- **T01: the mock shows the real upstream body.** `curl -s localhost:4748/_mock/requests` lists the last 20 request bodies the server sent to "Venice". It's the easiest way to check that `prompt.preview` equals the real send. The mock also rejects any chat call missing `include_venice_system_prompt: false`.
+- **T01: Venice API facts.** `GET /models` with no `type` returns only text models, so ask for `?type=image` explicitly. Image prices come in three shapes: flat `generation`, per `resolutions`, or per `quality` × resolution. Model capabilities include `supportsReasoningEffort`, `reasoningEffortOptions` (`deepseek-v4-1-flash`: none/low/high/max) and `defaultReasoningEffort`. The balance is at `GET /api_keys/rate_limits` → `data.balances.USD`, and every response also carries an `x-venice-balance-usd` header. Errors are `{"error": "<string>"}`.
+- **T01: tooling.** `npm install -D typescript` now installs TypeScript 7 (the Go port). It's fast and works with the tsconfig as is. Node 26 runs the `.ts` files with no flags and no warnings. Remember `import type` for type-only imports (`verbatimModuleSyntax` enforces it); a value-style import of a type crashes at runtime under type stripping.
