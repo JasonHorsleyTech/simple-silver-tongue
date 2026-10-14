@@ -93,7 +93,7 @@ type Conversation = {
 type Brain = {
   id: string; name: string; color: string;   // name is unique (case-insensitive) and never looks like an id (b_...)
   kind: "text" | "image";              // cannot change once the brain has messages
-  reasoning: { enabled: boolean; effort: string };  // default { enabled: true, effort: "low" }. See "Request body" for how it maps.
+  reasoning: { enabled: boolean; effort: string };  // default { enabled: false, effort: "low" } (T02 QA-1, see below). See "Request body" for how it maps.
   safeMode?: boolean;                   // image brains only, default true → Venice safe_mode
   systemPrompt: string;                 // must be non-empty (see hard rule 1)
   finalReminder: { enabled: boolean; content: string };  // default enabled=false for the default brain, true for others
@@ -189,7 +189,8 @@ Verified against the live Venice API (2026-10-13), using `deepseek-v4-1-flash`:
 - History with an assistant `tool_calls` message plus a `role: tool` result is accepted.
 - The final chunk has `usage` and `cost.usd`. Store `cost.usd` on the version.
 - **The chunk that carries `finish_reason` can also carry content** (seen live with `finish_reason: "length"`, T01 QA-7). The parser must read `delta.content` on every chunk, including the finishing one. The mock reproduces this whenever `max_tokens` cuts a reply.
-- With `include_venice_system_prompt: false`, prompt_tokens matched our own text (no injected prompt).
+- With `include_venice_system_prompt: false` **and reasoning off**, prompt_tokens matched our own text (no injected prompt).
+- **Reasoning on adds provider-side text (T02 QA-1).** With reasoning on, `deepseek-v4-1-flash` gets ~25 prompt tokens we never send (17 → 42 for the same body), and its reasoning twice quoted a system line we never wrote ("You are an AI assistant accessed via an API."). It comes from Venice or the model template, and we can't remove it. **Decision (orchestrator, applying Jason's "nothing else" rule): reasoning defaults to OFF on every brain.** Turning it on is an explicit per-brain opt-in, and the brain editor and the payload view must say plainly: "Reasoning on: the provider adds a small hidden instruction we can't see or edit."
 
 Verified live in T02 (2026-10-14), `deepseek-v4-1-flash`:
 - The full T02 body above, `enable_web_scraping: false` included, is accepted. A 3-turn chat had `prompt_tokens` of 52, 68 and 86 for roughly 25, 40 and 55 tokens of our own text plus the chat template. Venice's own prompt would add about 550.

@@ -45,7 +45,7 @@ The full data model and prompt-assembly rules are in **[docs/design.md](docs/des
 
 - Text model: `deepseek-v4-1-flash` (private, $0.30/M in, $1.20/M out). One per conversation.
 - Image model: `z-image-turbo` (private, $0.01/image, ~3s). One per conversation. Jason picked it over Nano Banana, which is $0.10 and only "anonymized".
-- **Per brain:** a reasoning on/off toggle, with an effort level when the model supports one. Default on at `low`, since the model's own default of `high` is slow. Reasoning is shown collapsed and never sent back.
+- **Per brain:** a reasoning on/off toggle, with an effort level when the model supports one. **Default off**: with reasoning on, the provider adds ~25 hidden prompt tokens (T02 QA-1), which breaks the "nothing else" rule. On is an explicit, labeled opt-in, at effort `low` by default. Reasoning is shown collapsed and never sent back.
 - **Per image brain:** a safe-mode toggle, **on by default**. It maps to Venice `safe_mode`, which blurs adult content.
 - All Venice models (text and image) come from `GET /models` and are shown in the per-conversation model pickers.
 

@@ -39,7 +39,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 ## T02: Basic streaming chat (CP1) · `triage`
 
 **Engineer scope**
-- The full conversation document per design.md (settings, templates, setup, brains, ledger), even though brains and setup only get commands in T04. A new conversation gets one default text brain named "Assistant" with the given system prompt, and per-brain reasoning on at `low`.
+- The full conversation document per design.md (settings, templates, setup, brains, ledger), even though brains and setup only get commands in T04. A new conversation gets one default text brain named "Assistant" with the given system prompt, and per-brain reasoning **off** by default (see design.md, T02 QA-1).
 - `conversation.create` (title, system prompt), `.list`, `.get`, `.update` (title and settings), `.delete`.
 - `buildRequest` per design.md, as a pure function, implemented in full for text brains, with unit tests covering player framing, own vs other assistant messages, setup and reminder.
 - `prompt.preview` returns the exact body. A test asserts the send path uses the same builder.
