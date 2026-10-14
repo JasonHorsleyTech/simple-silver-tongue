@@ -94,7 +94,9 @@ export function SettingsPanel({
           <X aria-hidden className="size-4" />
         </Button>
       </div>
-      <div key={tab} id="settings-body" role="tabpanel" aria-labelledby={`st-${tab}`} className="min-h-0 flex-1 overflow-y-auto">
+      {/* `relative`: an absolutely positioned descendant (StopSequences' sr-only label) scrolls and clips with this box.
+          Without it, its containing block was the page, and an open brain card made the whole page scrollable (T12). */}
+      <div key={tab} id="settings-body" role="tabpanel" aria-labelledby={`st-${tab}`} className="relative min-h-0 flex-1 overflow-y-auto">
         {tab === "brains" && (
           <>
             {textModels.error && (

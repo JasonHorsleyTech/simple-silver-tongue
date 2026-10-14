@@ -440,3 +440,17 @@ Jason, 2026-10-14, done directly (no four-pass loop, at his request). Venice lis
 - **Fix:** a resolution left from another model is no longer sent to a model with no resolution list (it used to be).
 - The mock catalog is now all curated models, one image model per sizing and pricing shape (`krea-2-turbo` and `hunyuan-image-v3` replace `nano-banana-2`; `z-ai-glm-5-3` replaces `gemini-3-6-flash`).
 - Not live-tested per model: only DeepSeek V4.1 Flash is proven with the stop sequence, reasoning off and a forced tool call. Another curated text model that refuses a field says so on its first send.
+
+---
+
+## T12: Layout polish: the settings scroll, one row of brain buttons, a sidebar that folds away · `done`
+
+Jason, 2026-10-14. Web only: a single frontend pass, no engineer, QA or triage pass (no command changes).
+- **The page must never scroll.** On a large desktop screen (seen in Firefox), with the settings panel open and a brain's card expanded (the Game Master's, the Co-GM's), the whole page scrolls, so the app can be pushed up off the top of the window. Only the scrollback and the settings panel's own body should scroll, at any size, with any card open.
+- **Every brain on one row, one click each.** The composer's buttons for the other brains wrap into a big block (a Tabletop RPG conversation has six besides the GM). At desktop widths (1200 px and up) the whole cast fits on a single row: each brain's button is minified to short initials in the brain's own colour ("Co-GM" → CG, "Show Me the Odds" → SMTO, "Character Creator" → CC), with the picture icon for an image brain if that helps, and grows to its full name on hover (and keyboard focus). Still one click to send to (or ask) any brain.
+- **The sidebar folds away** (added mid-pass): a button in its header hides it to a slim rail (show it again, new conversation), and the chat takes the width. Remembered in this browser.
+- Not in scope: deleting a brain (Settings → Brains already does it, with a confirmation; the default brain can't be deleted, by design).
+
+**Done (frontend, 2026-10-14):** the scroll came from StopSequences' `sr-only` label: absolutely positioned with no positioned ancestor, so its containing block was the page and an open text brain's card stretched the document (Chrome too, not only Firefox). The scroll boxes (`#settings-body`, the scrollback, `main`) are now `relative`, and the shell and chat view are `overflow-clip`, so nothing can make the page scroll again. The chips show initials (`web/src/lib/initials.ts`, clashes get more letters) when whole names don't fit, and a flag with the whole name grows out of the one under the pointer or keyboard focus, over its neighbours without moving them; on touch, whole names on one row that scrolls sideways.
+
+**Acceptance:** with the Tabletop RPG preset at 1200 px and wider, every brain's button sits on one row next to Send, and hovering one shows its full name without pushing the row onto two lines. With Settings open and every brain card expanded, the page never scrolls, only the panel does.

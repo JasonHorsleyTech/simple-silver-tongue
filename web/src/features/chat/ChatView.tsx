@@ -202,8 +202,10 @@ export function ChatView({ id }: { id: string }) {
     />
   );
 
+  // `relative overflow-clip`: nothing in the chat (an `sr-only` label deep in an open brain card, say) can make the
+  // main area or the page scrollable; only the scrollback and the settings body scroll (T12).
   return (
-    <div className="flex h-full min-w-0">
+    <div className="relative flex h-full min-w-0 overflow-clip">
       <div className="flex min-w-0 flex-1 flex-col">
         <ChatHeader
           conv={conv}

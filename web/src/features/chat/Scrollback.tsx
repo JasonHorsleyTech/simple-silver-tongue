@@ -171,7 +171,7 @@ export function Scrollback({
 
   return (
     <div className="relative min-h-0 flex-1">
-      <div ref={box} onScroll={onScroll} className="h-full overflow-y-auto overscroll-contain">
+      <div ref={box} onScroll={onScroll} className="relative h-full overflow-y-auto overscroll-contain">
         <div className="mx-auto w-full max-w-3xl px-4 pt-8 pb-10 sm:px-6">
           {nothing ? (
             empty

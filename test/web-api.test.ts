@@ -8,6 +8,7 @@ import { createClient } from "../web/src/api/client.ts";
 import { ApiError, errorMessage, retryOf } from "../web/src/api/errors.ts";
 import { readNdjson } from "../web/src/api/ndjson.ts";
 import { forBrowser } from "../web/src/lib/format.ts";
+import { brainInitials } from "../web/src/lib/initials.ts";
 import { rollLineIndex, rollView } from "../web/src/lib/rolls.ts";
 import { STOP_BILL_NOTE as SERVER_STOP_NOTE } from "../src/commands/chat.ts";
 import { BRAIN_COLORS as SERVER_COLORS } from "../src/conversations/defaults.ts";
@@ -434,3 +435,17 @@ async function collectStream(it: AsyncIterable<StreamYield>): Promise<StreamYiel
 async function drain(it: AsyncIterable<{ type: string }>, seen: string[] = []) {
   for await (const ev of it) seen.push(ev.type);
 }
+
+test("brain initials for the composer's buttons are short and never clash (T12)", () => {
+  assert.deepEqual(brainInitials(["Co-GM", "Show Me the Odds", "Character Creator", "Scene Painter", "Character Actor", "Character Portraitist"]), [
+    "CG",
+    "SMTO",
+    "CC",
+    "SP",
+    "CA",
+    "CP",
+  ]);
+  assert.deepEqual(brainInitials(["Character Actor", "Character Artist", "GM", "Narrator", "DiceMaster"]), ["CAc", "CAr", "GM", "Na", "DM"]);
+  const same = brainInitials(["Bob", "bob", "Dice Master", "Dice Mister"]);
+  assert.equal(new Set(same.map((l) => l.toLowerCase())).size, same.length);
+});

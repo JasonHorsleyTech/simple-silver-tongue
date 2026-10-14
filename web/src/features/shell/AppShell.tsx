@@ -3,17 +3,27 @@ import { useEffect, useState } from "react";
 import type { User } from "../../api/types.ts";
 import { Routes } from "../../app/routes.tsx";
 import { Button } from "../../components/Button.tsx";
+import { cx } from "../../lib/cx.ts";
 import { LogoMark, Wordmark } from "../../components/Logo.tsx";
 import { usePath } from "../../lib/router.tsx";
-import { Sidebar } from "./Sidebar.tsx";
+import { readLocal, writeLocal } from "../../lib/storage.ts";
+import { Sidebar, SidebarRail } from "./Sidebar.tsx";
+
+const SIDEBAR_KEY = "ss.sidebarCollapsed";
 
 /**
  * The logged-in frame: a sidebar (conversations, user, logout) and a main area for the current route.
- * At laptop width and up the sidebar is always there. Narrower, it becomes a drawer behind a menu button.
+ * At laptop width and up the sidebar is docked, and folds down to a slim rail (T12, remembered in this browser) so the
+ * chat can have the width. Narrower, it becomes a drawer behind a menu button.
  * Views own their main area entirely (header, scrollback, composer), so a chat view can pin its composer.
  */
 export function AppShell({ user }: { user: User }) {
   const [drawer, setDrawer] = useState(false);
+  const [collapsed, setCollapsedState] = useState(() => readLocal(SIDEBAR_KEY) === "1");
+  const setCollapsed = (v: boolean) => {
+    setCollapsedState(v);
+    writeLocal(SIDEBAR_KEY, v ? "1" : null);
+  };
   const path = usePath();
 
   useEffect(() => {
@@ -27,9 +37,9 @@ export function AppShell({ user }: { user: User }) {
   }, [drawer]);
 
   return (
-    <div className="flex h-full">
-      <div className="hidden w-64 shrink-0 border-r border-line md:block">
-        <Sidebar user={user} />
+    <div className="relative flex h-full overflow-clip">
+      <div className={cx("hidden shrink-0 border-r border-line md:block", collapsed ? "w-12" : "w-64")}>
+        {collapsed ? <SidebarRail onExpand={() => setCollapsed(false)} /> : <Sidebar user={user} onCollapse={() => setCollapsed(true)} />}
       </div>
 
       {drawer && (
@@ -49,7 +59,7 @@ export function AppShell({ user }: { user: User }) {
           <LogoMark size={20} />
           <Wordmark className="text-[15px]" />
         </header>
-        <main className="min-h-0 flex-1 overflow-y-auto">
+        <main className="relative min-h-0 flex-1 overflow-y-auto">
           <Routes />
         </main>
       </div>

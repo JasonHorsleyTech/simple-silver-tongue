@@ -1,10 +1,12 @@
 import { ArrowUp, Check, ImageIcon, PenLine, Plus, Square, X } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type SyntheticEvent } from "react";
 import { STOP_BILL_NOTE, type Brain } from "../../api/types.ts";
 import { D20Icon } from "../../components/D20.tsx";
 import { Spinner } from "../../components/Spinner.tsx";
 import { cx } from "../../lib/cx.ts";
+import { brainInitials } from "../../lib/initials.ts";
 import { useAutosize } from "../../lib/useAutosize.ts";
+import { useMediaQuery } from "../../lib/useMediaQuery.ts";
 import { BrainBadge } from "./BrainBadge.tsx";
 
 /** `writeAs`: the composer adds your words to the ledger instead of sending: in a brain's mouth, or as yours. */
@@ -15,7 +17,10 @@ export const AS_PLAYER = "player";
  * left alone.
  *
  * Send targets: the default brain gets the big button (and Enter); every other brain gets a chip in its own
- * color (and ⌥1…⌥9, in chip order). With nothing typed, a chip asks that brain to just respond to the table
+ * color (and ⌥1…⌥9, in chip order). T12: the chips stay on one row. When their full names don't fit (a Tabletop RPG
+ * table has six), each shows its initials ("Show Me the Odds" → SMTO) and grows to its full name over its
+ * neighbours on hover or keyboard focus, without moving them. With no hover (touch), the names stay whole, on one
+ * row that scrolls sideways. With nothing typed, a chip asks that brain to just respond to the table
  * as it stands (also how a failed reply is retried); the server explains when there is nothing to answer.
  * An image brain's chip (with a small picture icon) asks it for a picture: your text, if any, is its note.
  * Once its prompt is saved the composer is free again, while the image is painted in the scrollback.
@@ -91,6 +96,32 @@ export function Composer({
   const several = brains.length > 1;
   /** The die is armed and this is a send (writing as someone adds words, with no roll). */
   const rolling = roll && !writing;
+  const chipsRow = useRef<HTMLDivElement>(null);
+  const labels = brainInitials(others.map((b) => b.name));
+  const canHover = useMediaQuery("(hover: hover) and (pointer: fine)");
+  /** The chips' full names fit on one row (measured from their hidden full-name flags). */
+  const [namesFit, setNamesFit] = useState(true);
+  const compact = canHover && !namesFit;
+  /** No hover to show a name (touch): whole names on one row that scrolls sideways, rather than a block of them. */
+  const strip = !canHover && !namesFit;
+  const chipsKey = others.map((b) => `${b.kind}:${b.name}`).join("\n");
+
+  // Whole names when they fit beside Send, initials when they don't. The row's width never depends on the chips
+  // (flex-1, basis 0), and the measure uses the full-name gap, so the choice can't flip back and forth.
+  useLayoutEffect(() => {
+    const row = chipsRow.current;
+    if (!row) return;
+    const measure = () => {
+      const flags = [...row.querySelectorAll<HTMLElement>("[data-full-name]")];
+      if (flags.length === 0) return;
+      const need = flags.reduce((w, f) => w + f.offsetWidth, 0) + CHIP_GAP_PX * (flags.length - 1);
+      setNamesFit(need <= row.clientWidth);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(row);
+    return () => ro.disconnect();
+  }, [chipsKey, busy, writing, rolling]);
 
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
@@ -181,6 +212,7 @@ export function Composer({
       {/* The scrollback fades out under the composer instead of stopping at a hard edge. */}
       <div aria-hidden className="pointer-events-none absolute inset-x-0 -top-8 h-8 bg-linear-to-b from-transparent to-canvas" />
       <div
+        data-composer-box
         className={cx(
           "@container mx-auto w-full max-w-3xl rounded-2xl border bg-raised shadow-xl shadow-black/30 transition-[border-color,box-shadow]",
           writing
@@ -317,7 +349,7 @@ export function Composer({
             </button>
           )}
           {/* Who else can answer, in their colors; while a reply runs, who is writing (the chips would be off anyway). */}
-          <div className="flex min-h-8 min-w-0 flex-1 flex-wrap items-center gap-1.5">
+          <div ref={chipsRow} className={cx("flex min-h-8 min-w-0 flex-1 items-center", compact ? "gap-1" : "gap-1.5", strip ? "overflow-x-auto" : "flex-wrap")}>
             {busy ? (
               <p className="min-w-0 truncate text-[11.5px] text-faint" title={STOP_BILL_NOTE}>
                 {status ?? `${main?.name ?? "The brain"} is replying`} · <span className="text-muted">{STOP_CAPTION}</span>
@@ -327,7 +359,9 @@ export function Composer({
                 <Kbd>Enter</Kbd> {paints ? "paints it" : "adds it"} · <Kbd>Esc</Kbd> back to sending
               </p>
             ) : several ? (
-              others.map((b, i) => <BrainChip key={b.id} brain={b} index={i} empty={empty} roll={rolling} onClick={() => sendTo(b)} />)
+              others.map((b, i) => (
+                <BrainChip key={b.id} brain={b} label={labels[i]!} compact={compact} strip={strip} index={i} empty={empty} roll={rolling} onClick={() => sendTo(b)} />
+              ))
             ) : rolling ? (
               <p className="hidden min-w-0 truncate text-[11.5px] text-faint sm:block">
                 <Kbd>Enter</Kbd> rolls and sends · <Kbd>Esc</Kbd> no roll
@@ -398,11 +432,38 @@ export function Composer({
   );
 }
 
+/** The gap between chips showing whole names (gap-1.5); the fit measure uses it whatever the current mode. */
+const CHIP_GAP_PX = 6;
+
 /**
  * A small send button in a brain's own color. An image brain's has a picture icon: it answers with an image.
  * With the die armed (`roll`), it wears the die too: it rolls, then that brain answers (or paints).
+ *
+ * `compact` (T12): it shows `label`, the brain's initials, and its full name is a flag drawn over its neighbours
+ * on hover or focus (index.css, `.ss-flag`). The flag never takes layout room and lets the pointer through, so the
+ * row never wraps or shifts, and whichever chip is under the pointer is the one named. The flag is always there,
+ * hidden, so the composer can measure whether the whole names would fit. The accessible name is always complete.
  */
-function BrainChip({ brain: b, index, empty, roll, onClick }: { brain: Brain; index: number; empty: boolean; roll: boolean; onClick(): void }) {
+function BrainChip({
+  brain: b,
+  label,
+  compact,
+  strip,
+  index,
+  empty,
+  roll,
+  onClick,
+}: {
+  brain: Brain;
+  label: string;
+  compact: boolean;
+  /** In a row that scrolls sideways: keeps its whole width. */
+  strip: boolean;
+  index: number;
+  empty: boolean;
+  roll: boolean;
+  onClick(): void;
+}) {
   const image = b.kind === "image";
   const key = index < 9 ? ` (⌥${index + 1})` : "";
   const title = roll
@@ -414,10 +475,25 @@ function BrainChip({ brain: b, index, empty, roll, onClick }: { brain: Brain; in
       : empty
         ? `Ask ${b.name} to respond, with no new message${key}`
         : `Send to ${b.name}${key}`;
+  const ink = `color-mix(in oklab, ${b.color} 55%, white)`;
+  const whole = (
+    <>
+      {roll && <D20Icon className="size-3.5 shrink-0" strokeWidth={1.9} />}
+      {image ? (
+        <ImageIcon aria-hidden className="size-3.5 shrink-0" style={{ color: b.color }} />
+      ) : roll ? null : (
+        <span aria-hidden className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: b.color }} />
+      )}
+    </>
+  );
   return (
     <button
       type="button"
       onClick={onClick}
+      // Room to the right for the flag? If not, it grows leftwards instead.
+      onPointerEnter={compact ? placeFlag : undefined}
+      onFocus={compact ? placeFlag : undefined}
+      data-compact={compact ? "" : undefined}
       title={title}
       aria-label={
         roll
@@ -431,24 +507,55 @@ function BrainChip({ brain: b, index, empty, roll, onClick }: { brain: Brain; in
               : `Send to ${b.name}`
       }
       className={cx(
-        "inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-[12.5px] font-medium transition-colors enabled:hover:brightness-125 disabled:cursor-not-allowed disabled:opacity-40",
-        roll ? "max-w-[13rem]" : "max-w-[11rem]", // room for the die beside the name
+        "relative inline-flex h-7 items-center rounded-md border text-[12.5px] font-medium transition-colors enabled:hover:brightness-125 disabled:cursor-not-allowed disabled:opacity-40",
+        compact ? "shrink-0 gap-1 px-1.5" : "gap-1.5 px-2",
+        !compact && (roll ? "max-w-[13rem]" : "max-w-[11rem]"), // room for the die beside the name
+        !compact && (strip ? "shrink-0" : "min-w-0"),
       )}
       style={{
-        color: `color-mix(in oklab, ${b.color} 55%, white)`,
+        color: ink,
         borderColor: `color-mix(in oklab, ${b.color} 30%, transparent)`,
         backgroundColor: `color-mix(in oklab, ${b.color} 9%, transparent)`,
       }}
     >
-      {roll && <D20Icon className="size-3.5 shrink-0" strokeWidth={1.9} />}
-      {image ? (
-        <ImageIcon aria-hidden className="size-3.5 shrink-0" style={{ color: b.color }} />
-      ) : roll ? null : (
-        <span aria-hidden className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: b.color }} />
+      {compact ? (
+        <>
+          {image && <ImageIcon aria-hidden className="size-3.5 shrink-0" style={{ color: b.color }} />}
+          <span aria-hidden className="tracking-[0.03em]">
+            {label}
+          </span>
+        </>
+      ) : (
+        <>
+          {whole}
+          <span className="truncate">{b.name}</span>
+        </>
       )}
-      <span className="truncate">{b.name}</span>
+      <span
+        aria-hidden
+        data-full-name
+        className="ss-flag inline-flex h-7 items-center gap-1.5 rounded-md border px-2 whitespace-nowrap shadow-lg shadow-black/40"
+        style={{
+          color: ink,
+          borderColor: `color-mix(in oklab, ${b.color} 30%, var(--color-raised))`,
+          backgroundColor: `color-mix(in oklab, ${b.color} 9%, var(--color-raised))`,
+        }}
+      >
+        {whole}
+        {b.name}
+      </span>
     </button>
   );
+}
+
+/** A compact chip's flag grows to the right, or to the left when the composer's edge is closer than its width. */
+function placeFlag(e: SyntheticEvent<HTMLButtonElement>) {
+  const chip = e.currentTarget;
+  const flag = chip.querySelector<HTMLElement>("[data-full-name]");
+  const box = chip.closest<HTMLElement>("[data-composer-box]");
+  if (!flag || !box) return;
+  if (chip.getBoundingClientRect().left + flag.offsetWidth > box.getBoundingClientRect().right - 8) chip.dataset.flip = "";
+  else delete chip.dataset.flip;
 }
 
 /** The pen: pick who the next words are from: a brain (an image brain's words are its prompt, painted), or you. */

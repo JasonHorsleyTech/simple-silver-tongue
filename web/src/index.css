@@ -454,3 +454,38 @@
     transform: none;
   }
 }
+
+/*
+ * T12: a compact brain button's full name (features/chat/Composer.tsx, BrainChip). Always in the DOM, so the composer
+ * can measure whether whole names fit; shown over the neighbouring buttons on hover or keyboard focus, growing out of
+ * the button (leftwards near the composer's edge: `data-flip`). It lets the pointer through, so the row never moves.
+ */
+.ss-flag {
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  z-index: 20;
+  pointer-events: none;
+  opacity: 0;
+  clip-path: inset(0 100% 0 0 round 6px);
+  transition:
+    clip-path 140ms ease-out,
+    opacity 90ms ease-out;
+}
+[data-flip] > .ss-flag {
+  left: auto;
+  right: -1px;
+  clip-path: inset(0 0 0 100% round 6px);
+}
+[data-compact]:is(:hover, :focus-visible) {
+  z-index: 10;
+}
+[data-compact]:is(:hover, :focus-visible) > .ss-flag {
+  opacity: 1;
+  clip-path: inset(0 round 6px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ss-flag {
+    transition: none;
+  }
+}
