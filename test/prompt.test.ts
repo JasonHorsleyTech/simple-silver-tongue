@@ -1,0 +1,208 @@
+import assert from "node:assert/strict";
+import { describe, test } from "node:test";
+import { newBrain, newConversation } from "../src/conversations/defaults.ts";
+import { assertSendable, buildRequest, render, resolveBrain, type ModelCaps } from "../src/conversations/prompt.ts";
+import { newMessage, planTurn } from "../src/conversations/turn.ts";
+import type { Author, Brain, Conversation, MessageVersion } from "../src/conversations/types.ts";
+
+const DEEPSEEK: ModelCaps = { reasoning: { supported: true, effortOptions: ["none", "low", "high", "max"] } };
+const AT = "2026-10-14T00:00:00.000Z";
+
+/** A D&D table with every kind of message, so each brain's point of view can be checked exactly. */
+function table() {
+  const conv = newConversation({ title: "Gilded Goat", systemPrompt: "You are the GM." });
+  const gm = conv.brains[0]!;
+  gm.name = "Game Master";
+  const dice = newBrain({ name: "Dice Master", systemPrompt: "You roll dice.", isDefault: false });
+  dice.finalReminder.content = "<!-- System reminder --> Only roll.";
+  const painter: Brain = {
+    ...newBrain({ name: "Scene Painter", systemPrompt: "You paint scenes.", isDefault: false }),
+    kind: "image",
+    safeMode: true,
+    tool: { name: "generate_image", description: "Paint it.", promptParamDescription: "The prompt.", resultContent: "It is on screen." },
+  };
+  conv.brains.push(dice, painter);
+  conv.setup.push(
+    { id: "s_1", label: "World Bible", content: "<!-- This is the World Bible. -->\nThe Gilded Goat is a tavern." },
+    { id: "s_2", label: "Blank", content: "   " },
+  );
+  const add = (author: Author, content: string, kind: "text" | "image" = "text", extra: Partial<MessageVersion> = {}) => {
+    const m = newMessage(author, kind, { content, source: "generated", createdAt: AT, ...extra });
+    conv.messages.push(m);
+    return m;
+  };
+  const by = (b: Brain): Author => ({ type: "brain", brainId: b.id });
+  add(by(gm), "A hooded figure waits.", "text", { source: "authored" });
+  add({ type: "player" }, "I approach.");
+  add(by(dice), "Roll: 17.", "text", { reasoning: "SECRET-REASONING" });
+  const img = add(by(painter), "A hooded figure in a candle-lit tavern", "image");
+  add({ type: "player" }, "I sit down.");
+  const last = add(by(gm), "OLD-VERSION");
+  last.versions.push({ content: "The figure nods.", source: "generated", steer: "SECRET-STEER", createdAt: AT });
+  last.activeVersion = 1;
+  return { conv, gm, dice, painter, img, last };
+}
+
+const user = (content: string) => ({ role: "user", content });
+const assistant = (content: string) => ({ role: "assistant", content });
+const BIBLE = user("<!-- This is the World Bible. -->\nThe Gilded Goat is a tavern.");
+const PAINTED = user(
+  "<!-- from: Scene Painter. It called generate_image with this exact prompt, and that image is now on the player's screen: -->\nA hooded figure in a candle-lit tavern",
+);
+
+describe("buildRequest: each brain sees one shared ledger from its own point of view", () => {
+  test("default brain: system, setup, framed player and other brains, own replies as assistant, no reminder", () => {
+    const { conv, gm } = table();
+    const body = buildRequest(conv, gm.id, { model: DEEPSEEK });
+    assert.deepEqual(body.messages, [
+      { role: "system", content: "You are the GM." },
+      BIBLE, // the blank setup message is skipped, not sent empty
+      assistant("A hooded figure waits."),
+      user("<!-- from: the user -->\nI approach."),
+      user("<!-- from: Dice Master -->\nRoll: 17."),
+      PAINTED,
+      user("<!-- from: the user -->\nI sit down."),
+      assistant("The figure nods."), // the active version, not version 1
+    ]);
+    assert.deepEqual(
+      { ...body, messages: undefined },
+      {
+        model: "deepseek-v4-1-flash",
+        messages: undefined,
+        stream: true,
+        stream_options: { include_usage: true },
+        venice_parameters: { include_venice_system_prompt: false, enable_web_search: "off", enable_web_scraping: false },
+        reasoning_effort: "low",
+      },
+    );
+  });
+
+  test("another brain: the default brain is framed, its own line is assistant, its reminder goes last", () => {
+    const { conv, dice } = table();
+    assert.deepEqual(buildRequest(conv, dice.id, { model: DEEPSEEK }).messages, [
+      { role: "system", content: "You roll dice." },
+      BIBLE,
+      user("<!-- from: Game Master -->\nA hooded figure waits."),
+      user("<!-- from: the user -->\nI approach."),
+      assistant("Roll: 17."),
+      PAINTED,
+      user("<!-- from: the user -->\nI sit down."),
+      user("<!-- from: Game Master -->\nThe figure nods."),
+      user("<!-- System reminder --> Only roll."),
+    ]);
+  });
+
+  test("image brain: its own images are tool calls plus the tool result, and the tool is forced", () => {
+    const { conv, painter, img } = table();
+    const body = buildRequest(conv, painter.id, { model: DEEPSEEK });
+    assert.deepEqual(body.messages.slice(4, 7), [
+      user("<!-- from: Dice Master -->\nRoll: 17."),
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          { id: `call_${img.id}`, type: "function", function: { name: "generate_image", arguments: '{"prompt":"A hooded figure in a candle-lit tavern"}' } },
+        ],
+      },
+      { role: "tool", tool_call_id: `call_${img.id}`, content: "It is on screen." },
+    ]);
+    assert.equal(body.messages.length, 9, "reminder is on by default for a non-default brain, but blank, so it is skipped");
+    assert.deepEqual(body.tool_choice, { type: "function", function: { name: "generate_image" } });
+    assert.deepEqual(body.tools?.[0]?.function, {
+      name: "generate_image",
+      description: "Paint it.",
+      parameters: { type: "object", properties: { prompt: { type: "string", description: "The prompt." } }, required: ["prompt"] },
+    });
+  });
+
+  test("regenerate: excludeFromMessageId stops before the message, and the steer goes last, after the reminder", () => {
+    const { conv, gm, dice, last } = table();
+    let body = buildRequest(conv, gm.id, { model: DEEPSEEK, excludeFromMessageId: last.id, steer: "say it's blue" });
+    assert.deepEqual(body.messages.slice(-2), [
+      user("<!-- from: the user -->\nI sit down."),
+      user(
+        "<!-- Behind-the-scenes direction from the user. This is not part of the conversation. Write your previous response again, following this direction: -->\nsay it's blue",
+      ),
+    ]);
+    body = buildRequest(conv, dice.id, { model: DEEPSEEK, steer: "roll a 3" });
+    assert.deepEqual(body.messages.slice(-2).map((m) => m.content.split("\n")[0]), [
+      "<!-- System reminder --> Only roll.",
+      "<!-- Behind-the-scenes direction from the user. This is not part of the conversation. Write your previous response again, following this direction: -->",
+    ]);
+    assert.throws(() => buildRequest(conv, gm.id, { model: DEEPSEEK, excludeFromMessageId: "m_nope" }), /No message m_nope/);
+  });
+
+  test("reasoning text, steers and inactive versions are never sent (hard rule 4)", () => {
+    const { conv } = table();
+    const all = JSON.stringify(conv.brains.map((b) => buildRequest(conv, b.id, { model: DEEPSEEK })));
+    for (const secret of ["SECRET-REASONING", "SECRET-STEER", "OLD-VERSION"]) assert.ok(!all.includes(secret), secret);
+  });
+
+  test("templates are the user's: edits change the framing, and a bare {{content}} player template sends the message unframed", () => {
+    const { conv, dice } = table();
+    conv.templates.player = "{{content}}";
+    conv.templates.otherBrainText = "[{{brain}}] {{content}}";
+    const msgs = buildRequest(conv, dice.id, { model: DEEPSEEK }).messages;
+    assert.deepEqual(msgs.slice(2, 4), [user("[Game Master] A hooded figure waits."), user("I approach.")]);
+  });
+
+  test("reasoning params follow the brain's toggle and what the model supports", () => {
+    const { conv, gm } = table();
+    const params = (model: ModelCaps) => {
+      const b = buildRequest(conv, gm.id, { model });
+      return { effort: b.reasoning_effort, disable: b.venice_parameters.disable_thinking };
+    };
+    assert.deepEqual(params(DEEPSEEK), { effort: "low", disable: undefined });
+    assert.deepEqual(params(null), { effort: undefined, disable: undefined });
+    assert.deepEqual(params({ reasoning: { supported: false, effortOptions: null } }), { effort: undefined, disable: undefined });
+    assert.deepEqual(params({ reasoning: { supported: true, effortOptions: null } }), { effort: undefined, disable: undefined });
+    gm.reasoning.enabled = false;
+    assert.deepEqual(params(DEEPSEEK), { effort: "none", disable: undefined });
+    assert.deepEqual(params({ reasoning: { supported: true, effortOptions: ["low", "high"] } }), { effort: undefined, disable: true });
+    assert.deepEqual(params({ reasoning: { supported: true, effortOptions: null } }), { effort: undefined, disable: true });
+    conv.settings.maxTokens = 300;
+    conv.settings.temperature = 0;
+    const b = buildRequest(conv, gm.id, { model: DEEPSEEK });
+    assert.equal(b.max_tokens, 300);
+    assert.equal(b.temperature, 0);
+  });
+
+  test("hard rule 1: no request without a non-empty system message", () => {
+    const { conv, gm } = table();
+    gm.systemPrompt = "  \n ";
+    assert.throws(() => buildRequest(conv, gm.id, { model: DEEPSEEK }), { code: "empty_system_prompt" });
+    const vp = { include_venice_system_prompt: false as const, enable_web_search: "off" as const, enable_web_scraping: false as const };
+    assert.throws(() => assertSendable({ messages: [user("hi") as never], venice_parameters: vp }), { code: "empty_system_prompt" });
+    assert.throws(() => assertSendable({ messages: [], venice_parameters: vp }), { code: "empty_system_prompt" });
+    assert.throws(
+      () => assertSendable({ messages: [{ role: "system", content: "x" }], venice_parameters: { ...vp, include_venice_system_prompt: true } as never }),
+      /include_venice_system_prompt/,
+    );
+  });
+});
+
+describe("planTurn and helpers", () => {
+  test("planTurn: the would-be player message is in the body; blank content means the brain just responds", () => {
+    const conv: Conversation = newConversation({ title: "t", systemPrompt: "Be brief." });
+    let plan = planTurn(conv, { content: "Hello" }, DEEPSEEK);
+    assert.equal(plan.player?.versions[0]?.content, "Hello");
+    assert.deepEqual(plan.body.messages, [{ role: "system", content: "Be brief." }, user("<!-- from: the user -->\nHello")]);
+    assert.equal(conv.messages.length, 0, "planning changes nothing");
+    plan = planTurn(conv, { content: "  " }, DEEPSEEK);
+    assert.equal(plan.player, null);
+    assert.equal(plan.body.messages.length, 1);
+  });
+
+  test("resolveBrain: id, then case-insensitive name, else the default; unknown names list the brains", () => {
+    const { conv, gm, dice } = table();
+    assert.equal(resolveBrain(conv).id, gm.id);
+    assert.equal(resolveBrain(conv, dice.id).id, dice.id);
+    assert.equal(resolveBrain(conv, "dice master").id, dice.id);
+    assert.throws(() => resolveBrain(conv, "Bard"), /No brain "Bard".*Game Master, Dice Master, Scene Painter/);
+  });
+
+  test("render: one literal pass, so placeholders or $ patterns inside values are never expanded", () => {
+    assert.equal(render("{{brain}}: {{content}}", { brain: "GM", content: "x {{brain}} $& $1 $$" }), "GM: x {{brain}} $& $1 $$");
+    assert.equal(render("{{prompt}} {{other}} {{content}}", { content: "c" }), "{{prompt}} {{other}} c");
+  });
+});

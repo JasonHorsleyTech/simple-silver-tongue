@@ -36,7 +36,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T02: Basic streaming chat (CP1) · `todo`
+## T02: Basic streaming chat (CP1) · `qa`
 
 **Engineer scope**
 - The full conversation document per design.md (settings, templates, setup, brains, ledger), even though brains and setup only get commands in T04. A new conversation gets one default text brain named "Assistant" with the given system prompt, and per-brain reasoning on at `low`.
@@ -63,6 +63,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 **Engineer scope**
 - `message.regenerate --message <id> [--steer "..."]`: only for the last ledger message, and only when a brain wrote it. Uses the steer template, appended last. Produces a new version and makes it active.
+  - **From T02 (live probe):** with a steer, keep the message's active version in the request, before the steer; only a plain re-roll excludes it (design.md, "Turns, regeneration and edits"). `buildRequest` already supports both (`steer`, `excludeFromMessageId`). Add a `planRegenerate` next to `planTurn` and give `prompt.preview` matching options, so the steered request can be previewed exactly.
 - `message.select-version`, `message.edit` (any message, active version, in place), `message.delete` (any message).
 - Optional stretch: `generation.stop` to abort an in-flight stream and keep the partial text.
 
@@ -80,10 +81,10 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 ## T04: Multiple brains, setup messages and templates (CP3) · `todo`
 
 **Engineer scope**
-- `brain.add` / `.update` / `.delete` / `.set-default`. Delete is refused while the ledger references the brain. Kind is locked once the brain has messages. The final reminder is enabled by default on non-default brains, pre-filled with an editable `<!-- System reminder -->` example.
+- `brain.add` / `.update` / `.delete` / `.set-default`. Delete is refused while the ledger references the brain. (`brain.update` exists since T02 for name, color, system prompt, reasoning and reminder; T04 extends it with kind, tool text and safe mode. The default brain is `conversation.defaultBrainId`.) Kind is locked once the brain has messages. The final reminder is enabled by default on non-default brains, pre-filled with an editable `<!-- System reminder -->` example.
 - `setup.add` / `.update` / `.delete` / `.move` (World Bible etc.; default pre-fill `<!-- This is the World Bible. -->`).
-- `conversation.update` covers the templates.
-- `turn --brain <name|id>`, sending to any brain. With empty content, it just invokes the brain.
+- `conversation.update` covers the templates. (Done in T02.)
+- `turn --brain <name|id>`, sending to any brain. With empty content, it just invokes the brain. (`--brain` and name/id resolution already work in T02's `turn` and `prompt.preview`; with one brain there was nothing else to send to.)
 - `message.add --as player|<brain>`: hand-authored messages, e.g. the GM's opening line.
 - Regenerate always uses the message's own brain.
 - `--brain` accepts a name or an id everywhere.

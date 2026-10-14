@@ -47,6 +47,7 @@ data/
 - File format: magic `SSENC1` + 12-byte random IV + 16-byte GCM tag + AES-256-GCM ciphertext, with the magic as GCM additional data. Use a fresh IV on every write.
 - All user-file access goes through `src/storage/vault.ts` (`readJson` / `writeJson` / `readBytes` / `writeBytes` / `removeFile` / `listFiles` on a `Vault = {dir, key}`), which encrypts when the session has a key. It refuses plaintext files in an encrypted user's folder (and vice versa), refuses paths that escape the user's folder, and never touches `user.json`. Temp files from atomic writes are already ciphertext.
   - Vault files always live in a subfolder (`conversations/`, `images/`), and any `.` or `..` path segment is refused outright. So no spelling reaches `user.json`: macOS volumes are case-insensitive, so a name check alone would let `USER.json` or `conversations/../user.json` through (T01 QA-3).
+  - `readJson` replaces `JSON.parse`'s error with a plain "not valid JSON": V8's message quotes the text it failed on, and internal errors are logged, so a corrupt file would otherwise put decrypted content in `.run/server.log` (T02).
   - A vault can be **closed** (`closeVault`): the key buffer is zeroed and every later read or write throws `session_ended`. As a last-ditch guard, `encrypt()` refuses an all-zero key.
 - Everything under the user's dir except `user.json` is encrypted, images included. Titles too, since they live in the conversation doc.
 - The key lives only in server memory, in the session. A server restart means logging in again.
@@ -63,15 +64,19 @@ data/
 
 ## Conversation document
 
+Implemented in T02 as `src/conversations/types.ts` (the types), `defaults.ts` (new conversations and brains) and `store.ts` (files, write queue, generation lock). The shape below is what is on disk.
+
 ```ts
 type Conversation = {
+  schemaVersion: 1;                    // bump it and upgrade on load if a later ticket changes the shape
   id: string; title: string; createdAt: string; updatedAt: string;
   settings: {
-    textModel: string;                 // default "deepseek-v4-1-flash"
-    maxTokens?: number; temperature?: number;
+    textModel: string;                 // default "deepseek-v4-1-flash"; must be in Venice's /models list
+    maxTokens?: number; temperature?: number;   // omitted = not sent
     imageModel: string;                // default "z-image-turbo"
     image: { width?: number; height?: number; aspectRatio?: string; resolution?: string;
              format: "webp" | "png" | "jpeg"; hideWatermark: boolean; negativePrompt?: string };
+             // T02 default { format: "webp", hideWatermark: false }; T05 owns the semantics
   };
   templates: {
     player: string;          // default "<!-- from: the user -->\n{{content}}"
@@ -81,14 +86,14 @@ type Conversation = {
   };
   setup: Array<{ id: string; label: string; content: string }>;
   brains: Brain[];
+  defaultBrainId: string;              // T02: replaces Brain.isDefault, so "exactly one default" holds by construction
   messages: LedgerMessage[];
 };
 
 type Brain = {
-  id: string; name: string; color: string;
+  id: string; name: string; color: string;   // name is unique (case-insensitive) and never looks like an id (b_...)
   kind: "text" | "image";              // cannot change once the brain has messages
-  isDefault: boolean;                   // exactly one brain is the default
-  reasoning: { enabled: boolean; effort: string };  // default { enabled: true, effort: "low" }. Disabled → reasoning_effort "none".
+  reasoning: { enabled: boolean; effort: string };  // default { enabled: true, effort: "low" }. See "Request body" for how it maps.
   safeMode?: boolean;                   // image brains only, default true → Venice safe_mode
   systemPrompt: string;                 // must be non-empty (see hard rule 1)
   finalReminder: { enabled: boolean; content: string };  // default enabled=false for the default brain, true for others
@@ -116,28 +121,35 @@ type MessageVersion = {
   reasoning?: string;                   // display only, never sent
   source: "generated" | "authored";     // authored = typed by the user (player message, or hand-written "words in the brain's mouth")
   edited?: boolean;
-  costUsd?: number;
+  model?: string;                       // generated: the text model that wrote it (the conversation's model can change later)
+  finishReason?: string;                // generated: Venice's finish_reason. "length" = cut off by max_tokens (the UI can say so)
+  usage?: { promptTokens: number; completionTokens: number; reasoningTokens?: number; cachedTokens?: number };
+  costUsd?: number;                     // from the final chunk's cost.usd. The conversation's total spend sums every version.
   createdAt: string;
 };
 ```
 
-Template placeholders are literal string replacements and there are only four: `{{content}}`, `{{brain}}`, `{{prompt}}`, `{{instruction}}`.
+Template placeholders are literal string replacements and there are only four: `{{content}}`, `{{brain}}`, `{{prompt}}`, `{{instruction}}`. Rendering is a **single pass** with a function replacer, so a message that itself contains `{{brain}}` or `$&` is never expanded again. A placeholder a template has no value for (say `{{prompt}}` in the player template) is left as typed, where the preview shows it.
+
+**Storage mechanics (T02).** Every change is a read-modify-write of the whole file through `mutateConversation(vault, id, fn)`, which runs one job at a time per conversation. So a rename while a reply streams is not lost when the reply is saved: the reply's save re-reads the file and appends. The generation lock (`beginGeneration`, the 409) is separate from that queue and carries an `AbortController`, ready for T03's `generation.stop`. `conversation.delete` is refused while a generation runs.
 
 ## Prompt assembly (the heart of the app)
 
-`buildRequest(conversation, targetBrainId, { excludeFromMessageId?, steer? })` is a pure function returning the full chat-completions body. It is used by both `prompt.preview` and the real send.
+`buildRequest(conversation, targetBrainId, { model, excludeFromMessageId?, steer? })` in `src/conversations/prompt.ts` is a pure function returning the full chat-completions body. `model` is what `/models` says the conversation's text model can do (reasoning support and effort levels); the command layer looks it up from the cached list and refuses a model Venice doesn't list (`unknown_model`). T02 implements every branch below, image brains and steering included, with unit tests (`test/prompt.test.ts`), so T03-T05 only wire commands to it.
+
+**One code path for preview and send.** `planTurn(conv, {brain, content}, model)` (`src/conversations/turn.ts`) builds the would-be player message and the body. `prompt.preview` returns `plan.body`; `turn` sends `plan.body` and saves `plan.player`. A test compares the preview with what the mock received, for the same `--content`. T03's regenerate should add a `planRegenerate` beside it, used the same way by both `message.regenerate` and a `prompt.preview` option.
 
 For the target brain **B**:
 
 1. `{ role: "system", content: B.systemPrompt }`. Always present and never empty; refuse to build otherwise.
-2. For each setup message, in order: `{ role: "user", content: setup.content }`. Verbatim, no template.
+2. For each setup message, in order: `{ role: "user", content: setup.content }`. Verbatim, no template. Blank ones (whitespace only) are skipped rather than sent empty.
 3. For each ledger message `m`, in order, using `m.versions[m.activeVersion]`. On regenerate, stop before `excludeFromMessageId`:
    - **Player message:** `{ role: "user", content: render(templates.player, {content}) }`.
    - **B's own text message:** `{ role: "assistant", content }`.
    - **B's own image message:** `{ role: "assistant", content: "", tool_calls: [{ id: "call_<m.id>", type: "function", function: { name: B.tool.name, arguments: JSON.stringify({ prompt: content }) } }] }`, followed by `{ role: "tool", tool_call_id: "call_<m.id>", content: B.tool.resultContent }`.
    - **Another brain O's text message:** `{ role: "user", content: render(templates.otherBrainText, {brain: O.name, content}) }`.
    - **Another brain O's image message:** `{ role: "user", content: render(templates.otherBrainImage, {brain: O.name, prompt: content}) }`.
-4. If `B.finalReminder.enabled`: `{ role: "user", content: B.finalReminder.content }`. Verbatim.
+4. If `B.finalReminder.enabled` and its content isn't blank: `{ role: "user", content: B.finalReminder.content }`. Verbatim.
 5. If steering: `{ role: "user", content: render(templates.steer, {instruction: steer}) }`. This goes last, so the whole prefix stays cache-friendly.
 
 Request body:
@@ -148,8 +160,9 @@ Request body:
   "messages": [...],
   "stream": true,
   "stream_options": { "include_usage": true },
-  "venice_parameters": { "include_venice_system_prompt": false, "enable_web_search": "off" },
-  "reasoning_effort": "none" | B.reasoning.effort,  // from the brain's toggle; omitted if the model has no reasoning
+  // Everything on Venice's side that would add text we didn't write is off, explicitly:
+  "venice_parameters": { "include_venice_system_prompt": false, "enable_web_search": "off", "enable_web_scraping": false },
+  "reasoning_effort": ...,                        // see below
   "max_tokens": ..., "temperature": ...,          // omitted when unset
   // image brains only:
   "tools": [{ "type": "function", "function": { "name": B.tool.name, "description": B.tool.description,
@@ -157,6 +170,17 @@ Request body:
   "tool_choice": { "type": "function", "function": { "name": B.tool.name } }
 }
 ```
+
+Reasoning, from the brain's toggle and the model's capabilities (T02):
+
+| Model | Brain reasoning on | Brain reasoning off |
+|---|---|---|
+| No reasoning | nothing sent | nothing sent |
+| Effort levels including `none` (deepseek-v4-1-flash) | `reasoning_effort: B.reasoning.effort` | `reasoning_effort: "none"` |
+| Effort levels without `none` | `reasoning_effort: B.reasoning.effort` | `venice_parameters.disable_thinking: true` |
+| Reasoning, no effort levels | nothing sent | `venice_parameters.disable_thinking: true` |
+
+**The send path re-checks the hard rule.** `openChatStream` (`src/venice/chat.ts`) calls `assertSendable(body)` before anything leaves the server, whoever built the body: the first message must be a non-empty `role: system` and `include_venice_system_prompt` must be `false`. The mock refuses both too.
 
 Verified against the live Venice API (2026-10-13), using `deepseek-v4-1-flash`:
 - Consecutive `role: user` messages are accepted. Do not merge them.
@@ -167,15 +191,24 @@ Verified against the live Venice API (2026-10-13), using `deepseek-v4-1-flash`:
 - **The chunk that carries `finish_reason` can also carry content** (seen live with `finish_reason: "length"`, T01 QA-7). The parser must read `delta.content` on every chunk, including the finishing one. The mock reproduces this whenever `max_tokens` cuts a reply.
 - With `include_venice_system_prompt: false`, prompt_tokens matched our own text (no injected prompt).
 
+Verified live in T02 (2026-10-14), `deepseek-v4-1-flash`:
+- The full T02 body above, `enable_web_scraping: false` included, is accepted. A 3-turn chat had `prompt_tokens` of 52, 68 and 86 for roughly 25, 40 and 55 tokens of our own text plus the chat template. Venice's own prompt would add about 550.
+- `reasoning_effort: "none"` really turns reasoning off: no `reasoning_content`, and 3 completion tokens for "Yellow.".
+- **A request that ends with the target brain's own `assistant` message goes wrong.** The model treats it as a prefix to continue: it repeated its last reply and put its reasoning, with a literal `</think>`, into `content`. So `turn` refuses that case (`nothing_to_answer`); `prompt.preview` still shows the body, with a note. A brain whose final reminder is on never hits it, because the reminder is a `user` message. T04 should keep the check as it is: it looks at the built body, not at who spoke last.
+- **The steer needs the reply it is revising (T03).** Live probe on a chat whose replies were Blue, Red, Green, Green, Yellow, regenerating "Yellow." with the steer "Translate it into French.": with the message excluded as originally specified, the model translated its *earlier* reply ("Vert.", from "Green."). With the active version left in, it answered "Jaune.". The default template says "Write your previous response again", so the rule below now keeps the active version in the request when there is a steer.
+
 ## Turns, regeneration and edits
 
-- **turn** `(conversation, brain = default, content?)`. If `content` is not empty, append a player message and save. Then generate a response from `brain` and append it as a new brain message. With empty content, it just asks the brain to respond. Example: a Character Portraitist whose system prompt says "unless the player asks for someone specific, paint the most recently introduced character". With empty content it does exactly that; with "(paint the barkeep, give him a leather apron)" it follows the note. No special code is needed. The player message is simply framed like any other, and the brain's prompt decides.
-- **regenerate** `(messageId, steer?)`. Only allowed when `messageId` is the **last** ledger message and has a brain author. Build the request for that message's brain, excluding the message itself, plus the steer. The result becomes a **new version** of the message and the active one. The steer text is stored on that version for display. It is never sent again.
+- **turn** `(conversation, brain = default, content?)`. If `content` is not empty, append a player message and save. Then generate a response from `brain` and append it as a new brain message. With empty content, it just asks the brain to respond. Example: a Character Portraitist whose system prompt says "unless the player asks for someone specific, paint the most recently introduced character". With empty content it does exactly that; with "(paint the barkeep, give him a leather apron)" it follows the note. No special code is needed. The player message is simply framed like any other, and the brain's prompt decides. Refused when the body would end with the brain's own `assistant` message (see above).
+  - **Order and failure (T02).** Lock (409) → load → plan (empty system prompt or unknown model: 400, nothing saved) → open the Venice stream and wait for its headers (an up-front refusal: 502, nothing saved) → save the player message, emit `message` → `start` → deltas → save the brain message → `done`. If the stream breaks after that, the player message stays, no partial reply is saved, and the stream ends with `error`; `turn` with no content retries. A client disconnect doesn't stop anything: the reply finishes and is saved.
+- **regenerate** `(messageId, steer?)`. Only allowed when `messageId` is the **last** ledger message and has a brain author. The result becomes a **new version** of the message and the active one. The steer text is stored on that version for display. It is never sent again.
+  - **Without a steer** it is a fresh re-roll: build the request for that message's brain with `excludeFromMessageId: messageId`. If that body then ends with the same brain's own earlier `assistant` message (two of its messages in a row), apply turn's `nothing_to_answer` check too.
+  - **With a steer** (changed in T02, see the live probe above): keep the message in, so its active version is the brain's own last `assistant` message (or tool call), followed by the reminder if any, then the rendered steer. The model needs to see what "your previous response" is. Only this one request carries the old version and the steer; later prompts see only whichever version is active.
 - **select-version.** Go back to version 2 of 10, decide it's the good one, and keep playing from it. Switching the active version changes what every brain sees from then on.
 - **edit** `(messageId, content)`. Edits the active version in place (`edited: true`). Any message can be edited, player or brain, at any depth. For an image message, saving a new prompt starts a new image generation. The old image stays on screen until the new one is ready.
 - **delete** `(messageId)`. Any message. Deleting an image message deletes its image files.
 - **add** `(author = player | brain, content)`. Appends an authored message without generating anything. This is how you put words in the GM's mouth for the opening scene. Authoring an image-brain message starts image generation for that prompt.
-- Brains: add anytime. Edit anytime: name, system prompt, reminder, tool text. Delete only if no ledger message references the brain. Change the default anytime. Kind is locked once the brain has messages.
+- Brains: add anytime. Edit anytime: name, system prompt, reminder, tool text. Delete only if no ledger message references the brain, **and not while a generation for it is running** (its reply isn't in the ledger yet). Change the default anytime. Kind is locked once the brain has messages.
 
 ### Image generation
 
@@ -193,7 +226,7 @@ Commands live in one registry. Each has a name, a zod args schema, an optional `
 - **CLI:** `./ss <command> --arg value ...`. This is a thin HTTP client over the same endpoints. `--content @file.md` reads a file and `--content -` reads stdin. `--json` prints raw JSON. Stream commands print text deltas live.
 
 Stream event shapes (NDJSON):
-`{type:"message", message}` (player message saved) · `{type:"start", brainId, brainName?}` · `{type:"reasoning", delta}` · `{type:"delta", delta}` · `{type:"tool_args", delta}` · `{type:"image_pending", messageId, imageId}` · `{type:"image_done", messageId, imageId}` · `{type:"image_error", messageId, error}` · `{type:"done", message}` · `{type:"error", error: {code, message}}`
+`{type:"message", message}` (player message saved) · `{type:"start", brainId, brainName, messageId}` (the id the new brain message will have, so a UI can key its streaming bubble) · `{type:"reasoning", delta}` · `{type:"delta", delta}` · `{type:"tool_args", delta}` · `{type:"image_pending", messageId, imageId}` · `{type:"image_done", messageId, imageId}` · `{type:"image_error", messageId, error}` · `{type:"done", message, note?}` (`note` is a one-line summary such as `Assistant · 52 in / 34 out · $0.000056`, which the CLI prints to stderr) · `{type:"error", error: {code, message}}`
 
 Every stream ends with exactly one `done` or `error` event; the CLI treats anything else as a broken stream. The CLI prints `delta` and `tool_args` to stdout as they arrive and `reasoning` and status lines to stderr, so `./ss turn ... > reply.md` captures only the reply.
 
@@ -210,6 +243,13 @@ Every stream ends with exactly one `done` or `error` event; the CLI treats anyth
 ### Writing a command
 
 `command({...})`, `streamCommand({...})` or `binaryCommand({...})` from `src/registry.ts`, registered in `src/commands/index.ts`. Each one has a `name`, a `description` (the first line is the summary in `./ss help`), a zod `args` object, `auth` (default `true`, meaning login required) and optional `examples`. JSON commands can add `format(result)` for CLI text. Mark a password-like arg with `.meta({ secret: true, prompt: "Password for {username}: " })` and the CLI prompts for it with hidden input when it's omitted (`confirm: true` asks twice). With no terminal, it reads the first line of stdin, and empty stdin is a usage error rather than an empty password. A secret flag value is literal, except that `-` reads stdin: no `@file` expansion. `ctx.requireSession().vault` is this request's own key copy, valid until the handler (or the stream) finishes. Don't name args `json`, `help` or `out`, since those are CLI global flags. The catalog the CLI parses flags from is `help`, which returns each command's JSON Schema.
+
+Implemented in T02 (`src/commands/conversations.ts`, `brains.ts`, `chat.ts`):
+- `conversation.create --title --system-prompt [--text-model]`: the system prompt is required and must have real text. Returns the whole document.
+- `conversation.list`, `conversation.get --id`, `conversation.delete --id` (409 while generating).
+- `conversation.update --id [--title] [--settings.text-model|max-tokens|temperature|image-model] [--templates.player|other-brain-text|other-brain-image|steer]`. Only the fields given change; `null` unsets maxTokens or temperature (`--settings '{"maxTokens": null}'`). The templates are here already because hard requirement 1 says every word sent must be editable, and the player template is sent from T02 on.
+- `brain.update --conversation [--brain] [--name --color --system-prompt --reasoning.enabled --reasoning.effort --final-reminder.enabled --final-reminder.content]`, for the same reason: the system prompt is sent, so it must be editable before T04. T04 adds `brain.add/delete/set-default` and kind/tool/safeMode.
+- `turn --conversation [--content] [--brain]` (stream) and `prompt.preview --conversation [--brain] [--content]`. `--brain` takes a name (case-insensitive) or an id everywhere, through `resolveBrain`.
 
 Initial command list (tickets add to it, and `./ss help` is the live reference):
 
@@ -247,3 +287,4 @@ Implemented in T01:
 - A mock balance starts at $10 and goes down by each call's computed cost.
 - `GET /_mock/requests` returns the last 20 request bodies, newest first. Compare it with `prompt.preview` to prove the real send matches the preview.
 - Triggers in the last message (chat) or the prompt (image): `MOCK_ERROR` returns an HTTP error, `MOCK_SLOW` makes it slow (useful for 409 and stop tests), and `MOCK_MIDSTREAM_ERROR` drops the connection halfway through.
+- T02: it also refuses a chat request whose first message isn't a non-empty `system` message (hard rule 1). `MOCK_SLOW`'s per-chunk delay is `slowDelayMs` (default 250 ms; tests use 20). `MOCK_MIDSTREAM_ERROR` waits for what it wrote to reach the client before dropping, so even with no delay it is a real mid-stream failure.

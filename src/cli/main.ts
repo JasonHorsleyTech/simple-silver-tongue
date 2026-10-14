@@ -220,6 +220,7 @@ async function printStream(res: Response, json: boolean, io: Io, dim: (s: string
         break;
       case "done":
         io.stdout.write("\n");
+        if (typeof ev.note === "string") io.stderr.write(dim(`[${ev.note}]\n`));
         break;
       case "error":
         io.stderr.write(`\nerror: ${ev.error?.message ?? JSON.stringify(ev.error)}\n`);

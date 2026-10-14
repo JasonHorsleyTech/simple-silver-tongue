@@ -7,7 +7,7 @@ import { normalizeModel, type ModelInfo, type ModelType } from "./models.ts";
  */
 export type VeniceClient = {
   baseUrl: string;
-  /** Raw request (for streaming endpoints in later tickets). Throws CommandError on non-2xx. */
+  /** Raw request (chat streams use it with timeoutMs: 0). Throws CommandError on non-2xx. */
   request(path: string, init?: RequestInit & { timeoutMs?: number }): Promise<Response>;
   json<T>(path: string, init?: RequestInit & { timeoutMs?: number }): Promise<T>;
   listModels(type: ModelType, opts?: { refresh?: boolean }): Promise<{ models: ModelInfo[]; fetchedAt: string }>;
@@ -27,11 +27,13 @@ export function createVeniceClient(opts: { baseUrl: string; apiKey: string; fetc
     if (!opts.apiKey) {
       throw new CommandError(500, "no_api_key", "VENICE_ADMIN_KEY is not set. Add it to .env, then run npm run up.");
     }
+    // timeoutMs covers the whole response, body included; 0 means none (streams manage their own timeouts).
     const { timeoutMs = 30_000, ...rest } = init;
     const headers = new Headers(rest.headers);
     headers.set("Authorization", `Bearer ${opts.apiKey}`);
     if (rest.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-    const signal = rest.signal ? AbortSignal.any([rest.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
+    const signals = [rest.signal, timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined].filter((s) => s !== undefined && s !== null);
+    const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
     let res: Response;
     try {
       res = await doFetch(`${opts.baseUrl}${path}`, { ...rest, headers, signal });

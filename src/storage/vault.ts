@@ -65,7 +65,13 @@ export async function writeBytes(vault: Vault, rel: string, data: Uint8Array): P
 
 export async function readJson<T>(vault: Vault, rel: string): Promise<T | null> {
   const bytes = await readBytes(vault, rel);
-  return bytes === null ? null : (JSON.parse(bytes.toString("utf8")) as T);
+  if (bytes === null) return null;
+  try {
+    return JSON.parse(bytes.toString("utf8")) as T;
+  } catch {
+    // V8's message quotes the text it choked on, and internal errors are logged: never let content reach the log.
+    throw new Error(`${rel}: not valid JSON`);
+  }
 }
 
 /** Plaintext users get pretty JSON for easy debugging; encrypted users get compact JSON inside the ciphertext. */

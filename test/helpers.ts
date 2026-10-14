@@ -18,7 +18,7 @@ export type CliResult = { code: number; stdout: string; stderr: string };
 /** An in-process server (temp data dir) against an in-process mock Venice, plus an in-process CLI. */
 export async function startTestServer(opts: { commands?: AnyCommand[] } = {}) {
   const tmp = await mkdtemp(join(tmpdir(), "ss-test-"));
-  const mock: MockVenice = await startMockVenice({ delayMs: 0, imageDelayMs: 0 });
+  const mock: MockVenice = await startMockVenice({ delayMs: 0, slowDelayMs: 20, imageDelayMs: 0 });
   const config = {
     ...loadConfig({ SS_MODE: "mock" }),
     dataDir: join(tmp, "data"),

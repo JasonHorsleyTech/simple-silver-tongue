@@ -20,10 +20,19 @@ import { MOCK_MODELS } from "./mock-models.ts";
  * max_tokens is honored (counted in content words): the reply is cut with finish_reason "length".
  *
  * Rules enforced like a strict Venice: a Bearer token is required, and chat requests must send
- * venice_parameters.include_venice_system_prompt: false (our no-hidden-text hard rule).
+ * venice_parameters.include_venice_system_prompt: false and start with a non-empty system message
+ * (our no-hidden-text hard rule; live Venice would quietly inject its own prompt instead).
  */
 
-export type MockOptions = { port?: number; delayMs?: number; imageDelayMs?: number; balanceUsd?: number; log?: boolean };
+export type MockOptions = {
+  port?: number;
+  delayMs?: number;
+  /** Per-chunk delay when the last message says MOCK_SLOW (default 250 ms). */
+  slowDelayMs?: number;
+  imageDelayMs?: number;
+  balanceUsd?: number;
+  log?: boolean;
+};
 export type MockRequest = { at: string; method: string; path: string; body: unknown };
 export type MockVenice = {
   url: string; // base URL to use as VENICE_BASE_URL
@@ -36,6 +45,7 @@ const BASE = "/api/v1";
 
 export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenice> {
   const delayMs = opts.delayMs ?? 15;
+  const slowDelayMs = opts.slowDelayMs ?? 250;
   const imageDelayMs = opts.imageDelayMs ?? 200;
   const state = { balanceUsd: opts.balanceUsd ?? 10, requests: [] as MockRequest[] };
   let seq = 0;
@@ -108,9 +118,14 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     const messages = body.messages;
     if (!Array.isArray(messages) || messages.length === 0) return json(res, 400, { error: "messages must be a non-empty array" });
 
+    // Hard rule 1: live Venice injects its own prompt into some models when there is no system message.
+    // We must never send such a request, so the mock refuses it outright.
+    if (messages[0]?.role !== "system" || !contentText(messages[0]).trim()) {
+      return json(res, 400, { error: "mock: the first message must be a non-empty system message (hard rule 1: no injected prompt)" });
+    }
     const lastText = contentText(messages.at(-1));
     if (lastText.includes("MOCK_ERROR")) return json(res, 500, { error: "mock: forced error (MOCK_ERROR)" });
-    const stepMs = lastText.includes("MOCK_SLOW") ? 250 : delayMs;
+    const stepMs = lastText.includes("MOCK_SLOW") ? slowDelayMs : delayMs;
     const caps = model.model_spec.capabilities ?? {};
     const system = messages.find((m) => m.role === "system");
     const brain = system ? excerpt(contentText(system), 30) : "(no system prompt)";
@@ -194,7 +209,10 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     const dropAt = lastText.includes("MOCK_MIDSTREAM_ERROR") ? Math.floor(deltas.length / 2) : -1;
     for (let i = 0; i < deltas.length; i++) {
       if (res.destroyed) return;
-      if (i === dropAt) return void res.destroy();
+      if (i === dropAt) {
+        await sleep(Math.max(stepMs, 20)); // let what was written reach the client first, even with no delay
+        return void res.destroy();
+      }
       res.write(`data: ${JSON.stringify(deltas[i])}\n\n`);
       if (stepMs) await sleep(stepMs);
     }
