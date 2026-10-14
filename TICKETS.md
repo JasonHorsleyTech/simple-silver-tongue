@@ -215,4 +215,6 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
   - Polish candidates seen in Chrome, none blocking: the scrollback's floating "Latest" button sits over the caption of an image card when you scroll up a little; the large view has no previous/next between a conversation's images; a pending image whose card is far up the scrollback gives no sign at the bottom that it landed.
 - (orchestrator) The default `otherBrainImage` template says the image "is now on the player's screen". Since T05 triage, the GM can answer while the image is still painting, so make the default wording accurate (e.g. "…called generate_image with this exact prompt:"). The example campaign should do the same.
 
+- (orchestrator) Default `hideWatermark` to **true** for new conversations and the example campaign. The T05 live image showed a Venice watermark, and this is a personal scratch pad.
+
 **Deferred in:** *(none yet)*
