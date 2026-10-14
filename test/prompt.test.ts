@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { newBrain, newConversation } from "../src/conversations/defaults.ts";
-import { assertSendable, buildRequest, render, resolveBrain, type ModelCaps } from "../src/conversations/prompt.ts";
-import { newMessage, planTurn } from "../src/conversations/turn.ts";
+import {
+  assertAnswerable,
+  assertSendable,
+  buildRequest,
+  nothingToAnswer,
+  REASONING_NOTE,
+  render,
+  resolveBrain,
+  type ModelCaps,
+} from "../src/conversations/prompt.ts";
+import { newMessage, planTurn, reviewBody } from "../src/conversations/turn.ts";
 import type { Author, Brain, Conversation, MessageVersion } from "../src/conversations/types.ts";
 
 const DEEPSEEK: ModelCaps = { reasoning: { supported: true, effortOptions: ["none", "low", "high", "max"] } };
@@ -72,7 +81,7 @@ describe("buildRequest: each brain sees one shared ledger from its own point of 
         stream: true,
         stream_options: { include_usage: true },
         venice_parameters: { include_venice_system_prompt: false, enable_web_search: "off", enable_web_scraping: false },
-        reasoning_effort: "low",
+        reasoning_effort: "none", // new brains have reasoning off (T02 QA-1)
       },
     );
   });
@@ -130,6 +139,8 @@ describe("buildRequest: each brain sees one shared ledger from its own point of 
       "<!-- Behind-the-scenes direction from the user. This is not part of the conversation. Write your previous response again, following this direction: -->",
     ]);
     assert.throws(() => buildRequest(conv, gm.id, { model: DEEPSEEK, excludeFromMessageId: "m_nope" }), /No message m_nope/);
+    // A blank steer is a caller bug, not "no steer": dropping it would leave the brain's own reply last (T02 QA-5).
+    assert.throws(() => buildRequest(conv, gm.id, { model: DEEPSEEK, steer: "  \n" }), /steer can't be blank/);
   });
 
   test("reasoning text, steers and inactive versions are never sent (hard rule 4)", () => {
@@ -152,14 +163,15 @@ describe("buildRequest: each brain sees one shared ledger from its own point of 
       const b = buildRequest(conv, gm.id, { model });
       return { effort: b.reasoning_effort, disable: b.venice_parameters.disable_thinking };
     };
+    assert.equal(gm.reasoning.enabled, false, "off by default (T02 QA-1)");
+    assert.deepEqual(params(DEEPSEEK), { effort: "none", disable: undefined });
+    assert.deepEqual(params({ reasoning: { supported: true, effortOptions: ["low", "high"] } }), { effort: undefined, disable: true });
+    assert.deepEqual(params({ reasoning: { supported: true, effortOptions: null } }), { effort: undefined, disable: true });
+    gm.reasoning.enabled = true;
     assert.deepEqual(params(DEEPSEEK), { effort: "low", disable: undefined });
     assert.deepEqual(params(null), { effort: undefined, disable: undefined });
     assert.deepEqual(params({ reasoning: { supported: false, effortOptions: null } }), { effort: undefined, disable: undefined });
     assert.deepEqual(params({ reasoning: { supported: true, effortOptions: null } }), { effort: undefined, disable: undefined });
-    gm.reasoning.enabled = false;
-    assert.deepEqual(params(DEEPSEEK), { effort: "none", disable: undefined });
-    assert.deepEqual(params({ reasoning: { supported: true, effortOptions: ["low", "high"] } }), { effort: undefined, disable: true });
-    assert.deepEqual(params({ reasoning: { supported: true, effortOptions: null } }), { effort: undefined, disable: true });
     conv.settings.maxTokens = 300;
     conv.settings.temperature = 0;
     const b = buildRequest(conv, gm.id, { model: DEEPSEEK });
@@ -191,6 +203,33 @@ describe("planTurn and helpers", () => {
     plan = planTurn(conv, { content: "  " }, DEEPSEEK);
     assert.equal(plan.player, null);
     assert.equal(plan.body.messages.length, 1);
+  });
+
+  test("nothing to answer: a body must end with a user or tool message, in every plan and on the send path (T02 QA-3, QA-5)", () => {
+    const fresh = newConversation({ title: "t", systemPrompt: "Open a tavern scene." });
+    // Only the system prompt: live, the model just continues it as text.
+    let plan = planTurn(fresh, {}, DEEPSEEK);
+    assert.match(plan.refusal ?? "", /nothing for Assistant to answer yet: the request would hold only its system prompt/);
+    assert.throws(() => assertAnswerable(plan.body), { code: "nothing_to_answer" });
+    assert.equal(planTurn(fresh, { content: "Hi" }, DEEPSEEK).refusal, undefined);
+
+    const { conv, gm, dice, painter } = table();
+    plan = planTurn(conv, { brain: gm.id }, DEEPSEEK); // its own reply is last
+    assert.match(plan.refusal ?? "", /last message is Game Master's own reply/);
+    assert.throws(() => assertAnswerable(plan.body), { code: "nothing_to_answer" });
+    assert.equal(planTurn(conv, { brain: dice.id }, DEEPSEEK).refusal, undefined, "another brain's line is a framed user message");
+    // An image brain's own image ends in role: tool, which is answerable (it paints again).
+    conv.messages.splice(4);
+    assert.equal(nothingToAnswer(buildRequest(conv, painter.id, { model: DEEPSEEK })), null);
+  });
+
+  test("reviewBody: the payload view notes reasoning only when the request really turns it on (T02 QA-1)", () => {
+    const { conv, gm } = table();
+    assert.deepEqual(planTurn(conv, { content: "x" }, DEEPSEEK).notes, []);
+    gm.reasoning.enabled = true;
+    assert.deepEqual(planTurn(conv, { content: "x" }, DEEPSEEK).notes, [REASONING_NOTE]);
+    assert.deepEqual(reviewBody(gm, planTurn(conv, { content: "x" }, null).body, { reasoning: { supported: false, effortOptions: null } }).notes, []);
+    assert.equal(REASONING_NOTE, "Reasoning on: the provider adds a small hidden instruction we can't see or edit.");
   });
 
   test("resolveBrain: id, then case-insensitive name, else the default; unknown names list the brains", () => {

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { resolveBrain } from "../conversations/prompt.ts";
+import { REASONING_NOTE, resolveBrain } from "../conversations/prompt.ts";
 import { mutateConversation } from "../conversations/store.ts";
 import type { Brain } from "../conversations/types.ts";
 import { badRequest, conflict } from "../lib/errors.ts";
@@ -14,7 +14,8 @@ export const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "ma
 export const brainUpdate = command({
   name: "brain.update",
   description: `Edit a brain: name, color, system prompt, reasoning and final reminder. Only the fields you pass change.
-Takes effect from the next request; prompt.preview shows the result. The system prompt can't be empty.`,
+Takes effect from the next request; prompt.preview shows the result. The system prompt can't be empty.
+Reasoning is off by default. Turning it on is an opt-in: the provider then adds a small hidden instruction.`,
   args: z.object({
     conversation: conversationId,
     brain: brainRef.optional(),
@@ -23,7 +24,7 @@ Takes effect from the next request; prompt.preview shows the result. The system 
     systemPrompt: systemPrompt.optional(),
     reasoning: z
       .object({
-        enabled: z.boolean().describe("Reasoning on or off (off sends reasoning_effort none)"),
+        enabled: z.boolean().describe("Reasoning on or off (default off). On: the provider adds a small hidden instruction we can't see or edit"),
         effort: z.enum(EFFORTS).describe("Effort level when on, if the model supports levels"),
       })
       .partial()
@@ -66,7 +67,7 @@ Takes effect from the next request; prompt.preview shows the result. The system 
   format: (b: Brain) =>
     `Updated brain ${b.name} (${b.id}) · reasoning ${b.reasoning.enabled ? b.reasoning.effort : "off"} · final reminder ${
       b.finalReminder.enabled ? "on" : "off"
-    } · system prompt ${b.systemPrompt.length} chars`,
+    } · system prompt ${b.systemPrompt.length} chars${b.reasoning.enabled ? `\n${REASONING_NOTE}` : ""}`,
 });
 
 export default [brainUpdate];

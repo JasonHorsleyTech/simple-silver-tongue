@@ -1,6 +1,7 @@
-import { conflict, notFound } from "../lib/errors.ts";
+import { CommandError, conflict, notFound } from "../lib/errors.ts";
 import { nowIso } from "../lib/ids.ts";
 import { listFiles, readJson, removeFile, writeJson, type Vault } from "../storage/vault.ts";
+import type { UnreadableConversation } from "./format.ts";
 import type { Conversation } from "./types.ts";
 
 /**
@@ -20,10 +21,35 @@ export async function loadConversation(vault: Vault, id: string): Promise<Conver
   return conv;
 }
 
-export async function listConversations(vault: Vault): Promise<Conversation[]> {
-  const names = (await listFiles(vault, "conversations")).filter((n) => /^c_[a-z0-9]+\.json$/.test(n));
-  const convs = await Promise.all(names.map((n) => loadConversation(vault, n.slice(0, -5))));
-  return convs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+/**
+ * Every readable conversation, newest first, plus the files that aren't (T02 QA-4). One bad file (hand-edited
+ * JSON, a file copied in from another user, a partial document) must not hide the rest. Error texts are ours
+ * (vault.ts never quotes content), so they are safe to show. A closed vault still fails the whole list.
+ */
+export async function listConversations(vault: Vault): Promise<{ conversations: Conversation[]; unreadable: UnreadableConversation[] }> {
+  const ids = (await listFiles(vault, "conversations")).filter((n) => /^c_[a-z0-9]+\.json$/.test(n)).map((n) => n.slice(0, -5));
+  const results = await Promise.allSettled(ids.map(async (id) => checkShape(id, await loadConversation(vault, id))));
+  const conversations: Conversation[] = [];
+  const unreadable: UnreadableConversation[] = [];
+  for (const [i, r] of results.entries()) {
+    const id = ids[i]!;
+    if (r.status === "fulfilled") conversations.push(r.value);
+    else if (r.reason instanceof CommandError && r.reason.code === "not_found") continue; // deleted while we listed
+    else if (r.reason instanceof CommandError) throw r.reason; // session_ended and the like
+    else unreadable.push({ id, error: String((r.reason as Error)?.message ?? r.reason).replace(`${fileOf(id)}: `, "") });
+  }
+  conversations.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return { conversations, unreadable };
+}
+
+/** Just enough shape for a list row, so a partial document is reported instead of crashing the list. */
+function checkShape(id: string, c: Conversation): Conversation {
+  const ok =
+    typeof c === "object" && c !== null &&
+    typeof c.title === "string" && typeof c.updatedAt === "string" && typeof c.settings?.textModel === "string" &&
+    Array.isArray(c.messages) && c.messages.every((m) => Array.isArray(m?.versions));
+  if (!ok) throw new Error(`${fileOf(id)}: not a conversation document (fields are missing)`);
+  return c;
 }
 
 export async function createConversationFile(vault: Vault, conv: Conversation): Promise<void> {

@@ -77,3 +77,15 @@ test("openChatStream: a GC between opening and reading doesn't lose the reply (u
     await mock.close();
   }
 });
+
+test("openChatStream refuses a body with nothing to answer, whoever built it (T02 QA-3, QA-5)", async () => {
+  const venice = { request: () => assert.fail("nothing may go upstream") } as unknown as Parameters<typeof openChatStream>[0];
+  const vp = { include_venice_system_prompt: false, enable_web_search: "off", enable_web_scraping: false } as const;
+  const base = { model: "m", stream: true, stream_options: { include_usage: true }, venice_parameters: vp } as const;
+  for (const messages of [
+    [{ role: "system", content: "Sys." }],
+    [{ role: "system", content: "Sys." }, { role: "user", content: "Hi" }, { role: "assistant", content: "Yellow." }],
+  ] as const) {
+    await assert.rejects(openChatStream(venice, { ...base, messages: [...messages] }), { code: "nothing_to_answer" });
+  }
+});

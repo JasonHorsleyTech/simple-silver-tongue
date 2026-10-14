@@ -227,13 +227,19 @@ async function printStream(res: Response, json: boolean, io: Io, dim: (s: string
         break;
     }
   };
-  for await (const chunk of res.body) {
-    buf += decoder.decode(chunk as Uint8Array, { stream: true });
-    let nl;
-    while ((nl = buf.indexOf("\n")) !== -1) {
-      handle(buf.slice(0, nl));
-      buf = buf.slice(nl + 1);
+  try {
+    for await (const chunk of res.body) {
+      buf += decoder.decode(chunk as Uint8Array, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) !== -1) {
+        handle(buf.slice(0, nl));
+        buf = buf.slice(nl + 1);
+      }
     }
+  } catch {
+    // undici just says "terminated" (T02 QA-8). The server keeps working after a disconnect, so say so.
+    io.stderr.write("\nerror: lost the connection to the server mid-stream (did it restart?). Check what was saved with ./ss conversation.get.\n");
+    return EXIT.failed;
   }
   handle(buf);
   if (!ended) {

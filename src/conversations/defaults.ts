@@ -26,7 +26,8 @@ export function newBrain(opts: { name: string; systemPrompt: string; color?: str
     name: opts.name,
     color: opts.color ?? BRAIN_COLORS[0]!,
     kind: "text",
-    reasoning: { enabled: true, effort: "low" },
+    // Off by default: with reasoning on, the provider adds a small hidden instruction (T02 QA-1). On is an opt-in.
+    reasoning: { enabled: false, effort: "low" },
     systemPrompt: opts.systemPrompt,
     // T04 pre-fills an editable example for non-default brains, which have it on by default.
     finalReminder: { enabled: !opts.isDefault, content: "" },

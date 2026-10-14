@@ -36,7 +36,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T02: Basic streaming chat (CP1) · `triage`
+## T02: Basic streaming chat (CP1) · `frontend`
 
 **Engineer scope**
 - The full conversation document per design.md (settings, templates, setup, brains, ledger), even though brains and setup only get commands in T04. A new conversation gets one default text brain named "Assistant" with the given system prompt, and per-brain reasoning **off** by default (see design.md, T02 QA-1).
@@ -54,6 +54,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 - **Enforce a non-empty system prompt** (design.md hard rule 1, T01 QA-1, Jason's explicit request): never send a request without a user-written system message. Creating a conversation requires a system prompt or pre-fills an editable default, and the send path and preview refuse an empty one. QA should confirm, on one cheap live call, that `usage.prompt_tokens` matches what we sent, with nothing injected.
 
 **Frontend scope:** Sidebar conversation list, "New conversation" form (title + system prompt), and the chat view with routing at `/c/<id>`. Markdown-rendered scrollback, a composer (Enter sends, Shift+Enter adds a newline), live token streaming, collapsible reasoning, and a running cost per conversation.
+- **From T02 triage:** `conversation.list` also returns `unreadable: [{id, error}]`; show those rows (greyed, with the reason) rather than dropping them. A saved brain reply can have empty content (`finishReason: "length"` with reasoning on): render it as an explicit "no reply text" bubble, not a blank one. Reloading mid-reply is safe now: the server finishes and saves the reply, so on load just show the ledger (the reply appears once it is saved). Sending from an empty composer in a fresh conversation is a 400 `nothing_to_answer`; show its message inline.
 
 **Deferred in:** *(none yet)*
 
@@ -64,6 +65,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 **Engineer scope**
 - `message.regenerate --message <id> [--steer "..."]`: only for the last ledger message, and only when a brain wrote it. Uses the steer template, appended last. Produces a new version and makes it active.
   - **From T02 (live probe):** with a steer, keep the message's active version in the request, before the steer; only a plain re-roll excludes it (design.md, "Turns, regeneration and edits"). `buildRequest` already supports both (`steer`, `excludeFromMessageId`). Add a `planRegenerate` next to `planTurn` and give `prompt.preview` matching options, so the steered request can be previewed exactly.
+  - **From T02 triage:** build the plan as `{ ..., body, ...reviewBody(brain, body, model) }`, as `planTurn` does, so the preview gets the same `refusal` and `notes`. `buildRequest` throws on a blank `steer`, so trim the user's `--steer` at the command layer and treat blank as "no steer" (a plain re-roll). The send path (`openChatStream`) refuses any body that doesn't end with a `user` or `tool` message, whoever built it.
 - `message.select-version`, `message.edit` (any message, active version, in place), `message.delete` (any message).
 - Optional stretch: `generation.stop` to abort an in-flight stream and keep the partial text.
 
@@ -119,6 +121,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 **Deferred in:**
 - Mock: add a trigger (e.g. `MOCK_BLURRED` in the prompt, with `safe_mode` on) that answers `x-venice-is-blurred: true`, so the safe-mode UX can be tested for free. The headers already exist, always `false` (T01 QA-7).
+- `relayReply` (`src/conversations/turn.ts`) appends every tool call's argument fragments to one string and streams them all as `tool_args`, ignoring `index`, so two parallel calls give invalid JSON such as `{"prompt":"one"}{"prompt":"two"}`. Decide what a second call means (keep index 0 only, or one image per call), then collect per `index`. Send `parallel_tool_calls: false` only once a live call shows Venice honours it (T02 QA-7).
 
 ---
 

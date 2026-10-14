@@ -30,12 +30,26 @@ export function summarize(c: Conversation): ConversationSummary {
 
 const cost = (n: number | undefined) => (n ? usd(n) : "");
 
-export function formatList(list: ConversationSummary[]): string {
-  if (!list.length) return 'No conversations yet. Start one: ./ss conversation.create --title "..." --system-prompt "..."';
-  return table(
-    ["ID", "TITLE", "MESSAGES", "COST", "MODEL", "UPDATED"],
-    list.map((c) => [c.id, c.title, c.messageCount, cost(c.costUsd) || "$0", c.textModel, c.updatedAt.slice(0, 19).replace("T", " ")]),
-  );
+/** A conversation file that couldn't be read or isn't a conversation. Listed, so it can't hide the others (T02 QA-4). */
+export type UnreadableConversation = { id: string; error: string };
+
+export function formatList(list: ConversationSummary[], unreadable: UnreadableConversation[] = []): string {
+  const out: string[] = [];
+  if (list.length) {
+    out.push(
+      table(
+        ["ID", "TITLE", "MESSAGES", "COST", "MODEL", "UPDATED"],
+        list.map((c) => [c.id, c.title, c.messageCount, cost(c.costUsd) || "$0", c.textModel, c.updatedAt.slice(0, 19).replace("T", " ")]),
+      ),
+    );
+  } else if (!unreadable.length) {
+    out.push('No conversations yet. Start one: ./ss conversation.create --title "..." --system-prompt "..."');
+  }
+  if (unreadable.length) {
+    out.push(`${list.length ? "\n" : ""}Unreadable conversation files (${unreadable.length}):`);
+    for (const u of unreadable) out.push(`  ${u.id}: ${u.error}`);
+  }
+  return out.join("\n");
 }
 
 export function formatConversation(c: Conversation): string {
@@ -68,6 +82,8 @@ export type Preview = {
   brainId: string;
   brainName: string;
   body: ChatRequest;
+  /** Plain-language notes on text the provider adds that we can't show (e.g. reasoning on). */
+  notes: string[];
   /** turn would refuse to send this body as it stands, and why. */
   refusal?: string;
 };
@@ -77,6 +93,7 @@ export function formatPreview(p: Preview): string {
   const { messages, ...rest } = p.body;
   const out = [
     `Exact request for brain "${p.brainName}" (${p.brainId}): POST /chat/completions`,
+    ...p.notes.map((n) => `Note: ${n}`),
     JSON.stringify(rest),
     `${messages.length} messages:`,
   ];

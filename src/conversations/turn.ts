@@ -4,7 +4,7 @@ import type { StreamEvent } from "../registry.ts";
 import type { ChatEvent } from "../venice/chat.ts";
 import type { VeniceClient } from "../venice/client.ts";
 import type { ModelInfo } from "../venice/models.ts";
-import { buildRequest, resolveBrain, type ModelCaps } from "./prompt.ts";
+import { buildRequest, nothingToAnswer, REASONING_NOTE, reasoningOn, resolveBrain, type ModelCaps } from "./prompt.ts";
 import type { Brain, ChatRequest, Conversation, LedgerMessage, MessageVersion, Usage } from "./types.ts";
 
 /**
@@ -16,8 +16,14 @@ export type TurnPlan = {
   /** The player message the turn will append first, or null when content is empty (the brain just responds). */
   player: LedgerMessage | null;
   body: ChatRequest;
-  /** Set when turn would refuse to send this body. prompt.preview still shows the body, with this note. */
+} & BodyReview;
+
+/** What every plan says about its body, beside the body itself. */
+export type BodyReview = {
+  /** Set when the send path would refuse this body. prompt.preview still shows the body, with this note. */
   refusal?: string;
+  /** Plain-language notes the payload view shows with the body: text the provider adds that we can't show. */
+  notes: string[];
 };
 
 export function planTurn(conv: Conversation, opts: { brain?: string; content?: string }, model: ModelCaps): TurnPlan {
@@ -25,13 +31,20 @@ export function planTurn(conv: Conversation, opts: { brain?: string; content?: s
   const content = opts.content ?? "";
   const player = content.trim() ? newMessage({ type: "player" }, "text", { content, source: "authored", createdAt: nowIso() }) : null;
   const view = player ? { ...conv, messages: [...conv.messages, player] } : conv;
-  const plan: TurnPlan = { brain, player, body: buildRequest(view, brain.id, { model }) };
-  // A request that ends with the brain's own reply gives it nothing to answer. Live, deepseek-v4-1-flash treats
-  // it as a prefix to continue: it repeated its last reply and leaked a raw </think> into the reasoning (T02).
-  if (plan.body.messages.at(-1)?.role === "assistant") {
-    plan.refusal = `The last message is ${brain.name}'s own reply, so there is nothing new for it to answer. Send a message with --content.`;
-  }
-  return plan;
+  const body = buildRequest(view, brain.id, { model });
+  return { brain, player, body, ...reviewBody(brain, body, model) };
+}
+
+/**
+ * The checks every plan shares (planTurn now, T03's planRegenerate next), so a new plan can't miss one.
+ * The send path re-checks the refusal on its own (assertAnswerable in openChatStream).
+ */
+export function reviewBody(brain: Brain, body: ChatRequest, model: ModelCaps): BodyReview {
+  const review: BodyReview = { notes: [] };
+  const refusal = nothingToAnswer(body, brain.name);
+  if (refusal) review.refusal = refusal;
+  if (reasoningOn(brain, model)) review.notes.push(REASONING_NOTE);
+  return review;
 }
 
 export function newMessage(author: LedgerMessage["author"], kind: LedgerMessage["kind"], version: MessageVersion, id = newId("m")): LedgerMessage {

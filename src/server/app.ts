@@ -129,26 +129,34 @@ export function createApp(base: Omit<Deps, "commands">, commands: AnyCommand[], 
       c.header("X-Content-Type-Options", "nosniff");
       handedOff = true;
       return stream(c, async (s) => {
+        // The work never waits on the client (T02 QA-2). Writes are queued, never awaited: a client that
+        // left before the response started is never read from or cancelled by @hono/node-server, so an
+        // awaited write would block forever and park the generator (holding the 409 lock and its key).
+        // Once the request's signal says the client is gone, stop writing and drop the queue. Events are
+        // small and a reply is finite, so the queue for a slow but live reader stays small.
+        const gone = c.req.raw.signal;
         let open = true;
+        const hangUp = () => {
+          open = false;
+          s.abort();
+        };
         s.onAbort(() => {
           open = false;
         });
-        const send = async (ev: unknown) => {
-          if (!open) return;
-          try {
-            await s.write(`${JSON.stringify(ev)}\n`);
-          } catch {
-            open = false;
-          }
+        if (gone.aborted) hangUp();
+        else gone.addEventListener("abort", hangUp, { once: true });
+        const send = (ev: unknown) => {
+          if (open) void s.write(`${JSON.stringify(ev)}\n`); // StreamingApi.write never rejects
         };
         try {
-          if (!first.done) await send(first.value);
+          if (!first.done) send(first.value);
           // Keep draining after a disconnect so the work finishes and persists.
-          for (let r = await it.next(); !r.done; r = await it.next()) await send(r.value);
+          for (let r = await it.next(); !r.done; r = await it.next()) send(r.value);
         } catch (err) {
           logFailure(log, name, err);
-          await send({ type: "error", error: toErrorBody(err).body });
+          send({ type: "error", error: toErrorBody(err).body });
         } finally {
+          gone.removeEventListener("abort", hangUp);
           release();
         }
       });

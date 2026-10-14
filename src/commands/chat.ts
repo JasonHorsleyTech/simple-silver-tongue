@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { formatPreview, type Preview } from "../conversations/format.ts";
 import { beginGeneration, loadConversation, mutateConversation } from "../conversations/store.ts";
-import { generatedVersion, lookupModel, newMessage, planTurn, relayReply } from "../conversations/turn.ts";
+import { generatedVersion, lookupModel, newMessage, planTurn, relayReply, type Reply } from "../conversations/turn.ts";
 import { CommandError } from "../lib/errors.ts";
 import { newId } from "../lib/ids.ts";
 import { command, streamCommand } from "../registry.ts";
@@ -19,7 +19,8 @@ export const promptPreview = command({
   name: "prompt.preview",
   description: `Show the exact request body a brain would be sent, built by the same code path as turn.
 With --content, it shows what turn --content would send (your message included). Nothing is saved or sent.
---json prints the body byte for byte as it would go to Venice (minus the auth header).`,
+--json prints the body byte for byte as it would go to Venice (minus the auth header), plus notes on text the
+provider adds that we can't show (reasoning on), and the reason turn would refuse the body, if it would.`,
   args: z.object({ conversation: conversationId, brain: brainRef.optional(), content }),
   examples: [
     "./ss prompt.preview --conversation c_k3j9x0q2ma",
@@ -29,8 +30,9 @@ With --content, it shows what turn --content would send (your message included).
     const conv = await loadConversation(ctx.requireSession().vault, args.conversation);
     const model = await lookupModel(ctx.deps.venice, "text", conv.settings.textModel);
     const plan = planTurn(conv, { brain: args.brain, content: args.content }, model);
-    const preview: Preview = { conversationId: conv.id, brainId: plan.brain.id, brainName: plan.brain.name, body: plan.body };
-    if (plan.refusal) preview.refusal = plan.refusal;
+    const { brain, body, notes, refusal } = plan;
+    const preview: Preview = { conversationId: conv.id, brainId: brain.id, brainName: brain.name, body, notes };
+    if (refusal) preview.refusal = refusal;
     return preview;
   },
   format: formatPreview,
@@ -72,19 +74,38 @@ reasoning and status lines go to stderr.`,
       const messageId = newId("m");
       yield { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId };
 
-      const reply = yield* relayReply(upstream);
+      let reply: Reply;
+      try {
+        reply = yield* relayReply(upstream);
+      } catch (err) {
+        // Say what was kept and how to retry, in the message the user actually reads (T02 QA-8).
+        if (err instanceof CommandError && err.code === "venice_error") {
+          const kept = plan.player ? "Your message is saved; the reply isn't." : "No reply was saved.";
+          throw new CommandError(err.status, err.code, `${err.message} ${kept} To retry, run turn again without --content.`, err.details);
+        }
+        throw err;
+      }
       const message = newMessage({ type: "brain", brainId: plan.brain.id }, "text", generatedVersion(reply, plan.body.model), messageId);
       await mutateConversation(vault, conv.id, (c) => void c.messages.push(message));
-
-      const note = [plan.brain.name];
-      if (reply.usage) note.push(`${reply.usage.promptTokens} in / ${reply.usage.completionTokens} out`);
-      if (reply.costUsd !== undefined) note.push(usd(reply.costUsd));
-      if (reply.finishReason === "length") note.push("cut off by max_tokens");
-      yield { type: "done", message, note: note.join(" · ") };
+      yield { type: "done", message, note: replyNote(plan.brain.name, reply) };
     } finally {
       gen.release();
     }
   },
 });
+
+/** The one-line summary the CLI prints after a reply. An empty reply says why, since it is saved as is (T02 QA-6). */
+function replyNote(brainName: string, reply: Reply): string {
+  const note = [brainName];
+  if (reply.usage) note.push(`${reply.usage.promptTokens} in / ${reply.usage.completionTokens} out`);
+  if (reply.costUsd !== undefined) note.push(usd(reply.costUsd));
+  const empty = !reply.content.trim();
+  if (reply.finishReason === "length") {
+    note.push(empty && reply.reasoning ? "cut off by max_tokens while reasoning: no reply text" : "cut off by max_tokens");
+  } else if (empty) {
+    note.push("no reply text");
+  }
+  return note.join(" · ");
+}
 
 export default [promptPreview, turn];

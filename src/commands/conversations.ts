@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { newConversation } from "../conversations/defaults.ts";
-import { formatConversation, formatList, summarize, type ConversationSummary } from "../conversations/format.ts";
+import { formatConversation, formatList, summarize, type ConversationSummary, type UnreadableConversation } from "../conversations/format.ts";
 import {
   CONVERSATION_ID_RE,
   createConversationFile,
@@ -28,7 +28,8 @@ export const conversationCreate = command({
   name: "conversation.create",
   description: `Start a conversation with one default text brain, "Assistant", using your system prompt.
 The system prompt is sent exactly as written, and nothing else is added (Venice's own prompt is always off).
-Reasoning is on at "low" for the brain. Change the model or limits later with conversation.update.`,
+Reasoning is off. Turning it on (brain.update --reasoning.enabled) is an opt-in: the provider then adds a small
+hidden instruction we can't see or edit. Change the model or limits later with conversation.update.`,
   args: z.object({
     title: title.optional().describe('Title (default "New conversation")'),
     systemPrompt,
@@ -49,12 +50,18 @@ Reasoning is on at "low" for the brain. Change the model or limits later with co
     `Created ${c.id} "${c.title}" · ${c.settings.textModel} · brain ${c.brains[0]!.name}\nSend a message: ./ss turn --conversation ${c.id} --content "..."`,
 });
 
+type ConversationList = { conversations: ConversationSummary[]; unreadable: UnreadableConversation[] };
+
 export const conversationList = command({
   name: "conversation.list",
-  description: "List your conversations, most recently updated first, with message count and total cost.",
+  description: `List your conversations, most recently updated first, with message count and total cost.
+A file that can't be read (bad JSON, wrong encryption, missing fields) is listed under unreadable, with why.`,
   args: z.object({}),
-  handler: async (_args, ctx) => ({ conversations: (await listConversations(ctx.requireSession().vault)).map(summarize) }),
-  format: (r: { conversations: ConversationSummary[] }) => formatList(r.conversations),
+  handler: async (_args, ctx): Promise<ConversationList> => {
+    const { conversations, unreadable } = await listConversations(ctx.requireSession().vault);
+    return { conversations: conversations.map(summarize), unreadable };
+  },
+  format: (r: ConversationList) => formatList(r.conversations, r.unreadable),
 });
 
 export const conversationGet = command({

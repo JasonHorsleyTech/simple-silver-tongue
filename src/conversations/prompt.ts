@@ -1,4 +1,4 @@
-import { CommandError, notFound } from "../lib/errors.ts";
+import { badRequest, CommandError, notFound } from "../lib/errors.ts";
 import type { Brain, ChatMessage, ChatRequest, Conversation, LedgerMessage } from "./types.ts";
 
 /**
@@ -62,6 +62,11 @@ export function buildRequest(conv: Conversation, brainId: string, opts: BuildOpt
   const brain = conv.brains.find((b) => b.id === brainId);
   if (!brain) throw notFound(`No brain ${brainId} in conversation ${conv.id}.`);
   if (!brain.systemPrompt.trim()) throw emptySystemPrompt(brain, conv.id);
+  // A blank steer is a caller bug, not "no steer": with a steer the message being revised stays in, so dropping
+  // the steer silently would leave the brain's own reply last (T02 QA-5). A plain re-roll passes no steer.
+  if (opts.steer !== undefined && !opts.steer.trim()) {
+    throw badRequest("A steer can't be blank. Leave it out for a plain re-roll.");
+  }
   if (brain.kind === "image" && !brain.tool) {
     throw new CommandError(400, "bad_brain", `Image brain "${brain.name}" has no tool text (tool.name, description, ...).`);
   }
@@ -117,7 +122,7 @@ export function buildRequest(conv: Conversation, brainId: string, opts: BuildOpt
   }
 
   // 5. Steer, last, so everything before it stays a cacheable prefix.
-  if (opts.steer?.trim()) messages.push({ role: "user", content: render(t.steer, { instruction: opts.steer }) });
+  if (opts.steer !== undefined) messages.push({ role: "user", content: render(t.steer, { instruction: opts.steer }) });
 
   const body: ChatRequest = {
     model: conv.settings.textModel,
@@ -179,4 +184,33 @@ export function assertSendable(body: Pick<ChatRequest, "messages" | "venice_para
       "Refusing to send a chat request whose first message is not a non-empty system message (design.md hard rule 1).",
     );
   }
+}
+
+/**
+ * Why a body gives the model nothing to answer, or null when it ends with a user or tool message. Live,
+ * deepseek-v4-1-flash treats a trailing assistant message as a prefix to continue (it repeated its reply and
+ * leaked a raw </think>), and a body that is only the system prompt gets continued as text (T02 QA-3).
+ * Every plan reports it (prompt.preview shows the body with this note) and the send path refuses it.
+ */
+export function nothingToAnswer(body: Pick<ChatRequest, "messages">, brainName = "the brain"): string | null {
+  const last = body.messages.at(-1)?.role;
+  if (last === "user" || last === "tool") return null;
+  if (last === "assistant") {
+    return `The last message is ${brainName}'s own reply, so there is nothing new for it to answer. Send a message with --content.`;
+  }
+  return `There is nothing for ${brainName} to answer yet: the request would hold only its system prompt. Send a message with --content.`;
+}
+
+/** The send path's copy of the check above, whoever built the body (so T03's regenerate can't skip it). */
+export function assertAnswerable(body: Pick<ChatRequest, "messages">): void {
+  const why = nothingToAnswer(body);
+  if (why) throw new CommandError(400, "nothing_to_answer", why);
+}
+
+/** The payload view's words for reasoning (design.md, "Reasoning on adds provider-side text"). */
+export const REASONING_NOTE = "Reasoning on: the provider adds a small hidden instruction we can't see or edit.";
+
+/** Whether this brain's request turns reasoning on: its toggle is on and the model can reason. */
+export function reasoningOn(brain: Brain, model: ModelCaps): boolean {
+  return brain.reasoning.enabled && model?.reasoning?.supported === true;
 }

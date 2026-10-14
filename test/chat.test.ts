@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
+import { REASONING_NOTE } from "../src/conversations/prompt.ts";
 import type { Conversation } from "../src/conversations/types.ts";
 import { createUser } from "../src/storage/users.ts";
 import { startTestServer } from "./helpers.ts";
@@ -37,16 +38,21 @@ describe("streaming chat end to end: CLI → server → mock Venice", () => {
     await login("dev-chat");
     const conv = await create();
     for (const [i, msg] of ["Tell me of the sea.", "Now mountains.", "Finally, the moon."].entries()) {
+      // Reasoning is off by default (T02 QA-1); turning it on is an opt-in that the preview labels.
+      if (i === 1) assert.match((await t.cli(["brain.update", "--conversation", conv.id, "--reasoning.enabled"])).stdout, /provider adds a small hidden instruction/);
       // What turn --content X will send, asked for first, then compared with what the mock really got.
       const preview = await json(["prompt.preview", "--conversation", conv.id, "--content", msg]);
+      assert.deepEqual(preview.notes, i === 0 ? [] : [REASONING_NOTE]);
+      assert.equal(preview.body.reasoning_effort, i === 0 ? "none" : "low");
       const r = await t.cli(["turn", "--conversation", conv.id, "--content", msg]);
       assert.equal(r.code, 0, r.stderr);
       assert.equal(r.stdout, `MOCK reply to brain "You answer only in haiku."; saw ${2 * i + 2} messages; last: "<!-- from: the user --> ${msg}"\n`);
       assert.match(r.stderr, /\[Assistant\]/);
-      assert.match(r.stderr, /MOCK reasoning \(effort: low\)/);
+      assert.equal(/MOCK reasoning \(effort: low\)/.test(r.stderr), i > 0, r.stderr);
       assert.match(r.stderr, /\[Assistant · \d+ in \/ \d+ out · \$/);
       assert.deepEqual(lastSent(), preview.body);
     }
+    assert.match((await t.cli(["prompt.preview", "--conversation", conv.id])).stdout, /^Exact request .*\nNote: Reasoning on: the provider adds/);
     const saved = await get(conv.id);
     assert.deepEqual(
       saved.messages.map((m) => (m.author.type === "player" ? "player" : "brain")),
@@ -90,7 +96,7 @@ describe("streaming chat end to end: CLI → server → mock Venice", () => {
     assert.equal((await post("conversation.delete", { id: conv.id })).status, 409);
     assert.equal((await post("conversation.update", { id: conv.id, title: "Renamed mid-stream" })).status, 200);
     const events = (await slow.text()).trim().split("\n").map((l) => JSON.parse(l));
-    assert.deepEqual([...new Set(events.map((e) => e.type))], ["message", "start", "reasoning", "delta", "done"]);
+    assert.deepEqual([...new Set(events.map((e) => e.type))], ["message", "start", "delta", "done"]);
     const saved = await get(conv.id);
     assert.equal(saved.title, "Renamed mid-stream");
     assert.equal(saved.messages.length, 2);
@@ -108,9 +114,50 @@ describe("streaming chat end to end: CLI → server → mock Venice", () => {
 
     r = await t.cli(["turn", "--conversation", conv.id, "--content", "MOCK_MIDSTREAM_ERROR please"]);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /stream broke off/);
+    // The error says what was kept and how to retry (T02 QA-8).
+    assert.match(r.stderr, /stream broke off .*Your message is saved; the reply isn't\. To retry, run turn again without --content\./);
     const saved = await get(conv.id);
     assert.deepEqual(saved.messages.map((m) => m.author.type), ["player"]);
+  });
+
+  test("nothing to answer: a fresh conversation with no message is refused, not sent as a bare system prompt (T02 QA-3)", async () => {
+    await login("dev-chat");
+    const conv = await create();
+    const newestBefore = t.mock.state.requests[0];
+    const r = await t.cli(["turn", "--conversation", conv.id]);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /nothing for Assistant to answer yet: the request would hold only its system prompt/);
+    assert.equal(t.mock.state.requests[0], newestBefore, "nothing went upstream");
+    assert.match((await t.cli(["prompt.preview", "--conversation", conv.id])).stdout, /Note: turn would not send this .*only its system prompt/);
+  });
+
+  test("max_tokens spent on reasoning: the empty reply is saved as is, and the note says why (T02 QA-6)", async () => {
+    await login("dev-chat");
+    const conv = await create();
+    await json(["conversation.update", "--id", conv.id, "--settings.max-tokens", "3"]);
+    await json(["brain.update", "--conversation", conv.id, "--reasoning.enabled"]);
+    const r = await t.cli(["turn", "--conversation", conv.id, "--content", "hi"]);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.stdout, "\n");
+    assert.match(r.stderr, /cut off by max_tokens while reasoning: no reply text/);
+    const v = (await get(conv.id)).messages[1]!.versions[0]!;
+    assert.deepEqual([v.content, v.finishReason, v.reasoning], ["", "length", "MOCK reasoning (effort: "]);
+  });
+
+  test("conversation.list: unreadable files are listed with why, and can't hide the rest (T02 QA-4)", async () => {
+    await login("dev-chat-list");
+    const conv = await create();
+    const dir = join(t.config.dataDir, "users", "dev-chat-list", "conversations");
+    await writeFile(join(dir, "c_corrupt01.json"), '{"oops": truncated');
+    await writeFile(join(dir, "c_partial01.json"), JSON.stringify({ id: "c_partial01", title: "half" }));
+    const list = await json(["conversation.list"]);
+    assert.deepEqual(list.conversations.map((c: { id: string }) => c.id), [conv.id]);
+    assert.deepEqual(list.unreadable, [
+      { id: "c_corrupt01", error: "not valid JSON" },
+      { id: "c_partial01", error: "not a conversation document (fields are missing)" },
+    ]);
+    const text = (await t.cli(["conversation.list"])).stdout;
+    assert.match(text, new RegExp(`${conv.id}  Haiku bot[\\s\\S]*Unreadable conversation files \\(2\\):\\n  c_corrupt01: not valid JSON`));
   });
 
   test("hard rule 1: an empty system prompt never reaches Venice, even if it got onto disk", async () => {

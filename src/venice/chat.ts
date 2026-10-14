@@ -1,12 +1,12 @@
 import type { ChatRequest, Usage } from "../conversations/types.ts";
-import { assertSendable } from "../conversations/prompt.ts";
+import { assertAnswerable, assertSendable } from "../conversations/prompt.ts";
 import { CommandError, upstreamError } from "../lib/errors.ts";
 import type { VeniceClient } from "./client.ts";
 
 /**
- * Streaming /chat/completions. The body goes out exactly as given (after the hard-rule check), and the SSE
- * reply is parsed by hand into a few plain events. No content is ever put into an error message or a log
- * line, since errors end up in .run/server.log.
+ * Streaming /chat/completions. The body goes out exactly as given (after the hard-rule and nothing-to-answer
+ * checks), and the SSE reply is parsed by hand into a few plain events. No content is ever put into an error
+ * message or a log line, since errors end up in .run/server.log.
  */
 
 export type ChatEvent =
@@ -37,6 +37,7 @@ export async function openChatStream(
   opts: ChatStreamOptions = {},
 ): Promise<AsyncGenerator<ChatEvent>> {
   assertSendable(body);
+  assertAnswerable(body);
   const { connectTimeoutMs = 120_000, idleTimeoutMs = 180_000 } = opts;
   const ctl = new AbortController();
   const onAbort = () => ctl.abort(opts.signal?.reason);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
+import { request } from "node:http";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { after, before, describe, test } from "node:test";
@@ -123,9 +124,28 @@ describe("CLI end to end against an in-process server and mock Venice", () => {
 
 describe("HTTP adapter: streams, binary, sessions and the local-only guard", () => {
   let t: Awaited<ReturnType<typeof startTestServer>>;
+  // test.slow-start waits on the test before its first event, like turn waiting on Venice's headers.
+  const slowStart = { started: Promise.withResolvers<void>(), gate: Promise.withResolvers<void>(), finished: Promise.withResolvers<number>() };
   const testCommands = [
     help,
     authLogin,
+    streamCommand({
+      name: "test.slow-start",
+      description: "Waits on the test, then streams",
+      auth: false,
+      args: z.object({}),
+      async *handler() {
+        slowStart.started.resolve();
+        await slowStart.gate.promise;
+        let n = 0;
+        try {
+          for (; n < 20; n++) yield { type: "delta", delta: "x".repeat(100) };
+          yield { type: "done", message: null };
+        } finally {
+          slowStart.finished.resolve(n);
+        }
+      },
+    }),
     streamCommand({
       name: "test.stream",
       description: "Streams words",
@@ -170,6 +190,19 @@ describe("HTTP adapter: streams, binary, sessions and the local-only guard", () 
     });
     assert.equal(res.status, 409);
     assert.deepEqual(await res.json(), { error: { code: "conflict", message: "busy" } });
+  });
+
+  test("stream: a client that leaves before the first event doesn't park the work (T02 QA-2)", async () => {
+    // Real HTTP, so @hono/node-server's own handling of an already-closed socket is what's under test.
+    const req = request(`${t.url}/api/test.slow-start`, { method: "POST", agent: false, headers: { "content-type": "application/json" } });
+    req.on("error", () => {});
+    req.end("{}");
+    await slowStart.started.promise;
+    req.destroy(); // Ctrl-C, or a browser reload, while Venice hasn't answered yet
+    await new Promise((r) => setTimeout(r, 50)); // let the server see the close
+    slowStart.gate.resolve();
+    const done = await Promise.race([slowStart.finished.promise, new Promise((r) => setTimeout(() => r("parked"), 2000))]);
+    assert.equal(done, 20, "the generator ran to the end, so its finally (lock release, vault close) ran");
   });
 
   test("binary: login required, browser-style cookie session, GET for <img src>, no-store", async () => {

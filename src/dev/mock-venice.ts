@@ -17,7 +17,7 @@ import { MOCK_MODELS } from "./mock-models.ts";
  *   MOCK_ERROR            → HTTP error before anything streams
  *   MOCK_SLOW             → much slower stream / image (handy for 409 and stop tests)
  *   MOCK_MIDSTREAM_ERROR  → the connection drops halfway through the stream
- * max_tokens is honored (counted in content words): the reply is cut with finish_reason "length".
+ * max_tokens is honored (counted in words, reasoning first): the reply is cut with finish_reason "length".
  *
  * Rules enforced like a strict Venice: a Bearer token is required, and chat requests must send
  * venice_parameters.include_venice_system_prompt: false and start with a non-empty system message
@@ -131,7 +131,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     const brain = system ? excerpt(contentText(system), 30) : "(no system prompt)";
 
     const effort = body.reasoning_effort;
-    const reasoning =
+    const fullReasoning =
       caps.supportsReasoning && effort !== "none"
         ? `MOCK reasoning (effort: ${effort ?? caps.defaultReasoningEffort ?? "default"}) over ${messages.length} messages.`
         : "";
@@ -146,11 +146,18 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     const fullContent = toolName
       ? ""
       : `MOCK reply to brain "${brain}"; saw ${messages.length} messages; last: "${excerpt(lastText, 60)}"`;
-    // max_tokens counts content words here (one word ≈ one token). Like live, a cut ends with
+    // max_tokens counts words here (one word ≈ one token), reasoning first and then content, as live: a small
+    // budget can run out while reasoning and leave no content at all (T02 QA-6). Like live, a cut ends with
     // finish_reason "length", and the last content delta rides in the same chunk as the finish reason.
+    let reasoningWords: string[] = words(fullReasoning);
     let contentWords: string[] = words(fullContent);
-    const cut = !toolName && typeof body.max_tokens === "number" && contentWords.length > body.max_tokens;
-    if (cut) contentWords = contentWords.slice(0, Math.max(0, body.max_tokens!));
+    const budget = typeof body.max_tokens === "number" ? body.max_tokens : Infinity;
+    const cut = !toolName && reasoningWords.length + contentWords.length > budget;
+    if (cut) {
+      reasoningWords = reasoningWords.slice(0, budget);
+      contentWords = contentWords.slice(0, Math.max(0, budget - reasoningWords.length));
+    }
+    const reasoning = reasoningWords.join("");
     const content = contentWords.join("");
     const toolArgs = toolName
       ? JSON.stringify({ prompt: `MOCK image prompt after ${messages.length} messages; last: "${excerpt(lastText, 60)}"` })
@@ -195,7 +202,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
       ({ id, object: "chat.completion.chunk", created, model: model.id, choices: [{ index: 0, delta, finish_reason }], usage: null });
     // Live sends content: "" in the role chunk for models without reasoning.
     const deltas: unknown[] = [chunk(caps.supportsReasoning ? { role: "assistant" } : { role: "assistant", content: "" })];
-    for (const w of words(reasoning)) deltas.push(chunk({ reasoning_content: w }));
+    for (const w of reasoningWords) deltas.push(chunk({ reasoning_content: w }));
     if (toolName) {
       deltas.push(chunk({ tool_calls: [{ index: 0, id: callId, type: "function", function: { name: toolName, arguments: "" } }] }));
       for (const piece of toolArgs.match(/.{1,12}/g) ?? []) deltas.push(chunk({ tool_calls: [{ index: 0, function: { arguments: piece } }] }));

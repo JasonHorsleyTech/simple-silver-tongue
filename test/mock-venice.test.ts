@@ -71,6 +71,13 @@ test("chat stream: max_tokens cuts with finish_reason length, and the last conte
   assert.equal(chunks.map((c) => c.choices[0]?.delta?.content ?? "").join(""), "MOCK reply to ");
 });
 
+test("chat stream: max_tokens is spent on reasoning first, so a small budget can leave no content (T02 QA-6)", async () => {
+  const chunks = await sse(await post("/chat/completions", { ...chatBody, reasoning_effort: "low", max_tokens: 3 }));
+  assert.equal(chunks.map((c) => c.choices[0]?.delta?.reasoning_content ?? "").join(""), "MOCK reasoning (effort: ");
+  assert.equal(chunks.map((c) => c.choices[0]?.delta?.content ?? "").join(""), "");
+  assert.equal(chunks.find((c) => c.choices[0]?.finish_reason)?.choices[0].finish_reason, "length");
+});
+
 test("chat stream: the role chunk carries content \"\" on a model without reasoning, like live", async () => {
   const [role] = await sse(await post("/chat/completions", { ...chatBody, model: "venice-uncensored-1-2", reasoning_effort: undefined }));
   assert.deepEqual(role.choices[0].delta, { role: "assistant", content: "" });
