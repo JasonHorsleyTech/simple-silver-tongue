@@ -87,7 +87,8 @@ describe("image brains: CLI → server → mock Venice, encrypted user (T05)", (
     const out = join(t.tmp, "scene.png");
     await ok(["image.get", "--id", v.image!.id, "--out", out]);
     assert.deepEqual(readFileSync(out).subarray(0, 8), PNG);
-    const disk = readFileSync(join(t.config.dataDir, "users", "dev-t05", "images", `${v.image!.id}.png`));
+    // An encrypted user's image files all end in .bin: the type would hint at the model (T05 QA-6, fixed in T06).
+    const disk = readFileSync(join(t.config.dataDir, "users", "dev-t05", "images", `${v.image!.id}.bin`));
     assert.equal(disk.subarray(0, 6).toString(), "SSENC1");
     assert.ok(!disk.includes(PNG), "no PNG bytes on disk");
     const res = await t.app.fetch(new Request(`http://localhost/api/image.get?id=${v.image!.id}`, { headers: { host: "localhost", cookie: cookie() } }));

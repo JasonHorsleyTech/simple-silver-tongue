@@ -277,6 +277,12 @@ export function isGenerating(vault: Vault, id: string): boolean {
   return generations.has(keyOf(vault, id));
 }
 
+/** The conversations of the user whose folder is `dir` with a reply being written right now (user.delete). */
+export function generatingFor(dir: string): string[] {
+  const prefix = `${dir}\0`;
+  return [...generations.keys()].filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length));
+}
+
 /**
  * Ledger edits (edit, delete, select-version) wait for no one: while a reply is being generated they are
  * refused, because that reply answers the ledger as it was sent, and its save expects that ledger to be there.

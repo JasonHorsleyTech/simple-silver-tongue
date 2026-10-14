@@ -1,5 +1,5 @@
-/** Read one line from the terminal without echoing it. Ctrl-C aborts. */
-export function promptHidden(question: string): Promise<string> {
+/** Read one line from the terminal without echoing it (with `echo`, shown as typed: a confirmation). Ctrl-C aborts. */
+export function promptHidden(question: string, opts: { echo?: boolean } = {}): Promise<string> {
   const input = process.stdin;
   const output = process.stderr;
   output.write(question);
@@ -25,8 +25,13 @@ export function promptHidden(question: string): Promise<string> {
           finish();
           process.exit(130);
         }
-        if (ch === "\u007f" || ch === "\b") value = Array.from(value).slice(0, -1).join("");
-        else if (ch >= " ") value += ch;
+        if (ch === "\u007f" || ch === "\b") {
+          if (opts.echo && value) output.write("\b \b");
+          value = Array.from(value).slice(0, -1).join("");
+        } else if (ch >= " ") {
+          value += ch;
+          if (opts.echo) output.write(ch);
+        }
       }
     };
     input.on("data", onData);

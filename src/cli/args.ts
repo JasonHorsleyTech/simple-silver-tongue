@@ -90,9 +90,11 @@ export async function parseFlags(
   tokens: string[],
   schema: JsonSchema,
   readers: Readers,
-): Promise<{ args: Record<string, unknown>; positionals: string[] }> {
+): Promise<{ args: Record<string, unknown>; positionals: string[]; inlineSecrets: string[]; stdinUsed: boolean }> {
   const args: Record<string, unknown> = {};
   const positionals: string[] = [];
+  /** Secret flags given a non-empty value right on the command line, which the shell keeps in its history (T06). */
+  const inlineSecrets: string[] = [];
   let stdinUsed = false;
 
   const text = async (v: string, flag: string): Promise<string> => {
@@ -192,6 +194,7 @@ export async function parseFlags(
     } else {
       setPath(args, keys, await coerce(raw, field, flag), false);
     }
+    if (field.secret && raw !== "-" && raw !== "") inlineSecrets.push(flag);
   }
-  return { args, positionals };
+  return { args, positionals, inlineSecrets, stdinUsed };
 }

@@ -72,6 +72,7 @@ export function MessageEditor({
       <textarea
         ref={ref}
         name="message"
+        autoComplete="off"
         aria-label={image ? "Image prompt" : "Message (Markdown)"}
         value={draft}
         disabled={saving}

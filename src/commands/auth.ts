@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { neutralizeImageNames } from "../images/files.ts";
 import { command } from "../registry.ts";
 import { unlockUser } from "../storage/users.ts";
 import { username } from "./users.ts";
@@ -21,12 +22,19 @@ The browser gets an httpOnly cookie; the CLI keeps the token in .run/cli-session
   examples: ["./ss auth.login --username jason", "./ss auth.login --username dev-a --password ''"],
   handler: async (args, ctx): Promise<Who> => {
     const { user, vault } = await unlockUser(ctx.deps.config.dataDir, args.username, args.password);
+    // Image files from before T06 carry their type in the name; an encrypted user's become .bin (names only).
+    await neutralizeImageNames(vault).catch(() => 0);
     if (ctx.session) ctx.deps.sessions.destroy(ctx.session.token);
     ctx.setSession(ctx.deps.sessions.create(user.username, user.encrypted, vault));
     return { username: user.username, encrypted: user.encrypted };
   },
-  format: (w: Who) => `Logged in as ${describeWho(w)}.`,
+  format: (w: Who) =>
+    `Logged in as ${describeWho(w)}.${"encrypted" in w && w.encrypted ? `\n${SHELL_HISTORY_NOTE}` : ""}`,
 });
+
+/** Only the CLI sees it: the data on disk is ciphertext, but what you type on a command line is kept by the shell. */
+const SHELL_HISTORY_NOTE =
+  'Note: text you type on the ./ss command line (--content "...", --steer "...") is saved in your shell history as plain text. For private text, use --content - and type or paste it (Ctrl-D ends it), or use the browser.';
 
 export const authLogout = command({
   name: "auth.logout",

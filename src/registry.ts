@@ -114,8 +114,10 @@ export type JsonSchema = {
   secret?: boolean;
   /** Custom meta: with `secret`, the CLI asks twice when the value is not empty. */
   confirm?: boolean;
-  /** Custom meta: the CLI's prompt text for a secret; {otherArg} is filled from the given args. */
+  /** Custom meta: the CLI's prompt text for a secret (or an `ask`); {otherArg} is filled from the given args. */
   prompt?: string;
+  /** Custom meta: like `secret`, the CLI asks for it when omitted, but the answer is shown (a confirmation). */
+  ask?: boolean;
   [key: string]: unknown;
 };
 

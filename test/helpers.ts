@@ -16,7 +16,8 @@ import { createVeniceClient } from "../src/venice/client.ts";
 export type CliResult = { code: number; stdout: string; stderr: string };
 
 /** An in-process server (temp data dir) against an in-process mock Venice, plus an in-process CLI. */
-export async function startTestServer(opts: { commands?: AnyCommand[]; mock?: MockOptions } = {}) {
+/** `log` receives every line the server would write to .run/server.log (the T06 audit greps them). */
+export async function startTestServer(opts: { commands?: AnyCommand[]; mock?: MockOptions; log?: (line: string) => void } = {}) {
   const tmp = await mkdtemp(join(tmpdir(), "ss-test-"));
   const mock: MockVenice = await startMockVenice({ delayMs: 0, slowDelayMs: 20, imageDelayMs: 0, ...opts.mock });
   const config = {
@@ -34,18 +35,18 @@ export async function startTestServer(opts: { commands?: AnyCommand[]; mock?: Mo
       startedAt: nowIso(),
     },
     opts.commands ?? allCommands,
-    () => {},
+    opts.log ?? (() => {}),
   );
   const server = createAdaptorServer({ fetch: app.fetch });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
-  async function cli(argv: string[], io: { stdin?: string; secrets?: string[] } = {}): Promise<CliResult> {
+  async function cli(argv: string[], io: { stdin?: string; secrets?: string[]; env?: Record<string, string> } = {}): Promise<CliResult> {
     let stdout = "";
     let stderr = "";
     const secrets = [...(io.secrets ?? [])];
     const code = await run(argv, {
-      env: { SS_URL: url, SS_RUN_DIR: config.runDir },
+      env: { SS_URL: url, SS_RUN_DIR: config.runDir, ...io.env },
       cwd: tmp,
       stdout: { write: (s) => void (stdout += typeof s === "string" ? s : Buffer.from(s).toString("utf8")) },
       stderr: { write: (s) => void (stderr += s) },

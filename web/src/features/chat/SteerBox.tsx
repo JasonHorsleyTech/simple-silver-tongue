@@ -55,6 +55,7 @@ export function SteerBox({
       </div>
       <textarea
         ref={ref}
+        autoComplete="off"
         rows={1}
         value={value}
         name="steer"

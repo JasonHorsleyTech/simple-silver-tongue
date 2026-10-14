@@ -180,7 +180,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T06: Multi-user encryption hardening (CP5) · `todo`
+## T06: Multi-user encryption hardening (CP5) · `qa`
 
 **Engineer scope**
 - An audit: for an encrypted user, every file under `data/users/<u>/` except `user.json` is ciphertext, conversations and images alike. No plaintext anywhere else: logs, temp files, `.run/`, error messages.
@@ -192,9 +192,16 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 **Frontend scope:** Login polish (user picker from `user.list`, a lock icon for encrypted users, error on a wrong password), logout and switching users, and a session-expired redirect to login.
 
+- **From T06 engineer:**
+  - **No new commands for the browser.** `user.delete` and `user.change-password` are terminal commands, like `user.create`; don't add them to `web/src/api/types.ts` or the UI. What the browser must handle is their effect: either one logs that user out everywhere, so an open tab's next call gets `x-ss-session: invalid` / 401 `unauthenticated`, which `api/client.ts` already treats as "session gone" (`SESSION_GONE`). A request whose key was closed by a delete says `session_ended` ("This user was deleted…"), also in `SESSION_GONE`. The session-expired redirect should cover both, and say "Log in again" without blaming the user.
+  - `user.list` → `{users: [{username, encrypted, createdAt}]}` is the picker's source (unchanged; `auth: false`). A deleted user drops out of it at once; a re-created name is a new user (its old tab must not keep showing the old user's conversation: the redirect to `/` on a dead session already handles that).
+  - **I added `autoComplete="off"`** to the four raw textareas (`Composer`, `SteerBox`, `MessageEditor`, the shared `TextArea`) and the title input in `ChatHeader`, like the inputs that had it, so Chrome keeps no Autofill history of content. Please check in Chrome that nothing changed for the user (spellcheck, typing, the composer's autosize).
+  - **One check only Chrome can answer:** does a draft typed in the composer (not sent) reach Chrome's profile on disk? Chrome keeps a tab's form state for session restore in its `Sessions/` files; the HTML spec says `autocomplete="off"` values aren't kept for history restore, but I couldn't confirm Chrome honours that for a `<textarea>`. Type a unique phrase into the composer, wait ~30 s (and/or open a second tab and close the first), then `grep -rl "<phrase>"` the Chrome profile folder the DevTools MCP uses. Report what you find; if it is there, say which file (design.md, "Where plaintext can still appear").
+  - Two users side by side from the CLI: `SS_SESSION_FILE=<path> ./ss ...` gives a terminal its own login (the browser has its own cookie, as before).
+
 **Deferred in:**
-- Encrypted users' image files show their sniffed type in the extension (`images/img_….webp` / `.png`), which hints at the model family; the contents are ciphertext. Use one neutral name for encrypted users (`img_….bin`): `image.get` already sniffs the decrypted bytes, `findImageFile` must still find the old names, and `settleStaleImages` would then sniff the decrypted file for `mime` (T05 QA-6).
-- `user.delete` while that user has work in flight: since T01 triage, running work holds its own key copy and finishes after logout. Its last save would recreate `data/users/<u>/conversations/` with no `user.json`, and that name then can't be reused. Refuse with a 409, or wait, while the user has requests running (T01 QA-2).
+- ~~Encrypted users' image files show their sniffed type in the extension (`images/img_….webp` / `.png`), which hints at the model family (T05 QA-6).~~ Done in T06 engineer: encrypted users' images are `img_….bin`; `readImageFile` sniffs the decrypted bytes (`image.get`, and `settleStaleImages` for `mime`); old names are still found and `auth.login` renames them to `.bin` (names only).
+- ~~`user.delete` while that user has work in flight: its last save would recreate `data/users/<u>/conversations/` with no `user.json` (T01 QA-2).~~ Done in T06 engineer: `user.delete` is a 409 `user_busy` (nothing deleted, names the reply or image running) while the user has an open key copy (`forksOpen`, vault.ts); otherwise it logs the user out, closes every copy of its key, renames the folder away and removes it. A login racing it fails, and the vault can no longer create a user's folder at all (design.md, "Who is using a user's data right now").
 
 ---
 
@@ -216,5 +223,6 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 - (orchestrator) The default `otherBrainImage` template says the image "is now on the player's screen". Since T05 triage, the GM can answer while the image is still painting, so make the default wording accurate (e.g. "…called generate_image with this exact prompt:"). The example campaign should do the same.
 
 - (orchestrator) Default `hideWatermark` to **true** for new conversations and the example campaign. The T05 live image showed a Venice watermark, and this is a personal scratch pad.
+- **From T06 engineer:** the terminal playthrough "as an encrypted `dev-` user" is fine as written: agents' shells are non-interactive and keep no history, and the data on disk is ciphertext (check it with `grep -r` as T06 did). For Jason's own campaign from his terminal, text typed in flags (`--content "..."`) lands in `~/.zsh_history`: AGENTS.md ("Running it") says to use the browser, or `--content -`. If `conversation.import --file` reads a plaintext example into an encrypted user, the example file itself is plaintext by design (it's committed); an import of private text from a file leaves that file where it was.
 
 **Deferred in:** *(none yet)*

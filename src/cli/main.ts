@@ -19,7 +19,8 @@ export type Io = {
   stderr: { write(s: string): unknown; isTTY?: boolean };
   stdinIsTTY: boolean;
   readStdin(): Promise<string>;
-  promptSecret(question: string): Promise<string>;
+  /** Ask on the terminal. Hidden input unless `visible` (a confirmation, not a secret). */
+  promptSecret(question: string, opts?: { visible?: boolean }): Promise<string>;
 };
 
 type SavedSession = { token: string; username?: string; url: string; savedAt: string };
@@ -28,7 +29,10 @@ const EXIT = { ok: 0, failed: 1, usage: 2, noServer: 3 } as const;
 
 export async function run(argv: string[], io: Io): Promise<number> {
   const base = (io.env.SS_URL || `http://127.0.0.1:${io.env.SS_PORT || DEFAULT_PORT}`).replace(/\/+$/, "");
-  const sessionFile = join(resolve(io.env.SS_RUN_DIR || join(ROOT, ".run")), "cli-session.json");
+  // SS_SESSION_FILE gives a terminal its own login, so two terminals can be two users side by side (T06).
+  const sessionFile = io.env.SS_SESSION_FILE
+    ? resolve(io.cwd, io.env.SS_SESSION_FILE)
+    : join(resolve(io.env.SS_RUN_DIR || join(ROOT, ".run")), "cli-session.json");
   const err = (s: string) => io.stderr.write(`${s}\n`);
   const dim = (s: string) => (io.stderr.isTTY ? `\x1b[2m${s}\x1b[0m` : s);
 
@@ -76,18 +80,22 @@ export async function run(argv: string[], io: Io): Promise<number> {
     }
 
     // 2. Flags → typed args, then prompt for any secrets that weren't given.
-    const { args, positionals } = await parseFlags(rest, info.args, {
+    const { args, positionals, inlineSecrets, stdinUsed } = await parseFlags(rest, info.args, {
       readFile: (p) => readFile(resolve(io.cwd, p), "utf8"),
       readStdin: io.readStdin,
     });
     if (positionals.length) throw new UsageError(`unexpected argument ${JSON.stringify(positionals[0])} (flags look like --name value)`);
-    await promptForSecrets(info.args, args, io);
+    for (const flag of inlineSecrets) {
+      // The data on disk is ciphertext, but a password typed here sits in ~/.zsh_history in plain text (T06).
+      err(`warning: ${flag} on the command line is saved in your shell history (and shows in ps while ./ss runs). Leave it out to be asked for it, or pass ${flag} - and pipe it in.`);
+    }
+    await promptForSecrets(info.args, args, io, stdinUsed);
 
     // 3. Call the server.
     const res = await call(name, args, { text: !global.json && info.kind === "json" });
     if (res.headers.get("x-ss-session") === "invalid" && saved) {
       await rm(sessionFile, { force: true });
-      err(dim(`(Saved CLI session${saved.username ? ` for ${saved.username}` : ""} is no longer valid: the server restarted or you logged out elsewhere.)`));
+      err(dim(`(Saved CLI session${saved.username ? ` for ${saved.username}` : ""} is no longer valid: the server restarted, or it was ended elsewhere by a logout, a password change or user.delete.)`));
     }
     if (!res.ok) return await printError(res, saved, err);
 
@@ -140,21 +148,26 @@ const HELP_INFO: CommandInfo = {
   args: { type: "object", properties: { command: { type: "string" } } },
 };
 
-async function promptForSecrets(schema: JsonSchema, args: Record<string, unknown>, io: Io) {
+/** Ask for each required secret (hidden) or `ask` (shown) that wasn't given as a flag. */
+async function promptForSecrets(schema: JsonSchema, args: Record<string, unknown>, io: Io, stdinUsed: boolean) {
+  let line = 0;
   for (const [key, s] of Object.entries(schema.properties ?? {})) {
-    if (!s.secret || args[key] !== undefined || !(schema.required ?? []).includes(key)) continue;
+    if (!(s.secret || s.ask) || args[key] !== undefined || !(schema.required ?? []).includes(key)) continue;
     const question = (s.prompt ?? `${key}: `).replace(/\{(\w+)\}/g, (_, k: string) => String(args[k] ?? k));
     if (!io.stdinIsTTY) {
-      // Scripted use: take the first line of stdin. No input at all is not a choice, so refuse it rather than
-      // read it as an empty password, which would quietly make an unencrypted user.
-      const input = await io.readStdin();
+      // Scripted use: one line of stdin per answer, in order (user.change-password takes two). No input at all
+      // is not a choice, so refuse it rather than read it as an empty password, which would quietly make an
+      // unencrypted user.
       const flag = `--${key.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)}`;
+      // A flag's "-" took stdin already: reading it again would answer this one with that value.
+      if (stdinUsed) throw new UsageError(`${flag} is required, and stdin went to another flag. Pass ${flag} too`);
+      const input = await io.readStdin();
       if (input === "") throw new UsageError(`${flag} is required and there is no terminal to prompt on. Pass ${flag} '' for none, or pipe it on stdin`);
-      args[key] = input.split(/\r?\n/)[0] ?? "";
+      args[key] = input.split(/\r?\n/)[line++] ?? "";
       continue;
     }
-    const value = await io.promptSecret(question);
-    if (s.confirm && value !== "") {
+    const value = await io.promptSecret(question, { visible: s.ask === true });
+    if (s.secret && s.confirm && value !== "") {
       if ((await io.promptSecret("Repeat it: ")) !== value) throw new UsageError("the two entries did not match");
     }
     args[key] = value;
@@ -302,6 +315,9 @@ async function offlineHelp(rest: string[], io: Io): Promise<number> {
 }
 
 if (import.meta.main) {
+  // ps shows a process's arguments, and they may hold a password or private text (--content "..."). On macOS
+  // and Linux, setting the title overwrites them, so after the first few milliseconds ps shows just "ss" (T06).
+  process.title = "ss";
   // `./ss ... | head` closes stdout early: exit quietly, as cat does, instead of a stack trace (T04 QA-4).
   // The server never waits on us, so a reply still being streamed finishes and is saved.
   process.stdout.on("error", (e: NodeJS.ErrnoException) => {
@@ -316,7 +332,7 @@ if (import.meta.main) {
     stderr: process.stderr,
     stdinIsTTY: process.stdin.isTTY === true,
     readStdin: () => (stdinCache ??= readAllStdin()),
-    promptSecret: promptHidden,
+    promptSecret: (question, opts) => promptHidden(question, { echo: opts?.visible === true }),
   });
   process.exitCode = code;
 }

@@ -42,6 +42,7 @@ export function TextArea({ id, label, description, value, mono, maxPx = 480, cla
       <textarea
         id={id}
         ref={setRef}
+        autoComplete="off"
         value={value}
         rows={3}
         spellCheck={!mono}

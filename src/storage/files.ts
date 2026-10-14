@@ -2,9 +2,12 @@ import { randomBytes } from "node:crypto";
 import { mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 
-/** Write to a temp file in the same directory, fsync, then rename over the target. */
-export async function writeFileAtomic(path: string, data: Uint8Array | string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+/**
+ * Write to a temp file in the same directory, fsync, then rename over the target. `makeDirs: false` when the
+ * folder must already exist: a user's files never re-create a deleted user's folder (T06, user.delete).
+ */
+export async function writeFileAtomic(path: string, data: Uint8Array | string, opts: { makeDirs?: boolean } = {}): Promise<void> {
+  if (opts.makeDirs !== false) await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const tmp = `${path}.${randomBytes(6).toString("hex")}.tmp`;
   const fh = await open(tmp, "wx", 0o600);
   try {

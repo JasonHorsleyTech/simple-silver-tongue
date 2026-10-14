@@ -1,6 +1,6 @@
-import { imageBusy } from "../lib/errors.ts";
+import { CommandError, imageBusy } from "../lib/errors.ts";
 import { newId, nowIso } from "../lib/ids.ts";
-import { findImageFile, removeImageFiles } from "../images/files.ts";
+import { readImageFile, removeImageFiles } from "../images/files.ts";
 import type { StreamEvent } from "../registry.ts";
 import type { Vault } from "../storage/vault.ts";
 import type { Conversation, ImageRecord, LedgerMessage } from "./types.ts";
@@ -50,6 +50,12 @@ export function paintingIn(vault: Vault, convId: string): PaintJob[] {
   return [...painting].filter(([k, j]) => k.startsWith(prefix) && j.convId === convId).map(([, j]) => j);
 }
 
+/** Every image being made for the user whose folder is `dir`, in any conversation (user.delete waits for them). */
+export function paintingFor(dir: string): PaintJob[] {
+  const prefix = `${dir}\0`;
+  return [...painting].filter(([k]) => k.startsWith(prefix)).map(([, j]) => j);
+}
+
 /** Every image this server is making, for any user (a graceful shutdown waits for them). */
 export function allPaintJobs(): PaintJob[] {
   return [...painting.values()];
@@ -87,9 +93,13 @@ export async function settleStaleImages(vault: Vault, conv: Conversation): Promi
     for (const v of m.versions) {
       const img = v?.image;
       if (!img || img.status !== "pending" || painting.has(keyOf(vault, img.id))) continue;
-      const file = await findImageFile(vault, img.id);
+      // The bytes say what the image is: an encrypted user's file name doesn't (img_….bin, T06).
+      const file = await readImageFile(vault, img.id).catch((err) => {
+        if (err instanceof CommandError) throw err; // session_ended and the like
+        return null; // an unreadable file is no image
+      });
       img.finishedAt = nowIso();
-      if (file) {
+      if (file?.kind) {
         img.status = "done";
         img.mime = file.kind.mime;
         if (img.previous) replaced.push(img.previous.id);

@@ -63,12 +63,22 @@ export async function createKeyEnvelope(
   password: string,
   params = KDF_DEFAULTS,
 ): Promise<{ kdf: KdfParams; wrappedKey: string; dataKey: Buffer }> {
+  const dataKey = randomBytes(32);
+  return { ...(await wrapKey(dataKey, password, params)), dataKey };
+}
+
+/**
+ * Wrap a data key with a password: a fresh salt, so the same password never gives the same envelope. A password
+ * change rewraps the user's existing data key this way (T06), and no file needs re-encrypting.
+ */
+export async function wrapKey(dataKey: Buffer, password: string, params = KDF_DEFAULTS): Promise<{ kdf: KdfParams; wrappedKey: string }> {
   const kdf: KdfParams = { name: "scrypt", ...params, salt: randomBytes(16).toString("base64") };
   const kek = await deriveKey(password, kdf);
-  const dataKey = randomBytes(32);
-  const wrappedKey = encrypt(kek, dataKey).toString("base64");
-  kek.fill(0);
-  return { kdf, wrappedKey, dataKey };
+  try {
+    return { kdf, wrappedKey: encrypt(kek, dataKey).toString("base64") };
+  } finally {
+    kek.fill(0);
+  }
 }
 
 /** Returns the data key, or throws DecryptError when the password is wrong. */

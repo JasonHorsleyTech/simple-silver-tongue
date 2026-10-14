@@ -3,7 +3,6 @@ import { followImages, imageNote } from "../conversations/paint.ts";
 import { retryImage } from "../conversations/repaint.ts";
 import { notFound } from "../lib/errors.ts";
 import { IMAGE_ID_RE, readImageFile } from "../images/files.ts";
-import { sniffImage } from "../images/sniff.ts";
 import { binaryCommand, streamCommand } from "../registry.ts";
 import { conversationId } from "./conversations.ts";
 import { messageId } from "./messages.ts";
@@ -28,7 +27,7 @@ it with --out, or pipe it. An image that is still being made, failed or was dele
   handler: async (args, ctx) => {
     const file = await readImageFile(ctx.requireSession().vault, args.id);
     if (!file) throw notFound(`No image ${args.id}: it is still being made, it failed, or it was deleted. conversation.get shows each image's state.`);
-    const kind = sniffImage(file.bytes) ?? file.kind;
+    const kind = file.kind ?? { mime: "application/octet-stream", ext: "bin" }; // sniffed from the decrypted bytes
     return { contentType: kind.mime, bytes: file.bytes, filename: `${args.id}.${kind.ext}` };
   },
 });

@@ -177,6 +177,7 @@ export function Composer({
         <textarea
           id="composer"
           ref={ref}
+          autoComplete="off"
           rows={1}
           value={value}
           onChange={(e) => {

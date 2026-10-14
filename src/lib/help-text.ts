@@ -57,6 +57,7 @@ export function renderCommandHelp(c: CommandInfo): string {
     if (isRequired) flags.push("required");
     if (s.default !== undefined) flags.push(`default ${JSON.stringify(s.default)}`);
     if (s.secret) flags.push("prompted (hidden) when omitted");
+    else if (s.ask) flags.push("asked when omitted");
     const desc = [s.description ?? fallback, flags.length ? `(${flags.join(", ")})` : ""].filter(Boolean).join(" ");
     return [`${flag}${argLabel(s)}`, desc];
   };

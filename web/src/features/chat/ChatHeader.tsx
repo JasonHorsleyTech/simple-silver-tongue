@@ -101,6 +101,7 @@ function TitleEditor({ conv, onDone, onRenamed }: { conv: Conversation; onDone()
     <form onSubmit={save}>
       <input
         aria-label="Conversation title"
+        autoComplete="off"
         autoFocus
         value={title}
         maxLength={200}

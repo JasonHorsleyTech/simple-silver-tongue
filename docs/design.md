@@ -32,7 +32,9 @@ data/
   users/<username>/
     user.json                     # plaintext metadata only: username, encrypted flag, KDF params + salt, wrapped data key. Never the password or a raw key.
     conversations/<convId>.json   # whole conversation document (encrypted users: binary ciphertext, see below)
-    images/<imageId>.<ext>        # image bytes (encrypted users: ciphertext). ext is the type sniffed from the bytes (T05)
+    images/<imageId>.<ext>        # image bytes. Plaintext users: ext is the type sniffed from the bytes (T05).
+                                  # Encrypted users: ciphertext, always .bin (T06: the type hinted at the model)
+  users/.deleted-<username>-<hex>/  # only while user.delete removes a folder (renamed away first; never listed)
 .run/                             # gitignored runtime state: server.pid, server.log, cli-session.json, mock pid
 ```
 
@@ -50,15 +52,48 @@ data/
   - `readJson` replaces `JSON.parse`'s error with a plain "not valid JSON": V8's message quotes the text it failed on, and internal errors are logged, so a corrupt file would otherwise put decrypted content in `.run/server.log` (T02).
   - A vault can be **closed** (`closeVault`): the key buffer is zeroed and every later read or write throws `session_ended`. As a last-ditch guard, `encrypt()` refuses an all-zero key.
 - Everything under the user's dir except `user.json` is encrypted, images included. Titles too, since they live in the conversation doc.
+- **Image file names are neutral for encrypted users (T06, T05 QA-6):** `images/<id>.bin`. A typed extension (`.webp`, `.png`) gave away the format Venice returned, which hints at the model. Nothing needs it: the record has `mime`, and `readImageFile` sniffs the decrypted bytes (so does `settleStaleImages` when it recovers a crashed image). Names from before T06 are still found, and `auth.login` renames an encrypted user's to `.bin` (names only, nothing decrypted). Plaintext users keep typed names, so their images open in a viewer.
 - The key lives only in server memory, in the session. A server restart means logging in again.
 - Never log message content, prompts or image bytes to `.run/server.log`. The server logs only method, path, status and timing, plus error codes.
 - Every `/api` response carries `Cache-Control: no-store`, so the browser never writes decrypted conversations or images to its disk cache.
+- **The password is never stored, nor anything it can be read back from.** `user.json` holds a random salt, the scrypt parameters and `wrappedKey`: the data key encrypted under `scrypt(password, salt)`. That is "hashed and salted" in effect: the only way to test a guess is a full scrypt run (~200 ms, 128 MB) per guess.
+- **Password change (T06, `user.change-password`)** is cheap because of the envelope: unwrap the data key with the current password, rewrap it with the new one under a fresh salt (at today's `KDF_DEFAULTS`), and write `user.json` atomically. No file is re-encrypted. The user is logged out everywhere; work already running finishes. A plaintext user has no password to change, and an encrypted user can't drop its password (that would mean decrypting every file). The data key itself doesn't change, so a copy of `user.json` taken before the change still opens with the old password; real re-keying would mean re-encrypting every file, and isn't built.
+
+### Who is using a user's data right now (T06)
+
+`vault.ts` keeps every open vault of the server, by user folder: each session's master (`openVault`, from `unlockUser`) and each fork (`forkVault`: a request's copy, a paint job's, a stopped reply's drain). `closeVault` takes it out. An open fork is work running on that user's data, so:
+
+- **`user.delete` is refused (409 `user_busy`, nothing deleted) while the user has an open fork**, other than the deleting request's own. The message names what is running when it can (`generatingFor(dir)` in store.ts, `paintingFor(dir)` in images.ts: a reply in `c_…`, an image in `c_…`), else "a request is still using its data". This is the T01 QA-2 fix: running work holds its own key and finishes after logout, and its last save would otherwise bring the folder back with no `user.json`.
+- With nothing running, in the same tick as the check (so nothing can start in between): the user's sessions are destroyed and every open copy of its key is closed (`closeVaultsOf`, which marks them `deleted`, so a late use says "This user was deleted" rather than "you logged out"). Then the folder is **renamed** to `users/.deleted-<name>-<hex>` (atomic: the name is free at once, and nothing can log in to it or read it) and removed. Sessions and keys are closed once more after the rename, for a login that finished in between. A removal cut short leaves a dot-folder that nothing lists; the next delete sweeps it.
+- **A login that races a delete fails.** `unlockUser` re-reads `user.json` after scrypt (~200 ms) and refuses if the user is gone or was re-created (`createdAt` differs), or if its password changed meanwhile.
+- **The vault never creates a user's folder.** `writeBytes` makes only the subfolders below it (`makeParents`, non-recursive) and writes with `writeFileAtomic(..., {makeDirs: false})`, so a write after the folder is gone fails (`session_ended`, "This user was deleted") instead of re-creating `users/<name>/conversations/`. `user.json` writes don't create folders either.
+- Any new work that outlives its request must `forkVault` its own copy and `closeVault` it in a `finally` (as before). That is also what makes it visible to `user.delete`.
+
+### Where plaintext can still appear (T06 audit)
+
+Data at rest is ciphertext. These are the other places text can land, and what is done about each:
+
+| Where | Status |
+|---|---|
+| User folders | Ciphertext, image names neutral. `test/encryption.test.ts` greps for a phrase of every kind (title, system prompt, reminder, setup label and text, brain names and prompts, tool text, template, negative prompt, message, steer, edit, image prompt, words in a brain's mouth) and the image bytes, with a plaintext user as the control. |
+| Temp files | Atomic-write temp files are ciphertext (the vault encrypts before writing) and live in the same folder. |
+| `.run/server.log` | Method, path, status, timing and error codes. Internal errors log a stack, but no error message carries content: Venice errors go to the client only, and `JSON.parse` errors (which quote their input) are replaced. The test asserts it, failures included. |
+| `.run/cli-session.json` | The session token, the username and the URL. The token is useless once the server restarts or the user logs out. |
+| Process arguments (`ps`) | `./ss` sets `process.title = "ss"`, which overwrites its arguments on macOS and Linux a few ms after start (tested). `npm run ss --` shows them in npm's own process: use `./ss`. |
+| Shell history (`~/.zsh_history`) | What you type on a command line is kept by an interactive shell. The CLI warns when a password is given as a flag, and `auth.login` of an encrypted user says that `--content -` (stdin) keeps text out of the history. Agents' non-interactive shells keep no history. |
+| npm's debug logs (`~/.npm/_logs`) | They record each run's full command line. The project `.npmrc` turns them off for this project (`logs-max=0`, with `logs-dir` inside `.run/` so npm's pruning leaves other projects' logs alone). |
+| The browser | `/api` answers are `no-store` (tested for JSON, errors, streams and images); localStorage holds only the last username and panel state; URLs and the page title carry ids and "simple silver" only; every content field is `autocomplete="off"`, so Chrome keeps no Autofill history of it. By the HTML spec that also means its value isn't kept for history restore, which Chrome's session files on disk would otherwise hold (a draft typed in the composer); whether Chrome honours that for a `<textarea>` is for the T06 frontend pass to check (TICKETS.md). |
+| Venice | Gets the prompts in plaintext, by nature. The default models are private. |
+| What you export | `image.get --out`, `turn > reply.md`, the terminal's scrollback: your choice. |
+
+What stays visible, by design: usernames, whether a user is encrypted, how many conversations and images it has, file sizes, timestamps and ids.
 
 ### Sessions
 
 - `auth.login` derives the key, then creates a random session token mapped in memory to `{username, key}`.
 - The token only ever travels in the `ss_session` cookie (`HttpOnly; SameSite=Strict; Path=/`), never in a response body. The browser keeps it as a cookie. The CLI reads the same `Set-Cookie` header and saves the token in `.run/cli-session.json` (mode 0600), then sends it back as a cookie, so both clients take the identical path. Without the running server's memory, the token is useless.
 - When a request carries a token the server doesn't know (it restarted, or the user logged out elsewhere), the response has `x-ss-session: invalid`. The CLI then deletes its saved token and says why.
+- `user.delete` and `user.change-password` log that user out everywhere (T06). The CLI keeps one login per session file; `SS_SESSION_FILE=<path>` gives a terminal its own, so two terminals can be two users side by side.
 - Logging in again replaces the caller's previous session. Logging out wipes the key from memory.
 - **Running work keeps its own key (T01 QA-2).** The session holds the master vault. The HTTP adapter gives each request its own copy (`forkVault`) and closes that copy when the request's work is done, after a stream has fully drained. So logout, or logging in again, kills the token and wipes the session's key at once, while a `turn` or image generation that is already running finishes and saves under the real key. It can never write under a wiped key. Work that outlives its request (a detached job) must `forkVault` its own copy and close it when done; a request's vault is closed once the handler returns.
 
@@ -312,7 +347,7 @@ Every stream ends with exactly one `done` or `error` event; the CLI treats anyth
 
 ### Writing a command
 
-`command({...})`, `streamCommand({...})` or `binaryCommand({...})` from `src/registry.ts`, registered in `src/commands/index.ts`. Each one has a `name`, a `description` (the first line is the summary in `./ss help`), a zod `args` object, `auth` (default `true`, meaning login required) and optional `examples`. JSON commands can add `format(result)` for CLI text. Mark a password-like arg with `.meta({ secret: true, prompt: "Password for {username}: " })` and the CLI prompts for it with hidden input when it's omitted (`confirm: true` asks twice). With no terminal, it reads the first line of stdin, and empty stdin is a usage error rather than an empty password. A secret flag value is literal, except that `-` reads stdin: no `@file` expansion. `ctx.requireSession().vault` is this request's own key copy, valid until the handler (or the stream) finishes. Don't name args `json`, `help` or `out`, since those are CLI global flags. The catalog the CLI parses flags from is `help`, which returns each command's JSON Schema.
+`command({...})`, `streamCommand({...})` or `binaryCommand({...})` from `src/registry.ts`, registered in `src/commands/index.ts`. Each one has a `name`, a `description` (the first line is the summary in `./ss help`), a zod `args` object, `auth` (default `true`, meaning login required) and optional `examples`. JSON commands can add `format(result)` for CLI text. Mark a password-like arg with `.meta({ secret: true, prompt: "Password for {username}: " })` and the CLI prompts for it with hidden input when it's omitted (`confirm: true` asks twice); `.meta({ ask: true, prompt })` asks in the clear (a confirmation, T06). With no terminal, it reads the first line of stdin, and empty stdin is a usage error rather than an empty password. A secret flag value is literal, except that `-` reads stdin: no `@file` expansion. `ctx.requireSession().vault` is this request's own key copy, valid until the handler (or the stream) finishes. Don't name args `json`, `help` or `out`, since those are CLI global flags. The catalog the CLI parses flags from is `help`, which returns each command's JSON Schema.
 
 Implemented in T02 (`src/commands/conversations.ts`, `brains.ts`, `chat.ts`):
 - `conversation.create --title --system-prompt [--text-model]`: the system prompt is required and must have real text. Returns the whole document.
@@ -356,11 +391,17 @@ Changed in T05 triage (`src/conversations/paint.ts`, `images.ts`, `repaint.ts`, 
 - `message.edit` (an image prompt), `.delete`, `image.retry` and `conversation.delete` are a 409 while the image they would replace or remove is being made.
 - On SIGTERM the server finishes what is in flight (up to 60 s) before it exits; new work meanwhile is a 503 `shutting_down`.
 
+Implemented in T06 (`src/commands/users.ts`, `src/storage/users.ts`, `vault.ts`, `src/images/files.ts`, `src/cli/`):
+- `user.delete --username [--confirm]`: the user's folder, for good, after the username is typed again (`--confirm`, or the prompt). No password: anyone at the computer can remove the folder anyway, and a user whose password is lost can still be cleared away. Refused (409 `user_busy`, nothing deleted) while the user has work running; logs it out everywhere. → `{deleted, encrypted, conversations, images, loggedOut}`. See "Who is using a user's data right now".
+- `user.change-password --username [--password] [--new-password]` (both prompted, hidden; the new one twice): rewraps the data key, logs the user out everywhere. → `{username, loggedOut}`.
+- The CLI: an arg with `.meta({ ask: true, prompt })` is asked for in the clear when omitted (a confirmation; `secret` is hidden). With no terminal, each prompted answer is the next line of stdin, in order (`printf 'old\nnew\n' | ./ss user.change-password ...`); if a flag's `-` already took stdin, a prompt is a usage error instead. A non-empty secret given as a flag gets a stderr warning (shell history, `ps`). `process.title = "ss"`. `SS_SESSION_FILE` picks the session file.
+- `auth.login`'s CLI text for an encrypted user adds one line on shell history. Image file names, the login re-check and the never-create-a-user-folder vault: see "Encryption".
+
 Initial command list (tickets add to it, and `./ss help` is the live reference):
 
 ```
 help · health · venice.balance · models.list
-user.create · user.list · auth.login · auth.logout · auth.whoami
+user.create · user.list · user.delete · user.change-password · auth.login · auth.logout · auth.whoami
 conversation.create · conversation.list · conversation.get · conversation.update · conversation.delete · conversation.clone · conversation.import
 setup.list · setup.add · setup.update · setup.delete · setup.move
 brain.list · brain.add · brain.update · brain.delete · brain.set-default
