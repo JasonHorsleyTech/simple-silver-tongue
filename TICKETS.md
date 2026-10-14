@@ -60,7 +60,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T03: Steered regeneration, versions, edit and delete (CP2) · `qa`
+## T03: Steered regeneration, versions, edit and delete (CP2) · `triage`
 
 **Engineer scope**
 - `message.regenerate --message <id> [--steer "..."]`: only for the last ledger message, and only when a brain wrote it. Uses the steer template, appended last. Produces a new version and makes it active.
