@@ -91,6 +91,7 @@ npm run web:dev    # Vite hot reload on :5173, forwarding /api to the server on 
 ./ss brain.list --conversation c_...    # every brain's system prompt, reminder, tool text and stop sequences in full; brain.delete / brain.set-default --brain <name|id>
 ./ss brain.update --conversation c_... --brain "Game Master" --stop "<!-- from:" --stop "..."   # stop sequences (--stop '[]' clears them)
 ./ss setup.add --conversation c_... --content @world-bible.md         # setup.list / .update / .move / .delete --setup <id|label>
+./ss setup.add --conversation c_... --label Understood --role assistant --content "Understood."   # T13: --role user (default) | assistant | system
 ./ss message.add --conversation c_... --as "Game Master" --content "Rain hammers the shutters..."   # words in a brain's mouth (--as player: yours)
 ./ss turn --conversation c_... --brain "Game Master" --roll   # roll a d20 on the server, add it as your message (after --content, if any), the GM answers
 ./ss message.roll --conversation c_...                        # just roll: the roll goes in the ledger, no brain is asked; prompt.preview --roll previews a roll-and-send

@@ -6,10 +6,10 @@
  */
 
 /**
- * 2 (T07 triage): every brain has `stop`. 3 (T09): templates.roll. loadConversation upgrades older files
- * (upgradeConversation, defaults.ts), in memory; the next write saves them.
+ * 2 (T07 triage): every brain has `stop`. 3 (T09): templates.roll. 4 (T13): every setup message has a `role`.
+ * loadConversation upgrades older files (upgradeConversation, defaults.ts), in memory; the next write saves them.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export type Conversation = {
   schemaVersion: number;
@@ -66,7 +66,15 @@ export type Templates = {
   roll: string;
 };
 
-export type SetupMessage = { id: string; label: string; content: string };
+/**
+ * T13: the role a setup message is sent with. `user` (the default, and all there was before T13); `assistant`,
+ * which every brain reads as its own words (a staged exchange); or `system`, a second system message where it
+ * stands in the order. Never merged into the brain's system prompt: a separator would be text nobody wrote.
+ */
+export const SETUP_ROLES = ["user", "assistant", "system"] as const;
+export type SetupRole = (typeof SETUP_ROLES)[number];
+
+export type SetupMessage = { id: string; label: string; role: SetupRole; content: string };
 
 export type Brain = {
   id: string; // b_...

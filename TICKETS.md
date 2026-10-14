@@ -454,3 +454,13 @@ Jason, 2026-10-14. Web only: a single frontend pass, no engineer, QA or triage p
 **Done (frontend, 2026-10-14):** the scroll came from StopSequences' `sr-only` label: absolutely positioned with no positioned ancestor, so its containing block was the page and an open text brain's card stretched the document (Chrome too, not only Firefox). The scroll boxes (`#settings-body`, the scrollback, `main`) are now `relative`, and the shell and chat view are `overflow-clip`, so nothing can make the page scroll again. The chips show initials (`web/src/lib/initials.ts`, clashes get more letters) when whole names don't fit, and a flag with the whole name grows out of the one under the pointer or keyboard focus, over its neighbours without moving them; on touch, whole names on one row that scrolls sideways.
 
 **Acceptance:** with the Tabletop RPG preset at 1200 px and wider, every brain's button sits on one row next to Send, and hovering one shows its full name without pushing the row onto two lines. With Settings open and every brain card expanded, the page never scrolls, only the panel does.
+
+---
+
+## T13: Setup messages choose their role (user, assistant, system) · `done`
+
+Jason, 2026-10-14, done directly (no four-pass loop, at his request). Setup messages were always sent as `user`. To try the World Bible as a system message, and the World Bible plus house rules as a staged user/assistant exchange (often better adherence), each setup message now has a `role`.
+- **Data:** `SetupMessage.role`, default `user` (schema 4: an older file's setup messages load as `user`; a campaign file's without `role` import as `user`; clones keep the role).
+- **Assembly:** each setup message is sent with its own role, verbatim, in order, as its own message. A `system` one is a second system message, never merged into the brain's system prompt. An `assistant` one is every brain's own words. A body ending with one is refused like any other (`nothing_to_answer`).
+- **Commands:** `setup.add --role`, `setup.update --role`; `setup.list` shows each role. **Browser:** a "Sent as" dropdown on each setup message (Settings → Setup), and a role tag on any card that isn't `user`.
+- **Live (3 calls, `deepseek-v4-1-flash`):** Venice accepts a system message after a user one and an assistant message right after the system prompt. DeepSeek seems to hoist every system message to the top (same prompt-token count as merging it into the system prompt): design.md, "Prompt assembly".

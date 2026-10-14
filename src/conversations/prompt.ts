@@ -101,8 +101,9 @@ export function buildRequest(conv: Conversation, brainId: string, opts: BuildOpt
   // 1. System prompt, verbatim.
   const messages: ChatMessage[] = [{ role: "system", content: brain.systemPrompt }];
 
-  // 2. Setup messages, verbatim, in order. Blank ones are skipped rather than sent as empty messages.
-  for (const s of conv.setup) if (s.content.trim()) messages.push({ role: "user", content: s.content });
+  // 2. Setup messages, verbatim, in order, each with its own role (T13): a system one is a second system message,
+  // never merged into the prompt above. Blank ones are skipped rather than sent as empty messages.
+  for (const s of conv.setup) if (s.content.trim()) messages.push({ role: s.role, content: s.content });
 
   // 3. The ledger, from this brain's point of view, using each message's active version.
   let excluded = false;
@@ -226,6 +227,8 @@ export function nothingToAnswer(body: Pick<ChatRequest, "messages">, brainName =
   if (last === "assistant") {
     return `The last message is ${brainName}'s own reply, so there is nothing new for it to answer. Write a message for it first.`;
   }
+  // T13: a system setup message can end the body too (nothing after it).
+  if (body.messages.length > 1) return `There is nothing for ${brainName} to answer yet: the request would end with a system setup message. Write a message for it first.`;
   return `There is nothing for ${brainName} to answer yet: the request would hold only its system prompt. Write a message for it first.`;
 }
 

@@ -1,22 +1,26 @@
 import { z } from "zod";
 import { DEFAULT_SETUP_LABEL, newSetup } from "../conversations/defaults.ts";
 import { loadConversation, mutateConversation } from "../conversations/store.ts";
-import type { Conversation, SetupMessage } from "../conversations/types.ts";
+import { SETUP_ROLES, type Conversation, type SetupMessage } from "../conversations/types.ts";
 import { badRequest, CommandError, notFound } from "../lib/errors.ts";
 import { command } from "../registry.ts";
 import { conversationId } from "./conversations.ts";
 
 /**
- * Setup messages (World Bible, Module, ...): sent verbatim, in order, as user messages to every brain right
- * after its system prompt (docs/design.md, "Prompt assembly", step 2). The label is for you only; the content
- * is what the models read. Blank ones are skipped when sending. They can change at any time, mid-reply too:
- * the next request uses them.
+ * Setup messages (World Bible, Module, ...): sent verbatim, in order, to every brain right after its system
+ * prompt (docs/design.md, "Prompt assembly", step 2), each with its role (T13): user (the default), assistant
+ * (every brain reads it as its own words) or system (a second system message). The label is for you only; the
+ * content is what the models read. Blank ones are skipped when sending. They can change at any time, mid-reply
+ * too: the next request uses them.
  */
 
 const setupRef = z.string().min(1).describe("Setup message id (s_...) or its label (case-insensitive)");
 const label = z.string().trim().min(1, "The label can't be empty").max(100).describe("A name for you (not sent to the models)");
 const content = z.string().describe("The text every brain sees, verbatim (Markdown; @file.md or - for stdin). Blank: not sent");
 const position = z.number().int().min(1).describe("Position, from 1 (sent first)");
+const role = z
+  .enum(SETUP_ROLES)
+  .describe("The role it is sent with: user (default), assistant (every brain reads it as its own words) or system (a second system message)");
 
 function findSetup(conv: Conversation, ref: string): SetupMessage {
   const want = ref.trim();
@@ -44,7 +48,7 @@ function formatListing(r: SetupListing): string {
   const head = r.deleted ? `Deleted setup message ${r.deleted}.` : r.changed ? `Saved setup message ${r.changed}.` : "";
   if (!r.setup.length) return [head, "No setup messages. Add one: ./ss setup.add --conversation <id> --content @world-bible.md"].filter(Boolean).join("\n");
   const rows = r.setup.map((s, i) => {
-    const sent = s.content.trim() ? `${s.content.length} chars` : "blank: not sent";
+    const sent = s.content.trim() ? `${s.role} · ${s.content.length} chars` : `${s.role} · blank: not sent`;
     return `── ${i + 1}. ${s.label} (${s.id}) · ${sent}${s.id === r.changed ? " · changed" : ""} ──\n${s.content}`;
   });
   return [head, `Every brain sees these, in this order, right after its system prompt:`, ...rows].filter(Boolean).join("\n\n");
@@ -62,22 +66,26 @@ export const setupList = command({
 export const setupAdd = command({
   name: "setup.add",
   description: `Add a setup message (World Bible, module, house rules) that every brain sees after its system prompt.
-Setup messages are sent verbatim, in order, as user messages. Without --content it is pre-filled with "<!-- This is the <label>. -->", for
-you to edit (setup.update). The label (default "${DEFAULT_SETUP_LABEL}") is for you only and isn't sent.`,
+Setup messages are sent verbatim, in order, each as its own message with its --role: user (default), assistant (every brain reads
+it as its own words, for a staged exchange) or system (a second system message, never merged into the brain's prompt). Without
+--content it is pre-filled with "<!-- This is the <label>. -->", for you to edit (setup.update). The label (default
+"${DEFAULT_SETUP_LABEL}") is for you only and isn't sent.`,
   args: z.object({
     conversation: conversationId,
     label: label.optional(),
+    role: role.optional(),
     content: content.optional(),
     position: position.optional().describe("Where it goes, from 1 (default: last)"),
   }),
   examples: [
     "./ss setup.add --conversation c_k3j9x0q2ma --content @world-bible.md",
     './ss setup.add --conversation c_k3j9x0q2ma --label "House rules" --content "Keep replies under 150 words." --position 1',
+    './ss setup.add --conversation c_k3j9x0q2ma --label "Rules, understood" --role assistant --content "Understood. I will keep to those rules."',
   ],
   handler: async (args, ctx): Promise<SetupListing> => {
     const { vault } = ctx.requireSession();
     const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
-      const s = newSetup({ label: args.label, content: args.content });
+      const s = newSetup({ label: args.label, role: args.role, content: args.content });
       const at = args.position === undefined ? c.setup.length : checkPosition(args.position, c.setup.length + 1);
       c.setup.splice(at, 0, s);
       return s;
@@ -89,15 +97,19 @@ you to edit (setup.update). The label (default "${DEFAULT_SETUP_LABEL}") is for 
 
 export const setupUpdate = command({
   name: "setup.update",
-  description: `Change a setup message's text or label. Every brain sees the new text from its next request.`,
-  args: z.object({ conversation: conversationId, setup: setupRef, label: label.optional(), content: content.optional() }),
-  examples: ['./ss setup.update --conversation c_k3j9x0q2ma --setup "World Bible" --content @world-bible.md'],
+  description: `Change a setup message's text, label or role (user, assistant, system). Every brain sees the change from its next request.`,
+  args: z.object({ conversation: conversationId, setup: setupRef, label: label.optional(), role: role.optional(), content: content.optional() }),
+  examples: [
+    './ss setup.update --conversation c_k3j9x0q2ma --setup "World Bible" --content @world-bible.md',
+    './ss setup.update --conversation c_k3j9x0q2ma --setup "World Bible" --role system',
+  ],
   handler: async (args, ctx): Promise<SetupListing> => {
-    if (args.label === undefined && args.content === undefined) throw badRequest("Nothing to change. Pass --content or --label.");
+    if (args.label === undefined && args.content === undefined && args.role === undefined) throw badRequest("Nothing to change. Pass --content, --label or --role.");
     const { vault } = ctx.requireSession();
     const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
       const s = findSetup(c, args.setup);
       if (args.label !== undefined) s.label = args.label;
+      if (args.role !== undefined) s.role = args.role;
       if (args.content !== undefined) s.content = args.content;
       return s;
     });

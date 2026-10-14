@@ -78,7 +78,7 @@ export function formatConversation(c: Conversation, opts?: FormatOpts): string {
       })
       .join(", ")}`,
   ];
-  if (c.setup.length) out.push(`Setup messages: ${c.setup.map((s) => `${s.label} (${s.id})`).join(", ")} (setup.list shows them)`);
+  if (c.setup.length) out.push(`Setup messages: ${c.setup.map((s) => `${s.label} (${s.id}${s.role === "user" ? "" : `, ${s.role}`})`).join(", ")} (setup.list shows them)`);
   if (!c.messages.length) out.push("", `(no messages yet: ./ss turn --conversation ${c.id} --content "...")`);
   for (const m of c.messages) {
     const v = activeVersion(m);

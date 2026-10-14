@@ -2,19 +2,27 @@ import { ArrowDown, ArrowUp, ChevronDown, Plus, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import { DEFAULT_SETUP_LABEL, type Conversation, type SetupListing, type SetupMessage } from "../../api/types.ts";
+import { DEFAULT_SETUP_LABEL, SETUP_ROLES, type Conversation, type SetupListing, type SetupMessage, type SetupRole } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { SavedLine } from "../../components/SavedLine.tsx";
 import { SavedText } from "../../components/SavedText.tsx";
+import { Spinner } from "../../components/Spinner.tsx";
 import { cx } from "../../lib/cx.ts";
 import { compactNumber } from "../../lib/format.ts";
 
 /**
  * Setup messages (World Bible, module, house rules): sent verbatim, in this order, to every brain right after
- * its system prompt. A list of quiet cards, opened one at a time to edit; arrows reorder. Every setup command
- * answers with the whole list, which replaces ours.
+ * its system prompt, each with its role (T13). A list of quiet cards, opened one at a time to edit; arrows
+ * reorder. Every setup command answers with the whole list, which replaces ours.
  */
+
+/** T13: what each role means for every brain, under the "Sent as" picker. */
+const ROLE_HINT: Record<SetupRole, string> = {
+  user: "A user message, as the player's messages are. The default.",
+  assistant: "Every brain reads it as its own words: the reply half of a staged exchange.",
+  system: "A second system message, sent as its own message where it stands (never merged into a brain's system prompt). DeepSeek seems to read every system message together, at the top.",
+};
 export function SetupTab({
   conv,
   addNonce,
@@ -69,8 +77,8 @@ export function SetupTab({
   return (
     <div className="px-5 pt-4 pb-8">
       <p className="mb-4 text-[12.5px] leading-5 text-faint">
-        Sent verbatim, in this order, to every brain right after its system prompt: the world, the module, house rules. The label is for you; only the text
-        is sent.
+        Sent verbatim, in this order, to every brain right after its system prompt: the world, the module, house rules. Each goes as its own message, with
+        the role you pick. The label is for you; only the text is sent.
       </p>
       {error && (
         <Notice tone="error" className="mb-3">
@@ -154,6 +162,8 @@ function SetupCard({
 }) {
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [roleSaving, setRoleSaving] = useState(false);
+  const [roleError, setRoleError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const blank = s.content.trim() === "";
   const firstLine = s.content.trim().split("\n").find((l) => l.trim() && !/^<!--.*-->$/.test(l.trim())) ?? s.content.trim().split("\n")[0];
@@ -184,6 +194,7 @@ function SetupCard({
               <span className={cx("shrink-0 text-[11.5px]", blank ? "text-amber-200/70" : "text-faint")}>
                 {blank ? "blank · not sent" : `${compactNumber(s.content.length)} chars`}
               </span>
+              {s.role !== "user" && <span className="shrink-0 rounded border border-line-strong px-1.5 py-px font-mono text-[11px] text-muted">{s.role}</span>}
             </span>
             {!open && !blank && <span className="mt-1 block truncate text-[12.5px] text-faint">{firstLine}</span>}
           </span>
@@ -218,6 +229,44 @@ function SetupCard({
           validate={(v) => (v.trim() ? null : "The label can't be empty.")}
           onSave={async (label) => onSetup((await api.call("setup.update", { conversation: conversationId, setup: s.id, label: label.trim() })).setup)}
         />
+        <div>
+          <div className="flex items-center gap-3">
+            <label htmlFor={`sr-${s.id}`} className="flex flex-1 items-center gap-2 text-[13px] font-medium text-fg">
+              Sent as
+              {roleSaving && <Spinner className="size-3.5 text-faint" />}
+            </label>
+            <select
+              id={`sr-${s.id}`}
+              value={s.role}
+              disabled={roleSaving}
+              onChange={async (e) => {
+                const role = e.target.value as SetupRole;
+                setRoleSaving(true);
+                setRoleError(null);
+                try {
+                  onSetup((await api.call("setup.update", { conversation: conversationId, setup: s.id, role })).setup);
+                } catch (err) {
+                  setRoleError(errorMessage(err));
+                } finally {
+                  setRoleSaving(false);
+                }
+              }}
+              className="h-8 rounded-md border border-line-strong bg-raised px-2 font-mono text-[12.5px] text-fg outline-none focus:border-focus/60 disabled:opacity-60"
+            >
+              {SETUP_ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="mt-1 text-[12.5px] leading-5 text-faint">{ROLE_HINT[s.role]}</p>
+          {roleError && (
+            <Notice tone="error" className="mt-2">
+              {roleError}
+            </Notice>
+          )}
+        </div>
         <SavedText
           id={`sc-${s.id}`}
           label="Text"

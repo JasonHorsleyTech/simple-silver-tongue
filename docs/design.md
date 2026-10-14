@@ -10,7 +10,7 @@ This is the current best design for the data model, the prompt-assembly rules an
 | **Conversation** | One chat or one campaign ("D&D at the Gilded Goat", "Pathfinder, dark and gritty"). Owns its settings, templates, setup messages, brains and ledger. The UI may call it a campaign; the code calls it a conversation. |
 | **Brain** | A named AI persona inside a conversation (Game Master, Dice Master, Joke Teller, Scene Painter). Each has its own system prompt, an optional final reminder, and a kind (`text` or `image`). Exactly one is the **default brain**. |
 | **Ledger** | The single shared, ordered list of messages in a conversation. Every brain sees the same ledger, from its own point of view. Editing a ledger message changes what every brain sees. |
-| **Setup messages** | Ordered text blocks (World Bible, Module, ...) sent verbatim, as `role: user`, to every brain right after its system prompt. |
+| **Setup messages** | Ordered text blocks (World Bible, Module, ...) sent verbatim, each as its own message with the role it is set to (`user` by default, `assistant` or `system`; T13), to every brain right after its system prompt. |
 | **Templates** | Conversation-level framing strings (the HTML-comment wrappers) used when one brain sees a message from the player or from another brain. They are plain editable text. |
 | **Steer** | A one-off, behind-the-scenes direction used when regenerating the latest brain message. It is sent once and never appears in any later prompt. |
 | **Roll** | A d20 the server rolls (never a model), added to the ledger as a player message that every brain reads (T09, "Dice rolls"). |
@@ -117,9 +117,10 @@ Implemented in T02 as `src/conversations/types.ts` (the types), `defaults.ts` (n
 
 ```ts
 type Conversation = {
-  schemaVersion: 3;                    // bump it and upgrade on load if a later ticket changes the shape. 2 (T07 triage): every brain
+  schemaVersion: 4;                    // bump it and upgrade on load if a later ticket changes the shape. 2 (T07 triage): every brain
                                        // has `stop`; loadConversation fills a missing one with defaultStop (upgradeConversation,
-                                       // defaults.ts), in memory, and the next write saves it. 3 (T09): templates.roll, filled the same way
+                                       // defaults.ts), in memory, and the next write saves it. 3 (T09): templates.roll, filled the same way.
+                                       // 4 (T13): every setup message has a `role`; a missing one is "user", as it was always sent
   id: string; title: string; createdAt: string; updatedAt: string;
   settings: {
     textModel: string;                 // default "deepseek-v4-1-flash"; must be in Venice's /models list (any of it: the
@@ -141,7 +142,8 @@ type Conversation = {
     steer: string;           // default "<!-- Behind-the-scenes direction from the user. This is not part of the conversation. Write your previous response again, following this direction: -->\n{{instruction}}"
     roll: string;            // T09, default "🎲 I rolled a d20: **{{roll}}**": the text of a roll's message, made once, when the server rolls
   };
-  setup: Array<{ id: string; label: string; content: string }>;   // s_...; the label is for the user only, never sent
+  setup: Array<{ id: string; label: string; role: "user" | "assistant" | "system"; content: string }>;
+                                       // s_...; the label is for the user only, never sent. role (T13): what it is sent as, default "user"
   brains: Brain[];
   defaultBrainId: string;              // T02: replaces Brain.isDefault, so "exactly one default" holds by construction
   messages: LedgerMessage[];
@@ -237,7 +239,7 @@ Template placeholders are literal string replacements and there are only five: `
 For the target brain **B**:
 
 1. `{ role: "system", content: B.systemPrompt }`. Always present and never empty; refuse to build otherwise.
-2. For each setup message, in order: `{ role: "user", content: setup.content }`. Verbatim, no template. Blank ones (whitespace only) are skipped rather than sent empty.
+2. For each setup message, in order: `{ role: setup.role, content: setup.content }`. Verbatim, no template. Blank ones (whitespace only) are skipped rather than sent empty. **The role is the setup message's own (T13):** `user` (the default, and all there was before T13); `assistant`, which every brain reads as its own words (the same text for every brain: that is the point of a staged exchange, World Bible and house rules as `user`, then "Understood." as `assistant`); or `system`, a second system message where it stands in the order. A system setup message is never merged into step 1's system prompt: a separator would be text the user didn't write. A body that would end with an `assistant` or `system` setup message (no ledger, no reminder) is refused like any other (`nothingToAnswer`).
 3. For each ledger message `m`, in order, using `m.versions[m.activeVersion]`. On regenerate, stop before `excludeFromMessageId`:
    - **Player message:** `{ role: "user", content: render(templates.player, {content}) }`.
    - **B's own text message:** `{ role: "assistant", content }`.
@@ -300,6 +302,7 @@ Verified against the live Venice API (2026-10-13), using `deepseek-v4-1-flash`:
 - The final chunk has `usage` and `cost.usd`. Store `cost.usd` on the version.
 - **The chunk that carries `finish_reason` can also carry content** (seen live with `finish_reason: "length"`, T01 QA-7). The parser must read `delta.content` on every chunk, including the finishing one. The mock reproduces this whenever `max_tokens` cuts a reply.
 - With `include_venice_system_prompt: false` **and reasoning off**, prompt_tokens matched our own text (no injected prompt).
+- **Setup message roles (T13, 2026-10-14), reasoning off.** `[system, user, system, user]` (a system setup message after a user one) and `[system, assistant, user, user, assistant, user]` (an assistant setup message right after the system prompt, then a staged exchange) were both accepted (HTTP 200, `finish_reason: "stop"`) and answered sanely, keeping to the World Bible and the house rule in both. **DeepSeek seems to hoist every system message to the top:** the first body and the same text with the system setup message joined onto the system prompt with `\n\n` (`[system, user, user]`) both counted exactly 103 prompt tokens, which is what DeepSeek's published chat template does (it concatenates all system messages, in order, with `\n\n`, ahead of the conversation). So on this model a system setup message is read as part of the system prompt, wherever it sits among the setup messages. The token count can't rule out an in-place rendering that happens to cost the same, so treat it as likely, not proven. The order among system messages is kept either way.
 - **Reasoning on adds provider-side text (T02 QA-1).** With reasoning on, `deepseek-v4-1-flash` gets ~25 prompt tokens we never send (17 → 42 for the same body), and its reasoning twice quoted a system line we never wrote ("You are an AI assistant accessed via an API."). It comes from Venice or the model template, and we can't remove it. **Decision (orchestrator, applying Jason's "nothing else" rule): reasoning defaults to OFF on every brain.** Turning it on is an explicit per-brain opt-in, and the brain editor and the payload view must say plainly: "Reasoning on: the provider adds a small hidden instruction we can't see or edit." (Implemented in T02 triage: `newBrain` defaults off; the sentence is `REASONING_NOTE`, in `wording.ts` since T04 frontend so the brain editor imports it too (`prompt.ts` re-exports it), carried in `prompt.preview`'s `notes` and printed by `brain.update` when reasoning is on. Existing files keep whatever they have.)
 
 Verified live in T02 (2026-10-14), `deepseek-v4-1-flash`:
@@ -343,7 +346,7 @@ Verified live in T05 (2026-10-14), `deepseek-v4-1-flash` + `z-image-turbo`, an e
   - **Delete** only if no ledger message references the brain (`brain_in_use`, 409), it isn't the default (`default_brain`, 409: set another default first), **and not while it is writing a reply** (`assertBrainIdle`, above). A brain that has spoken stays: every other brain still sees its lines under its name. Rename it or change its prompt instead.
   - **Kind** is locked once the brain has messages (`kind_locked`, 409), and can't change while it is writing. Turning a brain into an image brain fills in `DEFAULT_TOOL` and `safeMode: true` where they are missing; turning it back keeps them, unused. Safe mode and tool text are refused on a text brain.
   - **Final reminder.** Every new brain's reminder is pre-filled with an editable example, `REMINDER_EXAMPLE`: "`<!-- System reminder -->` Stay in your role: do only the job your system prompt describes, and reply only as yourself." It names no brain, so a rename can't make it wrong. It is on for brains added with `brain.add` (they are never the default) and off for the conversation's first brain. A brain whose reminder is on always ends its request with a `user` message, so it can always "just respond", even right after its own reply.
-- **Setup messages** (T04). Add, edit, move and delete anytime, mid-reply too. `setup.add` without content pre-fills `<!-- This is the <label>. -->` (label default "World Bible", so `<!-- This is the World Bible. -->`). The label is for the user; only the content is sent.
+- **Setup messages** (T04). Add, edit, move and delete anytime, mid-reply too. `setup.add` without content pre-fills `<!-- This is the <label>. -->` (label default "World Bible", so `<!-- This is the World Bible. -->`). The label is for the user; only the content is sent. Each has a role (T13: user, assistant or system; `--role`, or the Setup tab's "Sent as" dropdown).
 
 ### Image generation
 
@@ -512,7 +515,7 @@ Implemented in T03 (`src/commands/messages.ts`, `chat.ts`):
 
 Implemented in T04 (`src/commands/brains.ts`, `setup.ts`, `messages.ts`):
 - `brain.list --conversation`: every brain with its system prompt, reminder and tool text in full, plus its message count. `brain.add --conversation --name --system-prompt [--color --kind --reasoning.* --final-reminder.* --safe-mode --tool.*]` (an unused badge color by default) returns the brain. `brain.update` adds `--kind`, `--safe-mode` and `--tool.<field>` to the T02 fields. `brain.delete --conversation --brain` → `{conversationId, deleted, name, brains}`. `brain.set-default --conversation --brain` returns the brain. `--brain` is a name (case-insensitive) or an id everywhere.
-- `setup.list`, `setup.add [--label] [--content] [--position]`, `setup.update --setup [--label] [--content]`, `setup.move --setup --position`, `setup.delete --setup`. `--setup` is an id or a label (case-insensitive; an ambiguous label asks for the id). Positions are 1-based. Each returns `{conversationId, setup: [...the whole list, in order], changed? | deleted?}`, so a client replaces its copy.
+- `setup.list`, `setup.add [--label] [--role user|assistant|system] [--content] [--position]`, `setup.update --setup [--label] [--role] [--content]`, `setup.move --setup --position`, `setup.delete --setup`. `setup.list` shows each message's role (T13); a campaign file's setup messages take `role` too (absent: `user`), and a clone keeps them. `--setup` is an id or a label (case-insensitive; an ambiguous label asks for the id). Positions are 1-based. Each returns `{conversationId, setup: [...the whole list, in order], changed? | deleted?}`, so a client replaces its copy.
 - `message.add --conversation --as player|<brain> --content` returns the message, like `message.edit`.
 - `turn --brain` and `prompt.preview --brain` were there since T02; with several brains they are how every brain gets a turn and how you see its point of view. `./ss help <command>` now lists an object argument's fields one by one (`--final-reminder.content`, `--tool.description`, ...).
 

@@ -6,7 +6,7 @@ import { rebuild } from "../conversations/campaign.ts";
 import { DEFAULT_TEMPLATES, newBrain, nextColor } from "../conversations/defaults.ts";
 import { createConversationFile, loadConversation, mutateConversation } from "../conversations/store.ts";
 import { lookupModel } from "../conversations/turn.ts";
-import { SCHEMA_VERSION, type Brain, type Conversation, type ImageSettings, type LedgerMessage, type MessageVersion } from "../conversations/types.ts";
+import { SCHEMA_VERSION, SETUP_ROLES, type Brain, type Conversation, type ImageSettings, type LedgerMessage, type MessageVersion } from "../conversations/types.ts";
 import { readImageFile, removeImageFiles, saveImageFile } from "../images/files.ts";
 import { imageSettingsProblem } from "../images/request.ts";
 import { badRequest, CommandError, notFound } from "../lib/errors.ts";
@@ -75,7 +75,8 @@ const campaignSchema = z.object({
     .partial()
     .optional(),
   templates: templates.optional(),
-  setup: z.array(z.object({ label: z.string().trim().min(1).max(100), content: z.string() })).default([]),
+  /** T13: role absent (a file from before it) = user, as setup messages were always sent. */
+  setup: z.array(z.object({ label: z.string().trim().min(1).max(100), role: z.enum(SETUP_ROLES).default("user"), content: z.string() })).default([]),
   brains: z
     .array(
       z.object({
@@ -192,7 +193,7 @@ function toConversation(doc: Campaign, where: string): Conversation {
     updatedAt: now,
     settings: { textModel: s.textModel ?? DEFAULT_TEXT_MODEL, imageModel: s.imageModel ?? DEFAULT_IMAGE_MODEL, image },
     templates: { ...DEFAULT_TEMPLATES, ...doc.templates },
-    setup: doc.setup.map((x) => ({ id: newId("s"), label: x.label, content: x.content })),
+    setup: doc.setup.map((x) => ({ id: newId("s"), label: x.label, role: x.role, content: x.content })),
     brains: shell.brains,
     defaultBrainId: defaultBrain.id,
     messages,

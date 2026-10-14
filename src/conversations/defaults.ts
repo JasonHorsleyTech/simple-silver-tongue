@@ -1,7 +1,7 @@
 import { DEFAULT_IMAGE_MODEL, DEFAULT_TEXT_MODEL } from "../config.ts";
 import { DEFAULT_SHAPE } from "../images/request.ts";
 import { newId, nowIso } from "../lib/ids.ts";
-import { SCHEMA_VERSION, type Brain, type Conversation, type SetupMessage, type Templates } from "./types.ts";
+import { SCHEMA_VERSION, SETUP_ROLES, type Brain, type Conversation, type SetupMessage, type SetupRole, type Templates } from "./types.ts";
 import { BRAIN_COLORS, DEFAULT_SETUP_LABEL, DEFAULT_TOOL, FRAMING_STOP, REMINDER_EXAMPLE, setupPrefill } from "./wording.ts";
 
 /**
@@ -61,8 +61,9 @@ export function newBrain(opts: { name: string; systemPrompt: string; color?: str
  * sequences existed is guarded too; prompt.preview and brain.list show it, and brain.update --stop changes it.
  * A brain whose list is empty keeps it empty. Version 3 (T09): templates without `roll` get the default, so
  * every conversation can roll. Since 2026-10-14 an image brain has a shape (landscape if it has none), and the
- * conversation-wide width, height and aspect ratio it replaced are dropped. Tolerates a partial document
- * (listConversations reports those).
+ * conversation-wide width, height and aspect ratio it replaced are dropped. Version 4 (T13): a setup message
+ * without a role gets `user`, which is how it was always sent. Tolerates a partial document (listConversations
+ * reports those).
  */
 export function upgradeConversation(conv: Conversation): Conversation {
   if (typeof conv !== "object" || conv === null) return conv;
@@ -71,6 +72,8 @@ export function upgradeConversation(conv: Conversation): Conversation {
     if (b?.kind === "image") b.shape ??= DEFAULT_SHAPE;
   }
   if (conv.templates && typeof conv.templates === "object" && typeof conv.templates.roll !== "string") conv.templates.roll = DEFAULT_TEMPLATES.roll;
+  // Version 4 (T13): a setup message without a role (or with one we don't know) was sent as a user message, and still is.
+  for (const s of Array.isArray(conv.setup) ? conv.setup : []) if (s && !SETUP_ROLES.includes(s.role)) s.role = "user";
   // Image sizes moved from the conversation to each image brain's shape (2026-10-14): drop the old fields.
   const image = conv.settings?.image as Record<string, unknown> | undefined;
   if (image && typeof image === "object") for (const k of ["width", "height", "aspectRatio"]) delete image[k];
@@ -87,9 +90,9 @@ export function makeImageBrain(brain: Brain): void {
 }
 
 /** A new setup message, pre-filled with an HTML comment that names it: "<!-- This is the World Bible. -->". */
-export function newSetup(opts: { label?: string; content?: string }): SetupMessage {
+export function newSetup(opts: { label?: string; role?: SetupRole; content?: string }): SetupMessage {
   const label = opts.label ?? DEFAULT_SETUP_LABEL;
-  return { id: newId("s"), label, content: opts.content ?? setupPrefill(label) };
+  return { id: newId("s"), label, role: opts.role ?? "user", content: opts.content ?? setupPrefill(label) };
 }
 
 export function newConversation(opts: { title: string; systemPrompt: string; textModel?: string }): Conversation {

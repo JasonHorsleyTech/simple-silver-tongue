@@ -20,11 +20,15 @@ import type {
   RetryRequest,
   Roll,
   SetupMessage,
+  SetupRole,
   Templates,
 } from "../../../src/conversations/types.ts";
 import type { ModelInfo } from "../../../src/venice/models.ts";
 
-export type { Brain, BrainTool, ChatMessage, ChatRequest, Conversation, ImageRecord, ImageRequest, ImageShape, LedgerMessage, MessageVersion, ModelInfo, RetryRequest, Roll, SetupMessage, Templates };
+export type { Brain, BrainTool, ChatMessage, ChatRequest, Conversation, ImageRecord, ImageRequest, ImageShape, LedgerMessage, MessageVersion, ModelInfo, RetryRequest, Roll, SetupMessage, SetupRole, Templates };
+
+/** T13: the roles a setup message can be sent with (user, assistant, system), in the server's order. */
+export { SETUP_ROLES } from "../../../src/conversations/types.ts";
 
 /**
  * The server's own image request rule: an image brain's shapes and what each is sent as, and what an image costs
@@ -262,8 +266,8 @@ export type Commands = {
    */
   "brain.import": { args: { conversation: string; preset?: string; example?: string; brain: string; name?: string }; result: BrainImport };
   /** Without content: pre-filled "<!-- This is the <label>. -->" (label default "World Bible"). Positions are 1-based. */
-  "setup.add": { args: { conversation: string; label?: string; content?: string; position?: number }; result: SetupListing };
-  "setup.update": { args: { conversation: string; setup: string; label?: string; content?: string }; result: SetupListing };
+  "setup.add": { args: { conversation: string; label?: string; role?: SetupRole; content?: string; position?: number }; result: SetupListing };
+  "setup.update": { args: { conversation: string; setup: string; label?: string; role?: SetupRole; content?: string }; result: SetupListing };
   "setup.move": { args: { conversation: string; setup: string; position: number }; result: SetupListing };
   "setup.delete": { args: { conversation: string; setup: string }; result: SetupListing };
   /** Words in a brain's mouth (or yours, as "player"), appended without generating anything. 409 while a reply is being generated. */

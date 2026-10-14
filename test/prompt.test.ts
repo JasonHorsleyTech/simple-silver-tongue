@@ -32,8 +32,8 @@ function table() {
   };
   conv.brains.push(dice, painter);
   conv.setup.push(
-    { id: "s_1", label: "World Bible", content: "<!-- This is the World Bible. -->\nThe Gilded Goat is a tavern." },
-    { id: "s_2", label: "Blank", content: "   " },
+    { id: "s_1", label: "World Bible", role: "user", content: "<!-- This is the World Bible. -->\nThe Gilded Goat is a tavern." },
+    { id: "s_2", label: "Blank", role: "user", content: "   " },
   );
   const add = (author: Author, content: string, kind: "text" | "image" = "text", extra: Partial<MessageVersion> = {}) => {
     const m = newMessage(author, kind, { content, source: "generated", createdAt: AT, ...extra });
