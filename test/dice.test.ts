@@ -48,6 +48,7 @@ describe("dice: the server rolls a d20 (T09)", () => {
     // A file written before conversation.update checked the placeholder can't lose the number silently.
     assert.throws(() => rollMessage({ ...conv, templates: { ...conv.templates, roll: "I rolled." } }, { die: "d20", result: 3 }), /no \{\{roll\}\}/);
     assert.equal(rollLabel({ die: "d20", result: 14 }), "🎲 d20: 14");
+    assert.equal(rollLabel({ die: "d20", result: 14 }, true), "🎲 d20 said 14", "an edited roll's number is history, not the roll (T09 QA-1)");
   });
 });
 
@@ -76,6 +77,9 @@ describe("dice end to end: CLI → server → mock Venice (T09)", () => {
   const lastSent = () => chatRequests()[0]?.body as ChatRequest;
   const preview = async (c: string, ...extra: string[]) => (await json(["prompt.preview", "--conversation", c, ...extra])) as { body: ChatRequest; notes: string[] };
   const rollOf = (m: LedgerMessage) => m.versions[m.activeVersion]!.roll;
+  const cookie = () => `ss_session=${JSON.parse(readFileSync(join(t.config.runDir, "cli-session.json"), "utf8")).token}`;
+  const post = (cmd: string, body: unknown) =>
+    t.app.fetch(new Request(`http://localhost/api/${cmd}`, { method: "POST", headers: { host: "localhost", "content-type": "application/json", cookie: cookie() }, body: JSON.stringify(body) }));
 
   /** A GM (default, no reminder), a Dice Master (reminder on) and a Scene Painter (image, reminder off). */
   async function table() {
@@ -90,12 +94,14 @@ describe("dice end to end: CLI → server → mock Venice (T09)", () => {
 
   test("acceptance: turn --roll prints the roll, then the reply; every brain sees it framed as a player line; preview == send but the number", async () => {
     const c = await table();
-    const p = await preview(c, "--brain", "Game Master", "--content", "I talk him down to half price.", "--roll");
+    // A {{roll}} in your own text is sent as written: only the roll's line gets the number (T09 QA-3).
+    const said = 'I carve "{{roll}}" into the table and talk him down to half price.';
+    const p = await preview(c, "--brain", "Game Master", "--content", said, "--roll");
     assert.equal(p.notes[0], ROLL_PREVIEW_NOTE);
     assert.equal(p.body.messages.at(-1)!.content, framed("{{roll}}"));
     assert.match((await ok(["prompt.preview", "--conversation", c, "--roll"])).stdout, /Note: The d20 isn't rolled yet/);
 
-    const r = await ok(["turn", "--conversation", c, "--brain", "Game Master", "--content", "I talk him down to half price.", "--roll"]);
+    const r = await ok(["turn", "--conversation", c, "--brain", "Game Master", "--content", said, "--roll"]);
     const conv = await get(c);
     const [mine, roll, reply] = conv.messages;
     const n = rollOf(roll!)!.result;
@@ -108,8 +114,10 @@ describe("dice end to end: CLI → server → mock Venice (T09)", () => {
     assert.equal(r.stdout, `${reply!.versions[0]!.content}\n`);
     assert.match(r.stdout, new RegExp(`saw 3 messages; last: "<!-- from: the user --> 🎲 I rolled a d20: \\*\\*${n}\\*\\*"`));
     // The preview was the request, but for the number it couldn't know.
-    const expected = JSON.parse(JSON.stringify(p.body).replace("{{roll}}", String(n)));
+    const expected = structuredClone(p.body);
+    expected.messages.at(-1)!.content = framed(n);
     assert.deepEqual(lastSent(), expected);
+    assert.equal(mine!.versions[0]!.content, said);
 
     for (const brain of ["Game Master", "Dice Master", "Scene Painter"]) {
       const msgs = (await preview(c, "--brain", brain)).body.messages;
@@ -144,7 +152,8 @@ describe("dice end to end: CLI → server → mock Venice (T09)", () => {
     assert.ok(!msgs.some((m) => m.content === framed(n)), "and the rolled number is gone from every request");
     const edited = (await get(c)).messages[0]!;
     assert.deepEqual(rollOf(edited), { die: "d20", result: n }, "the die's own result is kept, for display");
-    assert.match((await ok(["conversation.get", "--id", c])).stdout, new RegExp(`🎲 d20: ${n} · edited ──\\n${line(fake).replace(/\*/g, "\\*")}`));
+    // The edited line is the roll the brains were told; the die's own number is shown as history (T09 QA-1).
+    assert.match((await ok(["conversation.get", "--id", c])).stdout, new RegExp(`🎲 d20 said ${n} · edited ──\\n${line(fake).replace(/\*/g, "\\*")}`));
     await ok(["message.delete", "--conversation", c, "--message", edited.id]);
     assert.equal((await get(c)).messages.length, 0);
     assert.match((await ok(["message.roll", "--conversation", c])).stdout, /^🎲 d20: \d+\nAdded m_\w+ \(your roll\)/);
@@ -186,6 +195,17 @@ describe("dice end to end: CLI → server → mock Venice (T09)", () => {
     const [roll] = (await get(c)).messages;
     assert.ok(rollOf(roll!));
     await fails(["turn", "--conversation", c, "--content", "x", "--roll", "--brain", "Nobody"], /No brain "Nobody"/);
+
+    // A stop before any reply text keeps the roll, and says how to get a reply without rolling again (T09 QA-2).
+    await ok(["brain.update", "--conversation", c, "--reasoning.enabled"]); // reasoning streams first: stop there
+    await ok(["conversation.update", "--id", c, "--templates.roll", "MOCK_SLOW {{roll}}"]);
+    const res = await post("turn", { conversation: c, roll: true });
+    const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+    for (let text = ""; !text.includes('"type":"reasoning"'); ) text += (await reader.read()).value ?? "";
+    const stop = (await (await post("generation.stop", { conversation: c })).json()) as { error: { message: string } };
+    while (!(await reader.read()).done);
+    assert.match(stop.error.message, /^Stopped before any reply text arrived\. Your roll is saved; the reply isn't\. To get a reply, send again to Game Master with no new message and no new roll: turn --brain b_\w+ without --content or --roll\.$/);
+    assert.equal((await get(c)).messages.filter(rollOf).length, 2);
   });
 
   test("prompt.preview: --roll is a turn preview, not a regenerate one; campaign files keep a roll", async () => {

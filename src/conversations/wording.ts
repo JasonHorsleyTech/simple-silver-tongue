@@ -64,12 +64,16 @@ export const DEFAULT_TOOL = {
 export const DEFAULT_SETUP_LABEL = "World Bible";
 export const setupPrefill = (label: string) => `<!-- This is the ${label}. -->`;
 
-/** T09: a roll as both clients show it, apart from the line every brain reads: "🎲 d20: 14". */
-export const rollLabel = (roll: Roll) => `🎲 ${roll.die}: ${roll.result}`;
+/**
+ * T09: a roll as both clients show it, apart from the line every brain reads: "🎲 d20: 14". Once that line is
+ * edited (the honor system), the line is the roll every brain was told, and the die's own number is only
+ * history: "🎲 d20 said 14", shown beside the edited line, never as the roll itself (T09 QA-1).
+ */
+export const rollLabel = (roll: Roll, edited = false) => `🎲 ${roll.die}${edited ? " said " : ": "}${roll.result}`;
 
 /**
  * T09: the payload view's note for a roll-and-send that hasn't been sent. The server rolls only when the turn is
  * sent, so the preview can't know the number: it leaves the placeholder where the number will go.
  */
 export const ROLL_PREVIEW_NOTE =
-  "The d20 isn't rolled yet. When you send, the server rolls it and puts the number (1 to 20) where {{roll}} is; the rest of this body is exactly what is sent.";
+  "The d20 isn't rolled yet. When you send, the server rolls it and puts the number (1 to 20) where {{roll}} is in your roll's line, the newest player message (a {{roll}} anywhere else is sent as written). The rest of this body is exactly what is sent.";

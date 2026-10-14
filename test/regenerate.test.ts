@@ -242,7 +242,8 @@ describe("steered regeneration, versions, edit and delete: CLI → server → mo
     const balanceBefore = t.mock.state.balanceUsd;
     let r = await stopAtFirst("turn", { conversation: c, content: "MOCK_SLOW again" });
     assert.equal(r.last.type, "error");
-    assert.deepEqual(r.last.error, { code: "stopped", message: "Stopped before any reply text arrived. Your message is saved; the reply isn't." });
+    assert.match(r.last.error.message, /^Stopped before any reply text arrived\. Your message is saved; the reply isn't\. To get a reply, send again to Assistant with no new message: turn --brain b_\w+ without --content\.$/);
+    assert.equal(r.last.error.code, "stopped");
     assert.deepEqual(r.stop, { stopped: true, message: null, error: r.last.error, note: r.stop.note });
     assert.match(r.stop.note, /^Stopping saves waiting, not money/);
     assert.deepEqual((await get(c)).messages.map((m) => m.author.type), ["player", "brain", "player"]);

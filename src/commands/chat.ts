@@ -174,13 +174,16 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
   yield { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId, kind: plan.brain.kind, conversationTitle: conv.title };
 
   const kept = plan.player && plan.roll ? "Your message and your roll are" : plan.roll ? "Your roll is" : plan.player ? "Your message is" : null;
+  // Name the brain: with several, a bare "turn" goes to the default brain, which may be another one (T04 QA-1).
+  // A roll is already in the ledger: sending again must not roll again.
+  const again = plan.roll
+    ? `send again to ${plan.brain.name} with no new message and no new roll: turn --brain ${plan.brain.id} without --content or --roll`
+    : `send again to ${plan.brain.name} with no new message: turn --brain ${plan.brain.id} without --content`;
   const say: Say = {
     kept: kept ? `${kept} saved; the reply isn't.` : "No reply was saved.",
-    // Name the brain: with several, a bare "turn" goes to the default brain, which may be another one (T04 QA-1).
-    // A roll is already in the ledger: retrying must not roll again.
-    retry: plan.roll
-      ? `To retry, send again to ${plan.brain.name} with no new message and no new roll: turn --brain ${plan.brain.id} without --content or --roll, or Retry in the browser.`
-      : `To retry, send again to ${plan.brain.name} with no new message: turn --brain ${plan.brain.id} without --content, or Retry in the browser.`,
+    retry: `To retry, ${again}, or Retry in the browser.`,
+    // A stop is no failure (no Retry button), but re-running the same command would add the text or roll twice (T09 QA-2).
+    ...(kept ? { resend: `To get a reply, ${again}.` } : {}),
     again: { command: "turn", args: { conversation: conv.id, brain: plan.brain.id } },
   };
   const reply = yield* collectReply(vault, conv.id, upstream, gen, say);
@@ -276,8 +279,14 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
   yield { type: "done", message, note: replyNote(head, reply, plan.body.stop), spentUsd };
 }
 
-/** What a broken reply's error says was kept and how to retry, plus the retry request itself (details.retry). */
-type Say = { kept: string; retry: string; again: RetryRequest };
+/**
+ * What a broken reply's error says was kept and how to retry, plus the retry request itself (details.retry).
+ * `resend`: what a stop with no reply says, when a turn's message or roll was kept (a stop has no Retry).
+ */
+type Say = { kept: string; retry: string; resend?: string; again: RetryRequest };
+
+/** A stop before any reply arrived: what was kept, and how to have it answered without sending it twice. */
+const stoppedEarly = (what: string, say: Say) => stopped([`Stopped before ${what}.`, say.kept, say.resend].filter(Boolean).join(" "));
 
 /** Why a prompt that did arrive wasn't painted: it isn't all there. The image's error, to edit or retry from. */
 const UNFINISHED = {
@@ -314,7 +323,7 @@ async function* paintReply(
   if (!prompt) {
     if (reply.rest) {
       drainStopped(vault, convId, reply.rest, null);
-      throw stopped(`Stopped before any of the prompt arrived. ${say.kept}`);
+      throw stoppedEarly("any of the prompt arrived", say);
     }
     await mutateConversation(vault, convId, (c) => addSpend(c, reply.costUsd)); // billed all the same
     const tool = brain.tool?.name ?? "generate_image";
@@ -408,7 +417,7 @@ async function* collectReply(
   }
   if (reply.stopped && !reply.content.trim() && !reply.prompt.trim()) {
     drainStopped(vault, convId, reply.rest!, null);
-    throw stopped(`Stopped before any reply text arrived. ${say.kept}`);
+    throw stoppedEarly("any reply text arrived", say);
   }
   return reply;
 }

@@ -96,7 +96,7 @@ export function formatConversation(c: Conversation, opts?: FormatOpts): string {
 function versionBits(v: MessageVersion, kind: LedgerMessage["kind"] = "text"): string[] {
   const bits: string[] = [];
   if (kind === "image") bits.push("image prompt", ...(v.image ? [imageLine(v.image)] : ["no image"]));
-  if (v.roll) bits.push(rollLabel(v.roll)); // what the die said (T09); the text below is what every brain reads
+  if (v.roll) bits.push(rollLabel(v.roll, v.edited)); // what the die said (T09); the text below is what every brain reads
   if (v.steer !== undefined) bits.push(`steer "${v.steer}"${v.steeredFrom !== undefined ? ` on version ${v.steeredFrom + 1}` : ""}`);
   if (v.edited) bits.push("edited");
   if (v.costUsd) bits.push(usd(v.costUsd));
