@@ -36,7 +36,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T02: Basic streaming chat (CP1) · `qa`
+## T02: Basic streaming chat (CP1) · `triage`
 
 **Engineer scope**
 - The full conversation document per design.md (settings, templates, setup, brains, ledger), even though brains and setup only get commands in T04. A new conversation gets one default text brain named "Assistant" with the given system prompt, and per-brain reasoning on at `low`.
