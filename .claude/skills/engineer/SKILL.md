@@ -9,7 +9,7 @@ description: Pass 1 of the simple-silver ticket loop. Implement a ticket's termi
 
 ## Read first
 1. `AGENTS.md`: the project, hard requirements, stack, spending rules and conventions.
-2. `docs/design.md`: data model, prompt assembly, command surface. Follow it exactly. If you must deviate, update it in the same commit and explain why in your report.
+2. `docs/design.md`: data model, prompt assembly, command surface. Honor its hard rules and intent. Where you find a better shape or mechanism, use it, update the doc in the same commit, and explain why in your report.
 3. Your ticket in `TICKETS.md`, including any **Deferred in** items. Those are part of your scope.
 4. `git log --oneline | head -30`, plus the previous ticket's reports in `reports/` for context.
 
