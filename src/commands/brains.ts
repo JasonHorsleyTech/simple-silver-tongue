@@ -2,8 +2,9 @@ import { z } from "zod";
 import { makeImageBrain, newBrain, nextColor } from "../conversations/defaults.ts";
 import { REASONING_NOTE, resolveBrain } from "../conversations/prompt.ts";
 import { assertBrainIdle, loadConversation, mutateConversation } from "../conversations/store.ts";
-import type { Brain, Conversation } from "../conversations/types.ts";
+import type { Brain, Conversation, ImageShape } from "../conversations/types.ts";
 import { FRAMING_STOP, MAX_STOPS, STOP_REASONING_NOTE } from "../conversations/wording.ts";
+import { DEFAULT_SHAPE, IMAGE_SHAPES } from "../images/request.ts";
 import { badRequest, CommandError, conflict } from "../lib/errors.ts";
 import { command } from "../registry.ts";
 import { conversationId, systemPrompt } from "./conversations.ts";
@@ -71,6 +72,9 @@ export const stop = z
     `Stop sequences: Venice ends the reply just before any of them (at most ${MAX_STOPS}). Text brains start with "${FRAMING_STOP}", so a brain can't write a framing line for someone else. Repeat the flag for several; --stop '[]' clears them`,
   );
 export const safeMode = z.boolean().describe("Image brains: Venice safe_mode, which blurs adult content (default on)");
+export const shape = z
+  .enum(IMAGE_SHAPES as [ImageShape, ...ImageShape[]])
+  .describe("Image brains: the picture's shape, portrait, square or landscape (default landscape). Sent as a width × height, or the nearest aspect ratio the image model offers");
 
 /**
  * A new or changed name must be unique (case-insensitive), not look like an id, and not be "player". `hint` ends the
@@ -85,17 +89,18 @@ export function checkName(conv: Conversation, value: string, self?: Brain, hint 
 
 const messagesBy = (conv: Conversation, brain: Brain) => conv.messages.filter((m) => m.author.type === "brain" && m.author.brainId === brain.id).length;
 
-/** Safe mode and tool text only mean something for an image brain. */
-function imageOnly(brain: Brain, args: { safeMode?: boolean; tool?: object }): void {
+/** Safe mode, shape and tool text only mean something for an image brain. */
+function imageOnly(brain: Brain, args: { safeMode?: boolean; shape?: ImageShape; tool?: object }): void {
   if (brain.kind === "image") return;
-  if (args.safeMode !== undefined || (args.tool && Object.keys(args.tool).length)) {
-    throw badRequest(`Safe mode and tool text are for image brains, and ${brain.name} is a text brain. Pass --kind image too.`);
+  if (args.safeMode !== undefined || args.shape !== undefined || (args.tool && Object.keys(args.tool).length)) {
+    throw badRequest(`Safe mode, shape and tool text are for image brains, and ${brain.name} is a text brain. Pass --kind image too.`);
   }
 }
 
-function applyImageFields(brain: Brain, args: { safeMode?: boolean; tool?: z.output<typeof tool> }): void {
+function applyImageFields(brain: Brain, args: { safeMode?: boolean; shape?: ImageShape; tool?: z.output<typeof tool> }): void {
   imageOnly(brain, args);
   if (args.safeMode !== undefined) brain.safeMode = args.safeMode;
+  if (args.shape !== undefined) brain.shape = args.shape;
   if (args.tool) Object.assign(brain.tool!, args.tool);
 }
 
@@ -108,7 +113,7 @@ export function brainLine(b: Brain, conv?: Pick<Conversation, "defaultBrainId">)
   if (conv?.defaultBrainId === b.id) bits.push("default");
   bits.push(`reasoning ${b.reasoning.enabled ? b.reasoning.effort : "off"}`, `final reminder ${b.finalReminder.enabled && b.finalReminder.content.trim() ? "on" : "off"}`);
   bits.push(b.stop.length ? `stops at ${b.stop.map((x) => JSON.stringify(x)).join(", ")}` : "no stop sequences");
-  if (b.kind === "image") bits.push(`safe mode ${b.safeMode === false ? "off" : "on"}`);
+  if (b.kind === "image") bits.push(`safe mode ${b.safeMode === false ? "off" : "on"}`, b.shape ?? DEFAULT_SHAPE);
   return bits.join(" · ");
 }
 
@@ -148,7 +153,8 @@ everyone else's framed with the templates). Talk to it with turn --brain <name>.
 Its final reminder is on and pre-filled with an editable example, sent as the last message of its requests;
 change it with --final-reminder.content, or turn it off with --no-final-reminder.enabled.
 An image brain (--kind image) answers with a forced generate_image call: its reply is an image prompt, which is
-painted with the conversation's image model. It gets editable tool text, and safe mode on (Venice blurs adult content).
+painted with the conversation's image model. It gets editable tool text, safe mode on (Venice blurs adult content)
+and a shape (--shape portrait, square or landscape; landscape by default).
 A text brain stops before "${FRAMING_STOP}" (--stop), so it can't write a framing line for another speaker.`,
   args: z.object({
     conversation: conversationId,
@@ -159,6 +165,7 @@ A text brain stops before "${FRAMING_STOP}" (--stop), so it can't write a framin
     reasoning: reasoning.optional(),
     finalReminder: finalReminder.optional(),
     safeMode: safeMode.optional(),
+    shape: shape.optional(),
     tool: tool.optional(),
     stop: stop.optional(),
   }),
@@ -166,6 +173,7 @@ A text brain stops before "${FRAMING_STOP}" (--stop), so it can't write a framin
     './ss brain.add --conversation c_k3j9x0q2ma --name "Dice Master" --system-prompt @dice.md',
     './ss brain.add --conversation c_k3j9x0q2ma --name "Dice Master" --system-prompt "You roll dice." --final-reminder.content "<!-- System reminder --> Only roll."',
     './ss brain.add --conversation c_k3j9x0q2ma --name "Scene Painter" --kind image --system-prompt "You paint the scene."',
+    './ss brain.add --conversation c_k3j9x0q2ma --name "Portraitist" --kind image --shape portrait --system-prompt @portraits.md',
   ],
   handler: async (args, ctx): Promise<Brain> => {
     const { vault } = ctx.requireSession();
@@ -186,7 +194,7 @@ A text brain stops before "${FRAMING_STOP}" (--stop), so it can't write a framin
 
 export const brainUpdate = command({
   name: "brain.update",
-  description: `Edit a brain: name, color, system prompt, reasoning, final reminder, kind, safe mode, tool text, stop sequences.
+  description: `Edit a brain: name, color, system prompt, reasoning, final reminder, kind, safe mode, shape, tool text, stop sequences.
 Only the fields you pass change, and any time is fine, mid-conversation included: the next request uses them
 (prompt.preview shows it). The system prompt can't be empty. Kind is locked once the brain has messages.
 Reasoning is off by default. Turning it on is an opt-in: the provider then adds a small hidden instruction.`,
@@ -200,6 +208,7 @@ Reasoning is off by default. Turning it on is an opt-in: the provider then adds 
     finalReminder: finalReminder.optional(),
     kind: kind.optional().describe("text or image. Only while the brain has no messages"),
     safeMode: safeMode.optional(),
+    shape: shape.optional(),
     tool: tool.optional(),
     stop: stop.optional(),
   }),
@@ -210,12 +219,13 @@ Reasoning is off by default. Turning it on is an opt-in: the provider then adds 
     "./ss brain.update --conversation c_k3j9x0q2ma --no-reasoning.enabled",
     `./ss brain.update --conversation c_k3j9x0q2ma --brain "Game Master" --stop "${FRAMING_STOP}" --stop "<!-- System"`,
     "./ss brain.update --conversation c_k3j9x0q2ma --stop '[]'   # no stop sequences",
+    './ss brain.update --conversation c_k3j9x0q2ma --brain "Character Portraitist" --shape portrait',
   ],
   handler: async (args, ctx): Promise<Brain> => {
     const { vault } = ctx.requireSession();
-    const fields = ["name", "color", "systemPrompt", "reasoning", "finalReminder", "kind", "safeMode", "tool", "stop"] as const;
+    const fields = ["name", "color", "systemPrompt", "reasoning", "finalReminder", "kind", "safeMode", "shape", "tool", "stop"] as const;
     if (!fields.some((f) => args[f] !== undefined)) {
-      throw badRequest("Nothing to change. Pass --name, --color, --system-prompt, --reasoning.<field>, --final-reminder.<field>, --kind, --safe-mode, --tool.<field> or --stop.");
+      throw badRequest("Nothing to change. Pass --name, --color, --system-prompt, --reasoning.<field>, --final-reminder.<field>, --kind, --safe-mode, --shape, --tool.<field> or --stop.");
     }
     const { result } = await mutateConversation(vault, args.conversation, (c) => {
       const brain = resolveBrain(c, args.brain);

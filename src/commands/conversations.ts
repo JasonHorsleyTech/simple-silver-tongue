@@ -99,10 +99,7 @@ export const templates = z
 /** The image settings image brains' requests are built from (src/images/request.ts). null unsets one. */
 export const imageSettings = z
   .object({
-    width: z.number().int().min(64).max(4096).nullable().describe("Image width in pixels, for models sized by width × height (z-image-turbo: multiples of 8). null: the model's default"),
-    height: z.number().int().min(64).max(4096).nullable().describe("Image height in pixels, as width"),
-    aspectRatio: z.string().regex(/^\d+:\d+$/, "Aspect ratios look like 16:9").nullable().describe("For models sized by resolution and aspect ratio (Nano Banana), one they list. null: the model's default"),
-    resolution: z.string().min(1).nullable().describe("For models with a resolution list (1K, 2K, 4K), one they list. null: the model's default"),
+    resolution: z.string().min(1).nullable().describe("For models with a resolution list (1K, 2K, 4K), one they list; it sets the price. null: the model's default"),
     format: z.enum(["webp", "png", "jpeg"]).describe("The format to ask for (default webp). The stored type is what Venice really sends"),
     hideWatermark: z.boolean().describe("Ask Venice to leave its watermark off (default true: no watermark)"),
     negativePrompt: z.string().nullable().describe("What the image should not show, sent as negative_prompt with every image. null or blank: not sent"),
@@ -113,9 +110,10 @@ export const conversationUpdate = command({
   name: "conversation.update",
   description: `Change a conversation's title, settings or framing templates. Only the fields you pass change.
 Unset maxTokens or temperature with null: --settings '{"maxTokens": null}'.
-Image brains' images use the image model and --settings.image.* (size, format, watermark, negative prompt). Only
-what the model takes is sent: prompt.preview --brain <image brain> shows the exact image request and says what
-was left out. A size the current model can't take is refused.
+Image brains' images use the image model and --settings.image.* (resolution, format, watermark, negative prompt);
+each image brain has its own shape (brain.update --shape). Only what the model takes is sent: prompt.preview
+--brain <image brain> shows the exact image request and says what was left out. A resolution the current model
+doesn't list is refused.
 Templates are sent to the models, so they are yours to edit; prompt.preview shows the effect. Each one must keep
 its placeholder ({{content}}, {{prompt}}, {{instruction}} or {{roll}}), where the text goes. The roll template
 (T09) makes a roll's message when you roll, so a change shows in later rolls; earlier ones keep their text.`,
@@ -139,7 +137,7 @@ its placeholder ({{content}}, {{prompt}}, {{instruction}} or {{roll}}), where th
     "./ss conversation.update --id c_k3j9x0q2ma --settings.text-model venice-uncensored-1-2 --settings.max-tokens 400",
     "./ss conversation.update --id c_k3j9x0q2ma --templates.player '{{content}}'",
     "./ss conversation.update --id c_k3j9x0q2ma --templates.roll 'I roll the d20 and get {{roll}}.'",
-    "./ss conversation.update --id c_k3j9x0q2ma --settings.image.width 1024 --settings.image.height 768 --settings.image.format png",
+    "./ss conversation.update --id c_k3j9x0q2ma --settings.image-model krea-2-turbo --settings.image.resolution 2K --settings.image.format png",
   ],
   handler: async (args, ctx): Promise<Conversation> => {
     const { vault } = ctx.requireSession();
@@ -150,8 +148,8 @@ its placeholder ({{content}}, {{prompt}}, {{instruction}} or {{roll}}), where th
     if (s.textModel) await lookupModel(ctx.deps.venice, "text", s.textModel);
     const imageModel = s.imageModel ? await lookupModel(ctx.deps.venice, "image", s.imageModel) : null;
     const img = s.image ?? {};
-    const sizing = (["width", "height", "aspectRatio", "resolution"] as const).some((k) => img[k] !== undefined && img[k] !== null);
-    // A size is checked against the model it will be sent to (the new one, if this call changes it).
+    const sizing = img.resolution !== undefined && img.resolution !== null;
+    // A resolution is checked against the model it will be sent to (the new one, if this call changes it).
     const sizeModel = sizing ? (imageModel ?? (await lookupModel(ctx.deps.venice, "image", (await loadConversation(vault, args.id)).settings.imageModel))) : null;
     const { conv } = await mutateConversation(vault, args.id, (c) => {
       if (args.title !== undefined) c.title = args.title;
@@ -177,7 +175,7 @@ its placeholder ({{content}}, {{prompt}}, {{instruction}} or {{roll}}), where th
   format: (c: Conversation) => {
     const st = c.settings;
     const im = st.image;
-    const size = im.width || im.height ? `${im.width ?? "-"}×${im.height ?? "-"}` : im.resolution || im.aspectRatio ? [im.resolution, im.aspectRatio].filter(Boolean).join(" ") : "default size";
+    const size = im.resolution ?? "default resolution";
     return `Updated ${c.id} "${c.title}" · ${st.textModel} · max_tokens ${st.maxTokens ?? "-"} · temperature ${st.temperature ?? "-"} · images ${st.imageModel}, ${size}, ${im.format}${im.hideWatermark ? ", no watermark" : ""}${im.negativePrompt?.trim() ? ", negative prompt" : ""}`;
   },
 });

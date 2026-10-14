@@ -226,6 +226,23 @@ describe("image brains: CLI → server → mock Venice, encrypted user (T05)", (
     assert.equal((await get(c)).messages.length, before + 1, "only your message is saved");
   });
 
+  test("each image brain paints in its own shape, in the terms its image model takes; text brains have none", async () => {
+    const { c, painter } = await table();
+    assert.equal(painter.shape, "landscape", "a new image brain paints landscape");
+    await ok(["brain.update", "--conversation", c, "--brain", painter.id, "--shape", "portrait"]);
+    await events(["turn", "--conversation", c, "--brain", "Scene Painter", "--content", "the hooded figure"]);
+    const body = sent("/image/generate") as ImageRequest;
+    assert.deepEqual([body.width, body.height, body.aspect_ratio], [832, 1216, undefined]);
+    await ok(["conversation.update", "--id", c, "--settings.image-model", "hunyuan-image-v3"]);
+    const preview = (await json(["prompt.preview", "--conversation", c, "--brain", "Scene Painter"])).image as { params: Record<string, unknown>; notes: string[] };
+    assert.deepEqual([preview.params.width, preview.params.aspect_ratio, preview.notes], [undefined, "2:3", []]);
+    const square = (await json(["brain.add", "--conversation", c, "--name", "Mapper", "--kind", "image", "--shape", "square", "--system-prompt", "You draw maps."])) as Brain;
+    assert.equal(square.shape, "square");
+    const r = await t.cli(["brain.update", "--conversation", c, "--brain", "Game Master", "--shape", "square"]);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /Safe mode, shape and tool text are for image brains, and Game Master is a text brain/);
+  });
+
   test("a prompt in the painter's mouth is painted; deleting a message or the conversation deletes its images", async () => {
     const { c } = await table();
     const added = await json(["message.add", "--conversation", c, "--as", "Scene Painter", "--content", "A barkeep with a leather apron."]);

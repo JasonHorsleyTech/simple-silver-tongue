@@ -1,7 +1,7 @@
 import { RotateCw, X } from "lucide-react";
 import type { Brain } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
-import { LiveImage, type Aspect } from "./ImageCard.tsx";
+import { expectedAspect, LiveImage } from "./ImageCard.tsx";
 import { BrainMessageFrame, SteerNote } from "./MessageFrame.tsx";
 import { MessageText } from "./MessageText.tsx";
 import { Reasoning } from "./Reasoning.tsx";
@@ -24,14 +24,11 @@ export function LiveReply({
   live,
   brain,
   slot,
-  aspect,
   onRetry,
   onDismiss,
 }: {
   live: Live;
   brain?: Brain;
-  /** An image reply's frame: the shape the image is expected to have. */
-  aspect: Aspect;
   slot?: { nextVersion: number; fromVersion: number | null };
   onRetry(): void;
   onDismiss(): void;
@@ -62,7 +59,7 @@ export function LiveReply({
         footer={failed ? null : FOOTER_SPACE}
       >
         {live.image ? (
-          <LiveImage prompt={live.content} aspect={aspect} color={brain?.color} failed={failed} />
+          <LiveImage prompt={live.content} aspect={expectedAspect(brain)} color={brain?.color} failed={failed} />
         ) : live.content ? (
           <div className={failed ? "opacity-55" : "ss-caret"}>
             <MessageText text={live.content} writing={!failed} empty={<TypingDots />} />

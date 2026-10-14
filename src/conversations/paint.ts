@@ -1,7 +1,7 @@
 import { CommandError, notFound, upstreamError } from "../lib/errors.ts";
 import { nowIso } from "../lib/ids.ts";
 import { removeImageFiles, saveImageFile } from "../images/files.ts";
-import { buildImageRequest, imagePriceUsd, type ImagePlan } from "../images/request.ts";
+import { buildImageRequest, DEFAULT_SHAPE, imagePriceUsd, type ImagePlan } from "../images/request.ts";
 import { sniffImage } from "../images/sniff.ts";
 import type { StreamEvent } from "../registry.ts";
 import { closeVault, forkVault, type Vault } from "../storage/vault.ts";
@@ -21,15 +21,16 @@ import type { Brain, Conversation, ImageRecord, LedgerMessage, RetryRequest } fr
  * the request is with Venice the image is being made and billed, so it is kept.
  */
 
-/** Who paints, with what: the conversation's image model (from /models) and the brain's safe mode. */
+/** Who paints, with what: the conversation's image model (from /models) and the brain's safe mode and shape. */
 export type Painter = { model: ModelInfo; safeMode: boolean; plan(prompt: string): ImagePlan };
 
 /** An unknown image model is refused here, before the brain is asked for a prompt or anything is spent. */
 export async function painterFor(venice: VeniceClient, conv: Conversation, brain: Brain): Promise<Painter> {
   const model = await lookupModel(venice, "image", conv.settings.imageModel);
   const safeMode = brain.safeMode !== false;
+  const shape = brain.shape ?? DEFAULT_SHAPE;
   const settings = structuredClone(conv.settings);
-  return { model, safeMode, plan: (prompt) => buildImageRequest(settings, model, prompt, safeMode) };
+  return { model, safeMode, plan: (prompt) => buildImageRequest(settings, model, prompt, safeMode, shape) };
 }
 
 export type PaintTarget = { messageId: string; image: ImageRecord; prompt: string };

@@ -40,11 +40,12 @@ export type Settings = {
   image: ImageSettings;
 };
 
-/** Used by T05. Only the fields the chosen image model supports are sent. */
+/**
+ * Used by T05. Only the fields the chosen image model supports are sent. The picture's shape is each image
+ * brain's own (Brain.shape), so a portraitist and a scene painter can share a conversation.
+ */
 export type ImageSettings = {
-  width?: number;
-  height?: number;
-  aspectRatio?: string;
+  /** For models with a resolution list (1K, 2K, 4K): one they list. Absent: the model's default. */
   resolution?: string;
   format: "webp" | "png" | "jpeg";
   hideWatermark: boolean;
@@ -76,6 +77,11 @@ export type Brain = {
   reasoning: { enabled: boolean; effort: string };
   /** Image brains only → Venice safe_mode. */
   safeMode?: boolean;
+  /**
+   * Image brains only: the picture's shape (default landscape). Sent as a width × height or the nearest aspect
+   * ratio the image model offers (buildImageRequest).
+   */
+  shape?: ImageShape;
   /** Never empty (design.md hard rule 1). */
   systemPrompt: string;
   finalReminder: { enabled: boolean; content: string };
@@ -88,6 +94,8 @@ export type Brain = {
   /** Image brains only. All of this text reaches the model. */
   tool?: BrainTool;
 };
+
+export type ImageShape = "portrait" | "square" | "landscape";
 
 export type BrainTool = {
   name: string;
@@ -243,7 +251,7 @@ export type RetryRequest =
 
 /**
  * The exact /image/generate body (T05), minus the auth header. buildImageRequest (src/images/request.ts) makes
- * it from the conversation's image settings, the model's constraints and the brain's safe mode; the prompt is
+ * it from the conversation's image settings, the model's constraints and the brain's safe mode and shape; the prompt is
  * the image message's content, word for word.
  */
 export type ImageRequest = {

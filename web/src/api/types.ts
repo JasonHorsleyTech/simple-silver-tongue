@@ -14,6 +14,7 @@ import type {
   Conversation,
   ImageRecord,
   ImageRequest,
+  ImageShape,
   LedgerMessage,
   MessageVersion,
   RetryRequest,
@@ -23,7 +24,13 @@ import type {
 } from "../../../src/conversations/types.ts";
 import type { ModelInfo } from "../../../src/venice/models.ts";
 
-export type { Brain, BrainTool, ChatMessage, ChatRequest, Conversation, ImageRecord, ImageRequest, LedgerMessage, MessageVersion, ModelInfo, RetryRequest, Roll, SetupMessage, Templates };
+export type { Brain, BrainTool, ChatMessage, ChatRequest, Conversation, ImageRecord, ImageRequest, ImageShape, LedgerMessage, MessageVersion, ModelInfo, RetryRequest, Roll, SetupMessage, Templates };
+
+/**
+ * The server's own image request rule: an image brain's shapes and what each is sent as, and what an image costs
+ * with the conversation's settings (the image model picker shows it). Pure, so the browser runs the same code.
+ */
+export { buildImageRequest, DEFAULT_SHAPE, IMAGE_SHAPES, imagePriceUsd, SHAPE_SIZES } from "../../../src/images/request.ts";
 
 /**
  * The server's own words and values, shown as they are: what a stop does and doesn't save (and why an image
@@ -143,11 +150,8 @@ export type ConversationUpdate = {
     maxTokens: number | null;
     temperature: number | null;
     imageModel: string;
-    /** T05: how image brains' images are made. null unsets a field. A size the model can't take is a 400. */
+    /** T05: how image brains' images are made (each image brain has its own shape). null unsets a field. A resolution the model doesn't list is a 400. */
     image: Partial<{
-      width: number | null;
-      height: number | null;
-      aspectRatio: string | null;
       resolution: string | null;
       format: "webp" | "png" | "jpeg";
       hideWatermark: boolean;
@@ -167,6 +171,8 @@ export type BrainFields = {
   reasoning?: Partial<Brain["reasoning"]>;
   finalReminder?: Partial<Brain["finalReminder"]>;
   safeMode?: boolean;
+  /** Image brains only: portrait, square or landscape. */
+  shape?: ImageShape;
   tool?: Partial<BrainTool>;
   /** T07 triage: the whole list (at most 4, none blank); [] clears it. Text brains start with ["<!-- from:"]. */
   stop?: string[];
@@ -220,7 +226,8 @@ export type Commands = {
    */
   "user.change-password": { args: { username: string; password: string; newPassword: string }; result: { username: string; loggedOut: number } };
   "models.list": {
-    args: { type?: "text" | "image"; refresh?: boolean };
+    /** The curated models (src/venice/curated.ts); `all`: every model Venice has. */
+    args: { type?: "text" | "image"; all?: boolean; refresh?: boolean };
     result: { models: ModelInfo[]; defaults: { text: string; image: string } };
   };
   "conversation.list": { args: NoArgs; result: { conversations: ConversationSummary[]; unreadable: UnreadableConversation[] } };

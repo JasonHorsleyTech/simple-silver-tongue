@@ -428,3 +428,15 @@ Rules for every brain:
   - Built: the start page's three ways in (Ready to play, From a preset, From scratch), one at a time; a preset card with its cast (reasoning tagged, "What each brain does"), a Title field and **Start from this preset**; **Write the World Bible first** in a conversation with brains and no setup (one click adds the World Bible and opens it in the Setup tab); Settings → Brains → Add a brain → **From a preset** (preset and example brains with their jobs, an editable name pre-filled with a free one, `brain.import`, the new card opened on its notes). `presets.list` / `examples.list` brains now carry `reasoning` (effort, when on). Live: GM, Creator, Actor, odds and a roll to the GM, all in the browser.
 
 **Deferred in:** *(none yet)*
+
+---
+
+## T11: Curated models, image prices, per-brain image shape · `done`
+
+Jason, 2026-10-14, done directly (no four-pass loop, at his request). Venice lists ~130 text and ~45 image models; the pickers offered all of them live, and only the mock's six in mock mode.
+- **Curated models.** `models.list` (and so the pickers) offers `src/venice/curated.ts`: private only, no Claude or OpenAI, one per family (its newest or best), plus an uncensored twin where there is one: 19 text, 7 image. Out: anonymized, `e2ee-*` (client-side encryption, no tool calls), retiring, and text models that can't call tools. `models.list --all` shows everything; any Venice model still works by id. design.md, "Models".
+- **Price per image** in the image model picker, at the conversation's resolution, by the server's own `buildImageRequest` + `imagePriceUsd`.
+- **Image shape per image brain** (`brain.add` / `brain.update --shape portrait|square|landscape`, default landscape), replacing the conversation-wide width / height / aspect ratio, so the Portraitist stops painting landscape. The preset and the example set the Portraitist to portrait. Width × height models get 832×1216 / 1024×1024 / 1216×832; aspect-ratio models the listed ratio nearest 2:3 / 1:1 / 3:2. Old files lose the old fields on load.
+- **Fix:** a resolution left from another model is no longer sent to a model with no resolution list (it used to be).
+- The mock catalog is now all curated models, one image model per sizing and pricing shape (`krea-2-turbo` and `hunyuan-image-v3` replace `nano-banana-2`; `z-ai-glm-5-3` replaces `gemini-3-6-flash`).
+- Not live-tested per model: only DeepSeek V4.1 Flash is proven with the stop sequence, reasoning off and a forced tool call. Another curated text model that refuses a field says so on its first send.

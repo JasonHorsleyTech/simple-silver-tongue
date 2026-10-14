@@ -2,7 +2,7 @@ import { Braces, ChevronDown, Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import type { Brain, BrainImport, Conversation, ModelInfo } from "../../api/types.ts";
+import { DEFAULT_SHAPE, type Brain, type BrainImport, type Conversation, type ImageShape, type ModelInfo } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { Segmented } from "../../components/Segmented.tsx";
@@ -13,6 +13,7 @@ import { readLocal, writeLocal } from "../../lib/storage.ts";
 import { BrainBadge } from "../chat/BrainBadge.tsx";
 import { BrainEditor } from "./BrainEditor.tsx";
 import { ImportBrainPicker, ImportedNotes } from "./ImportBrain.tsx";
+import { ShapePicker } from "./ShapePicker.tsx";
 
 /**
  * The brains: one quiet card each (badge, what is on, how much it has said, its prompt's first line), opened
@@ -40,9 +41,8 @@ export function BrainsTab({
   onPayload(brainId: string): void;
   onImageSettings(): void;
 }) {
-  const img = conv.settings.image;
-  const size = img.width && img.height ? `${img.width} × ${img.height}` : img.resolution || img.aspectRatio ? [img.resolution, img.aspectRatio].filter(Boolean).join(" · ") : "its default size";
-  const imagePlan = `${conv.settings.imageModel} · ${size}`;
+  const resolution = conv.settings.image.resolution;
+  const imagePlan = `${conv.settings.imageModel}${resolution ? ` at ${resolution}` : ""}`;
   const [openId, setOpenId] = useState<string | null>(() => (conv.brains.length === 1 ? conv.brains[0]!.id : null));
   const [adding, setAdding] = useState(false);
   /** The last brain.import, shown in its brain's card until dismissed: what it left behind (T10). */
@@ -155,6 +155,7 @@ function BrainCard({
   const tags = [
     isDefault && "default",
     brain.kind === "image" && "image",
+    brain.kind === "image" && (brain.shape ?? DEFAULT_SHAPE),
     brain.kind === "image" && brain.safeMode === false && "safe mode off",
     brain.reasoning.enabled && `reasoning ${brain.reasoning.effort}`,
     brain.finalReminder.enabled && brain.finalReminder.content.trim() && "reminder",
@@ -274,10 +275,11 @@ function AddBrain({ conv, onAdded, onCancel }: { conv: Conversation; onAdded(b: 
   );
 }
 
-/** A new brain: name, kind and system prompt. Its reminder starts on, pre-filled with an example to edit. */
+/** A new brain: name, kind (and an image brain's shape) and system prompt. Its reminder starts on, pre-filled with an example to edit. */
 function BlankBrainForm({ conversationId, onAdded, onCancel }: { conversationId: string; onAdded(b: Brain): void; onCancel(): void }) {
   const [name, setName] = useState("");
   const [kind, setKind] = useState<Brain["kind"]>("text");
+  const [shape, setShape] = useState<ImageShape>(DEFAULT_SHAPE);
   const [systemPrompt, setSystemPrompt] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -290,7 +292,7 @@ function BlankBrainForm({ conversationId, onAdded, onCancel }: { conversationId:
     setPending(true);
     setError(null);
     try {
-      onAdded(await api.call("brain.add", { conversation: conversationId, name: name.trim(), systemPrompt, ...(kind === "image" ? { kind } : {}) }));
+      onAdded(await api.call("brain.add", { conversation: conversationId, name: name.trim(), systemPrompt, ...(kind === "image" ? { kind, shape } : {}) }));
     } catch (err) {
       setError(errorMessage(err));
       setPending(false);
@@ -332,6 +334,7 @@ function BlankBrainForm({ conversationId, onAdded, onCancel }: { conversationId:
           ]}
         />
       </div>
+      {kind === "image" && <ShapePicker value={shape} onChange={setShape} />}
       <TextArea
         id="nb-sp"
         label="System prompt"

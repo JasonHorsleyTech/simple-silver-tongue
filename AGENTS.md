@@ -51,7 +51,8 @@ The full data model and prompt-assembly rules are in **[docs/design.md](docs/des
 - **Images: no Venice watermark** by default (`settings.image.hideWatermark: true`, T07), since this is a personal scratch pad.
 - **The example campaign** is `examples/dnd-tavern.json` (T07): the README's "start here". Its prompts were tuned live against `deepseek-v4-1-flash`; keep them working if you change the app's framing.
 - **The presets** are `presets/*.json` (T10): campaign files with brains and no world. `tabletop-rpg` is seven genre-free brains whose prompts were tuned live (design.md, "Presets"); keep them working too. Its Character Actor ships with reasoning on (low), the one brain that does, on live evidence.
-- All Venice models (text and image) come from `GET /models` and are shown in the per-conversation model pickers.
+- **Models (2026-10-14):** the pickers and `models.list` offer a curated few from Venice's `GET /models`, in `src/venice/curated.ts`: private only, one per family, plus an uncensored twin where there is one (19 text, 7 image). `models.list --all` shows everything, and any Venice model still works by id. Why the rest are out (anonymized, `e2ee-*`, retiring, no tool calls): design.md, "Models". The image picker shows each model's price per image at the conversation's resolution.
+- **Image shape is per image brain** (`brain.update --shape portrait|square|landscape`, default landscape), not per conversation: the preset's and the example's Character Portraitist paints portrait, the Scene Painter landscape. The conversation keeps resolution, format, watermark and negative prompt.
 
 ## Running it
 
@@ -71,7 +72,7 @@ npm run web:dev    # Vite hot reload on :5173, forwarding /api to the server on 
 ./ss auth.logout --all                 # this user out everywhere (every tab and terminal)
 ./ss user.delete --username dev-old    # asks you to type the name again (or --confirm dev-old); 409 while that user has work running
 ./ss user.change-password --username jason   # current + new password (prompted); rewraps the key, no file touched; logs that user out
-./ss models.list --type image          # text and image models with price and privacy
+./ss models.list --type image          # the curated text and image models with price and privacy (--all: every Venice model)
 ./ss venice.balance
 ./ss conversation.create --title "Haiku bot" --system-prompt "You answer only in haiku."   # prints the c_... id
 ./ss turn --conversation c_... --content "Tell me about the sea."   # streams the reply; reasoning (folded to one line unless --reveal) to stderr
@@ -101,7 +102,8 @@ npm run web:dev    # Vite hot reload on :5173, forwarding /api to the server on 
 ./ss image.retry --conversation c_... --message m_...   # paint the prompt again: replaces a failed/interrupted/blurred image; a finished one is kept (new version)
 ./ss image.follow --conversation c_... --message m_...  # watch a message's image until it lands; ends with the message as saved
 ./ss message.edit --conversation c_... --message m_... --content "new prompt"   # image message: a new image swaps in when ready
-./ss conversation.update --id c_... --settings.image.width 1024 --settings.image.height 768   # image size, format, watermark, negative prompt
+./ss brain.update --conversation c_... --brain "Character Portraitist" --shape portrait   # an image brain's shape: portrait, square or landscape
+./ss conversation.update --id c_... --settings.image-model krea-2-turbo --settings.image.resolution 2K   # image model, resolution, format, watermark, negative prompt
 ./ss examples.list                                 # the committed example campaigns (examples/*.json)
 ./ss conversation.import --example dnd-tavern      # start one: 5 brains, World Bible, GM opener (--without-messages: setup only)
 ./ss conversation.import --campaign @file.json     # any campaign file; a conversation.get --json is one (images come back as prompts to retry)

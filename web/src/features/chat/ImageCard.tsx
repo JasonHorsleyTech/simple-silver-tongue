@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight, Download, Expand, ImageOff, Paintbrush, PenLine, RotateCw, ShieldOff, X } from "lucide-react";
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { api } from "../../api/client.ts";
-import type { Brain, Conversation, ImageRecord, MessageVersion } from "../../api/types.ts";
+import { DEFAULT_SHAPE, IMAGE_SHAPES, SHAPE_SIZES, type Brain, type ImageRecord, type ImageShape, type MessageVersion } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Spinner } from "../../components/Spinner.tsx";
 import { cx } from "../../lib/cx.ts";
@@ -35,13 +35,16 @@ export type Aspect = { w: number; h: number };
 /** Pictures are at most this tall in the scrollback; the lightbox shows them as large as the window allows. */
 const MAX_H = 420;
 
-/** The shape the next image is expected to have, from the conversation's image settings (square if unknown). */
-export function expectedAspect(s: Pick<Conversation["settings"]["image"], "width" | "height" | "aspectRatio" | "resolution">): Aspect {
-  // An aspect ratio or resolution means a model sized that way (a width × height left from another model isn't sent).
-  const m = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(s.aspectRatio ?? "");
-  if (m && Number(m[1]) > 0 && Number(m[2]) > 0) return { w: Number(m[1]), h: Number(m[2]) };
-  if (s.resolution === undefined && s.width && s.height) return { w: s.width, h: s.height };
-  return { w: 1, h: 1 };
+/** One object per shape, so a memo'd message doesn't re-render for a new but equal aspect. */
+const SHAPE_ASPECTS = Object.fromEntries(IMAGE_SHAPES.map((s) => [s, { w: SHAPE_SIZES[s].width, h: SHAPE_SIZES[s].height }])) as Record<ImageShape, Aspect>;
+
+/**
+ * The shape a brain's next image is expected to have: its own shape (landscape if it has none), as the server
+ * sends it to a width × height model. A model sized by aspect ratio gets the nearest ratio it lists, close
+ * enough for a frame; the picture's own size replaces it once it loads.
+ */
+export function expectedAspect(brain: Pick<Brain, "shape"> | undefined): Aspect {
+  return SHAPE_ASPECTS[brain?.shape ?? DEFAULT_SHAPE];
 }
 
 export const imageUrl = (id: string) => api.binaryUrl("image.get", { id });

@@ -12,7 +12,7 @@ import { imageSettingsProblem } from "../images/request.ts";
 import { badRequest, CommandError, notFound } from "../lib/errors.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { command, type Ctx } from "../registry.ts";
-import { PLAYER, brainLine, brainName, checkName, color, finalReminder, kind, reasoning, reasoningNotes, safeMode, stop, tool } from "./brains.ts";
+import { PLAYER, brainLine, brainName, checkName, color, finalReminder, kind, reasoning, reasoningNotes, safeMode, shape, stop, tool } from "./brains.ts";
 import { conversationId, imageSettings, systemPrompt, templates, title } from "./conversations.ts";
 
 /**
@@ -87,6 +87,7 @@ const campaignSchema = z.object({
         kind: kind.default("text"),
         reasoning: reasoning.optional(),
         safeMode: safeMode.optional(),
+        shape: shape.optional(),
         systemPrompt,
         finalReminder: finalReminder.optional(),
         tool: tool.optional(),
@@ -133,11 +134,12 @@ function toConversation(doc: Campaign, where: string): Conversation {
     const twin = shell.brains.findIndex((x) => x.name.toLowerCase() === b.name.toLowerCase());
     if (twin >= 0) throw bad(`brains.${i}.name: two brains are called "${shell.brains[twin]!.name}" (names are unique, ignoring case).`);
     const isDefault = doc.defaultBrainId ? b.id === doc.defaultBrainId : i === 0;
-    if (b.kind === "text" && (b.safeMode !== undefined || b.tool)) throw bad(`brains.${i}: safe mode and tool text are for image brains, and ${b.name} is a text brain.`);
+    if (b.kind === "text" && (b.safeMode !== undefined || b.shape !== undefined || b.tool)) throw bad(`brains.${i}: safe mode, shape and tool text are for image brains, and ${b.name} is a text brain.`);
     const brain = newBrain({ name: b.name, systemPrompt: b.systemPrompt, color: b.color ?? nextColor(shell), isDefault, kind: b.kind }); // an image brain gets DEFAULT_TOOL and safe mode
     Object.assign(brain.reasoning, b.reasoning ?? {});
     Object.assign(brain.finalReminder, b.finalReminder ?? {});
     if (b.safeMode !== undefined) brain.safeMode = b.safeMode;
+    if (b.shape !== undefined) brain.shape = b.shape;
     if (b.tool) Object.assign(brain.tool!, b.tool);
     if (b.stop) brain.stop = b.stop;
     if (b.id) {
@@ -338,7 +340,7 @@ already have: ./ss brain.import --preset <name> --brain <brain>. Nothing here is
 
 const withoutMessages = z.boolean().describe("Leave the ledger out: brains, setup messages, templates and settings only");
 
-/** Check the models against Venice's list, and the image size against the image model, as conversation.update does. */
+/** Check the models against Venice's list, and the image resolution against the image model, as conversation.update does. */
 async function checkSettings(ctx: Ctx, conv: Conversation, where: string): Promise<void> {
   // Nothing has been created yet, so the fix is in the file, not conversation.update (T07 QA-8).
   const named = (type: "text" | "image", id: string) => (err: unknown) =>

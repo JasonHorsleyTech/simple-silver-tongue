@@ -94,7 +94,10 @@ describe("campaigns: the example, import, clone (T07)", () => {
     assert.ok(after.messages.some((m) => m.content === EXAMPLE.templates.otherBrainImage.replace("{{brain}}", "Scene Painter").replace("{{prompt}}", painted.versions[0]!.content)));
     const sent = t.mock.state.requests.find((r) => r.path === "/image/generate")!.body as Record<string, unknown>;
     assert.equal(sent.hide_watermark, true);
-    assert.deepEqual([sent.width, sent.height], [1024, 768]);
+    assert.deepEqual([sent.width, sent.height], [1216, 832], "the Scene Painter paints landscape");
+    // Each painter has its own shape: the Portraitist's pictures stand upright in the same conversation.
+    const portrait = (await json(["prompt.preview", "--conversation", conv.id, "--brain", "Character Portraitist"])).image as { params: Record<string, unknown> };
+    assert.deepEqual([portrait.params.width, portrait.params.height], [832, 1216]);
   });
 
   test("a conversation.get --json imports as a campaign (round trip); images come back as prompts to paint", async () => {
@@ -223,7 +226,8 @@ describe("campaigns: the example, import, clone (T07)", () => {
     // T07 QA-8: one full stop at the end, not two.
     const r0 = await t.cli(["conversation.import", "--campaign", "-"], { stdin: bad((c) => (c.templates.player = "x")) });
     assert.doesNotMatch(r0.stderr, /\.\./);
-    await fails(["conversation.import", "--campaign", "-"], /multiples of 8/, bad((c) => (c.settings.image.width = 1001)));
+    await fails(["conversation.import", "--campaign", "-"], /z-image-turbo has no resolution setting/, bad((c) => (c.settings.image.resolution = "2K")));
+    await fails(["conversation.import", "--campaign", "-"], /brains\.1\.shape/, bad((c) => (c.brains[1].shape = "round")));
     await fails(["conversation.import", "--example", "nope"], /No example "nope"\. Examples: dnd-tavern/);
     await fails(["conversation.import"], /Pass one of --example/);
     writeFileSync(join(t.tmp, "c.json"), "{not json");

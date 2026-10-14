@@ -1,4 +1,5 @@
 import { DEFAULT_IMAGE_MODEL, DEFAULT_TEXT_MODEL } from "../config.ts";
+import { DEFAULT_SHAPE } from "../images/request.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { SCHEMA_VERSION, type Brain, type Conversation, type SetupMessage, type Templates } from "./types.ts";
 import { BRAIN_COLORS, DEFAULT_SETUP_LABEL, DEFAULT_TOOL, FRAMING_STOP, REMINDER_EXAMPLE, setupPrefill } from "./wording.ts";
@@ -59,22 +60,29 @@ export function newBrain(opts: { name: string; systemPrompt: string; color?: str
  * (T07 triage): a brain without `stop` gets defaultStop, so a text brain in a campaign made before stop
  * sequences existed is guarded too; prompt.preview and brain.list show it, and brain.update --stop changes it.
  * A brain whose list is empty keeps it empty. Version 3 (T09): templates without `roll` get the default, so
- * every conversation can roll. Tolerates a partial document (listConversations reports those).
+ * every conversation can roll. Since 2026-10-14 an image brain has a shape (landscape if it has none), and the
+ * conversation-wide width, height and aspect ratio it replaced are dropped. Tolerates a partial document
+ * (listConversations reports those).
  */
 export function upgradeConversation(conv: Conversation): Conversation {
   if (typeof conv !== "object" || conv === null) return conv;
   for (const b of Array.isArray(conv.brains) ? conv.brains : []) {
     if (b && !Array.isArray(b.stop)) b.stop = defaultStop(b.kind === "image" ? "image" : "text");
+    if (b?.kind === "image") b.shape ??= DEFAULT_SHAPE;
   }
   if (conv.templates && typeof conv.templates === "object" && typeof conv.templates.roll !== "string") conv.templates.roll = DEFAULT_TEMPLATES.roll;
+  // Image sizes moved from the conversation to each image brain's shape (2026-10-14): drop the old fields.
+  const image = conv.settings?.image as Record<string, unknown> | undefined;
+  if (image && typeof image === "object") for (const k of ["width", "height", "aspectRatio"]) delete image[k];
   if (!(conv.schemaVersion >= SCHEMA_VERSION)) conv.schemaVersion = SCHEMA_VERSION;
   return conv;
 }
 
-/** What a brain needs to be an image brain: tool text and safe mode (on by default). Existing values are kept. */
+/** What a brain needs to be an image brain: tool text, safe mode (on by default) and a shape. Existing values are kept. */
 export function makeImageBrain(brain: Brain): void {
   brain.kind = "image";
   brain.safeMode ??= true;
+  brain.shape ??= DEFAULT_SHAPE;
   brain.tool ??= { ...DEFAULT_TOOL };
 }
 

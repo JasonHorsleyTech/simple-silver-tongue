@@ -2,7 +2,7 @@ import { ArrowDown, ArrowUp, ImageIcon, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Conversation } from "../../api/types.ts";
 import { ScrollPin, type ScrollPinApi } from "../../lib/scrollPin.ts";
-import { expectedAspect, GalleryContext, type GalleryItem } from "./ImageCard.tsx";
+import { GalleryContext, type GalleryItem } from "./ImageCard.tsx";
 import { LiveReply } from "./LiveReply.tsx";
 import { MessageItem } from "./MessageItem.tsx";
 import { PlayerBubble } from "./MessageFrame.tsx";
@@ -38,9 +38,6 @@ export function Scrollback({
   const [away, setAway] = useState(false);
   const brains = new Map(conv.brains.map((b) => [b.id, b]));
   const { live, pendingPlayer, pendingRoll } = chat;
-  // A new object only when the size settings change, so the memo'd messages don't all re-render.
-  const { width, height, aspectRatio, resolution } = conv.settings.image;
-  const aspect = useMemo(() => expectedAspect({ width, height, aspectRatio, resolution }), [width, height, aspectRatio, resolution]);
   const gallery = useMemo(() => galleryOf(conv), [conv]);
   /** T07: an image that landed while its card was out of view, until you look at it. */
   const [landed, setLanded] = useState<{ messageId: string; brainName: string; failed: boolean; above: boolean } | null>(null);
@@ -192,7 +189,6 @@ export function Scrollback({
                         live={m.id === inSlot ? live! : undefined}
                         busy={chat.busy}
                         actions={chat.actions}
-                        aspect={aspect}
                         onPreviewRegenerate={onPreviewRegenerate}
                         onDismissLive={chat.dismissLive}
                       />
@@ -215,7 +211,6 @@ export function Scrollback({
                       <LiveReply
                         live={atBottom}
                         brain={atBottom.brainId ? brains.get(atBottom.brainId) : undefined}
-                        aspect={aspect}
                         onRetry={onRetry}
                         onDismiss={chat.dismissLive}
                       />

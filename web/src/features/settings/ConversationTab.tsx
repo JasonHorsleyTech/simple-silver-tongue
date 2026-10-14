@@ -2,21 +2,22 @@ import { CopyPlus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import type { Conversation, ConversationUpdate, ModelInfo } from "../../api/types.ts";
+import { buildImageRequest, imagePriceUsd, type Conversation, type ConversationUpdate, type ModelInfo } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { Segmented } from "../../components/Segmented.tsx";
 import { SavedLine } from "../../components/SavedLine.tsx";
 import { Spinner } from "../../components/Spinner.tsx";
 import { navigate } from "../../lib/router.tsx";
-import { compactNumber } from "../../lib/format.ts";
+import { compactNumber, formatUsd } from "../../lib/format.ts";
 import { patchConversation, refreshConversations } from "../conversations/store.ts";
 import { ImageSettings } from "./ImageSettings.tsx";
 
 /**
- * The conversation itself: title, the text and image models (one each, from Venice's live list), the reply
- * limits every brain shares, how images are made (size, format, watermark, negative prompt), clone (T07) and delete. A
- * model change applies to the next request of every brain, and to the next image.
+ * The conversation itself: title, the text and image models (one each, from the curated list models.list gives),
+ * the reply limits every brain shares, how images are made (resolution, format, watermark, negative prompt), clone
+ * (T07) and delete. A model change applies to the next request of every brain, and to the next image. Each image
+ * model is listed with what one image costs at this conversation's resolution.
  */
 export function ConversationTab({
   conv,
@@ -37,6 +38,11 @@ export function ConversationTab({
     return next;
   };
   const st = conv.settings;
+  /** What one image costs with this conversation's settings, by the model's price list (the server's own rule). */
+  const imagePrice = (m: ModelInfo) => {
+    const usd = imagePriceUsd(m, buildImageRequest(st, m, "", true).body);
+    return usd === undefined ? m.price : `${formatUsd(usd)}/image`;
+  };
 
   return (
     <div className="space-y-7 px-5 pt-4 pb-8">
@@ -106,7 +112,7 @@ export function ConversationTab({
         <div>
           <h4 className="text-[13px] font-semibold text-fg">Images</h4>
           <p className="mt-0.5 text-[12.5px] leading-5 text-faint">
-            How image brains' prompts become pictures. Every image brain in this conversation uses these; each brain has its own safe mode (Brains).
+            How image brains' prompts become pictures. Every image brain in this conversation uses these; each brain has its own shape and safe mode (Brains).
           </p>
         </div>
         <ModelPicker
@@ -115,7 +121,8 @@ export function ConversationTab({
           description="The prompt goes to it word for word. The next image uses a change."
           value={st.imageModel}
           list={imageModels}
-          detail={(m) => [m.price, m.privacy].join(" · ")}
+          optionDetail={imagePrice}
+          detail={(m) => [imagePrice(m) === m.price ? m.price : `${imagePrice(m)} at ${st.image.resolution ?? "its default resolution"} (${m.price})`, m.privacy].join(" · ")}
           onPick={async (imageModel) => void (await save({ settings: { imageModel } }))}
         />
         <ImageSettings
@@ -224,7 +231,10 @@ function CloneConversation({ conv }: { conv: Conversation }) {
   );
 }
 
-/** A native select over Venice's live list, saved on change. The current model stays listed even if Venice dropped it. */
+/**
+ * A native select over the curated list (models.list), saved on change. The current model stays listed even if it
+ * isn't in it (set from the terminal, or dropped by Venice). `optionDetail` follows each option's name (a price).
+ */
 function ModelPicker({
   id,
   label,
@@ -232,6 +242,7 @@ function ModelPicker({
   value,
   list,
   detail,
+  optionDetail,
   onPick,
 }: {
   id: string;
@@ -240,6 +251,7 @@ function ModelPicker({
   value: string;
   list: { models: ModelInfo[] | null; error: string | null };
   detail(m: ModelInfo): string;
+  optionDetail?(m: ModelInfo): string;
   onPick(model: string): Promise<void>;
 }) {
   const [saving, setSaving] = useState(false);
@@ -273,10 +285,11 @@ function ModelPicker({
         onChange={(e) => void pick(e.target.value)}
         className="h-9 w-full rounded-lg border border-line-strong bg-raised px-2.5 text-[13.5px] text-fg outline-none focus:border-focus/60 focus:ring-3 focus:ring-focus/15 disabled:opacity-60"
       >
-        {!current && <option value={value}>{list.models ? `${value} (not in Venice's list)` : value}</option>}
+        {!current && <option value={value}>{list.models ? `${value} (not in this list)` : value}</option>}
         {models.map((m) => (
           <option key={m.id} value={m.id}>
             {m.name}
+            {optionDetail ? ` · ${optionDetail(m)}` : ""}
             {m.privacy !== "private" ? ` · ${m.privacy}` : ""}
             {m.offline ? " · offline" : ""}
           </option>

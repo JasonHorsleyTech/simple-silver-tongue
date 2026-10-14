@@ -3,6 +3,7 @@ import { DEFAULT_IMAGE_MODEL, DEFAULT_TEXT_MODEL } from "../config.ts";
 import { table } from "../lib/text.ts";
 import { command } from "../registry.ts";
 import type { Balance } from "../venice/client.ts";
+import { curated } from "../venice/curated.ts";
 import type { ModelInfo, ModelType } from "../venice/models.ts";
 
 type ModelsResult = { models: ModelInfo[]; defaults: { text: string; image: string } };
@@ -17,9 +18,11 @@ function imageRow(m: ModelInfo) {
   const c = m.constraints ?? {};
   const sizes = Array.isArray(c.resolutions)
     ? `res ${(c.resolutions as string[]).join("/")}`
-    : c.widthHeightDivisor
-      ? `w×h /${c.widthHeightDivisor}`
-      : "";
+    : Array.isArray(c.aspectRatios)
+      ? "aspect ratio"
+      : c.widthHeightDivisor
+        ? `w×h /${c.widthHeightDivisor}`
+        : "";
   return [mark(m), m.name, m.privacy, m.price, sizes];
 }
 
@@ -28,18 +31,22 @@ const mark = (m: ModelInfo) =>
 
 export const modelsList = command({
   name: "models.list",
-  description: `List Venice text and image models with price and privacy (cached ~10 minutes).
-"private" models keep no data; "anonymized" ones are proxied to a third party. * marks the app default.`,
+  description: `List the Venice text and image models the pickers offer, with price and privacy (cached ~10 minutes).
+That is a curated few (src/venice/curated.ts): private, one per family. --all lists every model Venice has, and
+conversation.update takes any of them by id. "private" models keep no data; "anonymized" ones are proxied to a
+third party. * marks the app default.`,
   auth: false,
   args: z.object({
     type: z.enum(["text", "image"]).optional().describe("Only this type (default: both)"),
+    all: z.boolean().optional().describe("Every model Venice has, not just the curated ones"),
     refresh: z.boolean().optional().describe("Bypass the cache"),
   }),
-  examples: ["./ss models.list --type image", "./ss models.list --type text --json"],
+  examples: ["./ss models.list --type image", "./ss models.list --type text --json", "./ss models.list --all"],
   handler: async (args, ctx): Promise<ModelsResult> => {
     const types: ModelType[] = args.type ? [args.type] : ["text", "image"];
     const lists = await Promise.all(types.map((t) => ctx.deps.venice.listModels(t, { refresh: args.refresh })));
-    return { models: lists.flatMap((l) => l.models), defaults: { text: DEFAULT_TEXT_MODEL, image: DEFAULT_IMAGE_MODEL } };
+    const models = lists.flatMap((l) => l.models);
+    return { models: args.all ? models : curated(models), defaults: { text: DEFAULT_TEXT_MODEL, image: DEFAULT_IMAGE_MODEL } };
   },
   format: (r: ModelsResult) => {
     const text = r.models.filter((m) => m.type === "text");

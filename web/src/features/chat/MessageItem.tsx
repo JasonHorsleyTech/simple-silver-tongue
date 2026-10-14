@@ -4,7 +4,7 @@ import type { Brain, LedgerMessage, MessageVersion } from "../../api/types.ts";
 import { cx } from "../../lib/cx.ts";
 import { activeVersion, clockTime, fullTime } from "../../lib/format.ts";
 import { rollView } from "../../lib/rolls.ts";
-import { ImageBody, type Aspect } from "./ImageCard.tsx";
+import { expectedAspect, ImageBody } from "./ImageCard.tsx";
 import { LiveReply } from "./LiveReply.tsx";
 import { MessageEditor } from "./MessageEditor.tsx";
 import { BrainMessageFrame, PlayerBubble, SteerNote } from "./MessageFrame.tsx";
@@ -44,7 +44,6 @@ export const MessageItem = memo(function MessageItem({
   live,
   busy,
   actions,
-  aspect,
   onPreviewRegenerate,
   onDismissLive,
 }: {
@@ -58,8 +57,6 @@ export const MessageItem = memo(function MessageItem({
   live?: Live;
   busy: boolean;
   actions: MessageActions;
-  /** The shape a new image is expected to have (the conversation's image size). */
-  aspect: Aspect;
   onPreviewRegenerate(messageId: string, steer: string): void;
   onDismissLive(): void;
 }) {
@@ -96,7 +93,6 @@ export const MessageItem = memo(function MessageItem({
       <LiveReply
         live={live}
         brain={brain}
-        aspect={aspect}
         slot={{ nextVersion: message.versions.length + 1, fromVersion: live.steer ? message.activeVersion + 1 : null }}
         onRetry={() => void actions.regenerate(message.id, live.steer ?? "")}
         onDismiss={onDismissLive}
@@ -295,7 +291,7 @@ export const MessageItem = memo(function MessageItem({
           <ImageBody
             version={v}
             brain={brain}
-            aspect={aspect}
+            aspect={expectedAspect(brain)}
             versionLabel={count > 1 ? `version ${message.activeVersion + 1} of ${count}` : undefined}
             editor={mode === "edit" ? editor() : undefined}
             onRepaint={(o) => actions.repaint(message.id, o)}

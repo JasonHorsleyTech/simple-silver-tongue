@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
-import { newConversation } from "../src/conversations/defaults.ts";
+import { newBrain, newConversation, upgradeConversation } from "../src/conversations/defaults.ts";
 import { beginPainting, endPainting, INTERRUPTED, newImageRecord, settleStaleImages } from "../src/conversations/images.ts";
 import { partialPrompt, promptOf } from "../src/conversations/tool-call.ts";
 import { newMessage, relayReply, type Reply } from "../src/conversations/turn.ts";
@@ -21,7 +21,9 @@ import { normalizeModel, type ModelInfo } from "../src/venice/models.ts";
 
 const model = (id: string) => normalizeModel(MOCK_MODELS.find((m) => m.id === id) as never) as ModelInfo;
 const Z = model("z-image-turbo");
-const NANO = model("nano-banana-2");
+const KREA = model("krea-2-turbo");
+const HUNYUAN = model("hunyuan-image-v3");
+const GROK = model("grok-imagine-image-2-0");
 
 describe("image brains' parts (T05)", () => {
   test("the prompt decodes as it streams: split anywhere, escapes included, other keys first", () => {
@@ -65,26 +67,58 @@ describe("image brains' parts (T05)", () => {
     assert.deepEqual(promptOf([]), { prompt: "", complete: false, calls: 0 });
   });
 
-  test("the image request sends only what the model takes, and says what it left out", () => {
+  test("the image request: the brain's shape in the model's own terms, only what the model takes, and notes on what it left out", () => {
     const s = newConversation({ title: "x", systemPrompt: "y" }).settings;
-    s.image = { ...s.image, width: 1020, height: 768, aspectRatio: "16:9", negativePrompt: "text" };
-    const z = buildImageRequest(s, Z, "a tavern", true);
-    assert.deepEqual(z.body, { model: "z-image-turbo", prompt: "a tavern", safe_mode: true, format: "webp", hide_watermark: true, width: 1016, height: 768, negative_prompt: "text" });
-    assert.equal(z.notes.length, 2, z.notes.join("\n")); // width rounded to a multiple of 8; aspect ratio not sent
-    const n = buildImageRequest({ ...s, image: { ...s.image, resolution: "8K" } }, NANO, "a tavern", false);
-    assert.deepEqual(n.body, { model: "nano-banana-2", prompt: "a tavern", safe_mode: false, format: "webp", hide_watermark: true, aspect_ratio: "16:9", negative_prompt: "text" });
-    assert.match(n.notes.join("\n"), /Width and height are not sent/);
-    assert.match(n.notes.join("\n"), /resolution 8K is not sent: nano-banana-2 offers 1K, 2K, 4K \(it uses 1K\)/);
+    s.image = { ...s.image, negativePrompt: "text" };
+    const base = { prompt: "a tavern", safe_mode: true, format: "webp", hide_watermark: true, negative_prompt: "text" };
+    // Width × height models get the shape's size; landscape when the brain has none.
+    const z = buildImageRequest(s, Z, "a tavern", true, "portrait");
+    assert.deepEqual(z.body, { ...base, model: "z-image-turbo", width: 832, height: 1216 });
+    assert.deepEqual(z.notes, []);
+    assert.deepEqual([buildImageRequest(s, Z, "x", true).body.width, buildImageRequest(s, Z, "x", true).body.height], [1216, 832]);
+    assert.deepEqual([buildImageRequest(s, Z, "x", true, "square").body.width, buildImageRequest(s, Z, "x", true, "square").body.height], [1024, 1024]);
+    // Aspect ratio models get the shape's ratio, and a resolution only if they list one.
+    const twoK = { ...s, image: { ...s.image, resolution: "2K" } };
+    const k = buildImageRequest(twoK, KREA, "a tavern", true, "landscape");
+    assert.deepEqual(k.body, { ...base, model: "krea-2-turbo", resolution: "2K", aspect_ratio: "3:2" });
+    assert.deepEqual(k.notes, []);
+    const h = buildImageRequest(twoK, HUNYUAN, "a tavern", true, "portrait");
+    assert.deepEqual(h.body, { ...base, model: "hunyuan-image-v3", aspect_ratio: "2:3" }, "no resolution to a model with no resolution list");
+    assert.match(h.notes.join("\n"), /resolution 2K is not sent: hunyuan-image-v3 has no resolution setting/);
+    // The nearest listed ratio when the shape's own isn't listed, and a note that says so.
+    const fewRatios = { ...HUNYUAN, constraints: { ...HUNYUAN.constraints, aspectRatios: ["1:1", "4:3", "16:9", "9:16"] } };
+    const near = buildImageRequest(s, fewRatios, "x", true, "landscape");
+    assert.equal(near.body.aspect_ratio, "4:3");
+    assert.match(near.notes.join("\n"), /landscape shape is sent as the aspect ratio 4:3, the nearest to 3:2/);
+    assert.equal(buildImageRequest(s, fewRatios, "x", true, "portrait").body.aspect_ratio, "9:16");
+    const g = buildImageRequest({ ...s, image: { ...s.image, resolution: "8K" } }, GROK, "a tavern", false, "square");
+    assert.deepEqual(g.body, { ...base, model: "grok-imagine-image-2-0", safe_mode: false, aspect_ratio: "1:1" });
+    assert.match(g.notes.join("\n"), /resolution 8K is not sent: grok-imagine-image-2-0 offers 1K, 2K \(it uses 1K\)/);
     assert.match(buildImageRequest(s, Z, "x".repeat(7501), true).problem ?? "", /7501 characters, and z-image-turbo takes at most 7500/);
+    // Prices: flat, per resolution (the default one when none is sent), per quality at the default quality.
     assert.equal(imagePriceUsd(Z, z.body), 0.01);
-    assert.equal(imagePriceUsd(NANO, n.body), 0.1, "the default resolution's price");
-    assert.equal(imagePriceUsd(NANO, { ...n.body, resolution: "4K" }), 0.19);
-    assert.equal(imagePriceUsd(model("grok-imagine-image-2-0"), { ...n.body, model: "grok-imagine-image-2-0" }), 0.07, "per quality, at the default quality");
+    assert.equal(imagePriceUsd(HUNYUAN, h.body), 0.09);
+    assert.equal(imagePriceUsd(KREA, k.body), 0.06);
+    assert.equal(imagePriceUsd(KREA, buildImageRequest(s, KREA, "x", true).body), 0.04, "the default resolution's price");
+    assert.equal(imagePriceUsd(GROK, g.body), 0.07, "per quality, at the default quality");
     // conversation.update checks only what it is setting, against the model it will be sent to.
-    assert.match(imageSettingsProblem({ ...s.image, width: 1001 }, Z, ["width"]) ?? "", /multiples of 8/);
-    assert.equal(imageSettingsProblem({ ...s.image, width: 1001 }, Z, ["format"]), null, "a stale size doesn't block another change");
-    assert.match(imageSettingsProblem(s.image, Z, ["aspectRatio"]) ?? "", /sized by width and height/);
-    assert.match(imageSettingsProblem(s.image, NANO, ["width"]) ?? "", /sized by resolution and aspect ratio/);
+    assert.match(imageSettingsProblem(twoK.image, Z, ["resolution"]) ?? "", /z-image-turbo has no resolution setting/);
+    assert.match(imageSettingsProblem({ ...s.image, resolution: "4K" }, KREA, ["resolution"]) ?? "", /offers the resolutions 1K, 2K, not 4K/);
+    assert.equal(imageSettingsProblem(twoK.image, KREA, ["resolution"]), null);
+    assert.equal(imageSettingsProblem(twoK.image, Z, ["format"]), null, "a stale resolution doesn't block another change");
+  });
+
+  test("an older conversation file: its image brains get a shape, and the conversation-wide size they replace is dropped", () => {
+    const conv = newConversation({ title: "x", systemPrompt: "y" });
+    const painter = newBrain({ name: "Painter", systemPrompt: "Paint.", isDefault: false, kind: "image" });
+    assert.equal(painter.shape, "landscape");
+    delete painter.shape;
+    conv.brains.push(painter);
+    Object.assign(conv.settings.image, { width: 1024, height: 768, aspectRatio: "16:9", resolution: "1K" });
+    upgradeConversation(conv);
+    assert.equal(painter.shape, "landscape");
+    assert.equal(conv.brains[0]!.shape, undefined, "a text brain has no shape");
+    assert.deepEqual(conv.settings.image, { format: "webp", hideWatermark: true, resolution: "1K" });
   });
 
   test("the image type comes from the bytes, not from what was asked for", () => {

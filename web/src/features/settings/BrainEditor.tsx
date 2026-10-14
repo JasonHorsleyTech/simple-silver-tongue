@@ -2,7 +2,7 @@ import { Braces, Plus, Star, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import { BRAIN_COLORS, REASONING_NOTE, STOP_REASONING_NOTE, type Brain, type BrainFields, type ModelInfo } from "../../api/types.ts";
+import { BRAIN_COLORS, DEFAULT_SHAPE, REASONING_NOTE, STOP_REASONING_NOTE, type Brain, type BrainFields, type ModelInfo } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { SavedLine } from "../../components/SavedLine.tsx";
@@ -11,6 +11,7 @@ import { Segmented } from "../../components/Segmented.tsx";
 import { Spinner } from "../../components/Spinner.tsx";
 import { Switch } from "../../components/Switch.tsx";
 import { cx } from "../../lib/cx.ts";
+import { ShapePicker } from "./ShapePicker.tsx";
 import { StopSequences } from "./StopSequences.tsx";
 
 /**
@@ -237,10 +238,11 @@ export function BrainEditor({
             busy={busy === "safe"}
             onChange={(safeMode) => void update({ safeMode }, "safe")}
           />
+          <ShapePicker value={brain.shape ?? DEFAULT_SHAPE} disabled={busy === "shape"} busy={busy === "shape"} onChange={(shape) => void update({ shape }, "shape")} />
           <p className="-mt-2 text-[12.5px] leading-5 text-faint">
             Painted with <span className="text-muted">{imagePlan}</span>, like every image brain here.{" "}
             <button type="button" onClick={onImageSettings} className="text-muted underline decoration-line-strong underline-offset-4 hover:text-fg">
-              Image model and size
+              Image model and price
             </button>
           </p>
           <div>

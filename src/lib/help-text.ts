@@ -65,7 +65,7 @@ export function renderCommandHelp(c: CommandInfo): string {
   };
   const rows: string[][] = [];
   // An object arg also lists its fields, each settable on its own (--final-reminder.content "..."), nested
-  // objects included (--settings.image.width).
+  // objects included (--settings.image.format).
   const add = (path: string, s: JsonSchema, isRequired: boolean, depth: number) => {
     const fields = Object.entries((s.properties ? s : s.anyOf?.find((a) => a.properties))?.properties ?? {});
     rows.push(row(`${"  ".repeat(depth)}--${path}`, s, isRequired, fields.length ? "Any of these fields, as JSON, or one flag each:" : ""));

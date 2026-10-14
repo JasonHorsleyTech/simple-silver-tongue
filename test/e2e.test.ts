@@ -13,6 +13,7 @@ import { conflict } from "../src/lib/errors.ts";
 import { binaryCommand, streamCommand } from "../src/registry.ts";
 import { createUser, unlockUser } from "../src/storage/users.ts";
 import { readJson, writeJson } from "../src/storage/vault.ts";
+import { curated } from "../src/venice/curated.ts";
 import { startTestServer } from "./helpers.ts";
 
 describe("CLI end to end against an in-process server and mock Venice", () => {
@@ -90,6 +91,21 @@ describe("CLI end to end against an in-process server and mock Venice", () => {
 
     r = await t.cli(["models.list", "--type", "text"]);
     assert.match(r.stdout, /\*deepseek-v4-1-flash .* \$0\.30\/M in, \$1\.20\/M out +none\/low\/high\/max/);
+
+    // The pickers' list is the curated one, in its own order; --all is everything Venice lists.
+    const ids = async (...extra: string[]) => JSON.parse((await t.cli(["models.list", "--json", ...extra])).stdout).models.map((m: { id: string }) => m.id);
+    assert.deepEqual(await ids(), ["deepseek-v4-1-flash", "z-ai-glm-5-3", "venice-uncensored-1-2", "z-image-turbo", "grok-imagine-image-2-0", "krea-2-turbo", "hunyuan-image-v3"]);
+    assert.equal((await ids("--all")).length, 7);
+    assert.match((await t.cli(["models.list", "--type", "image"])).stdout, /hunyuan-image-v3 .* aspect ratio\n/, "sized by aspect ratio, not width × height");
+    const venice = [
+      { id: "wai-Illustrious", type: "image" },
+      { id: "openai-gpt-55", type: "text" },
+      { id: "e2ee-kimi-k3-p", type: "text" },
+      { id: "grok-4-7", type: "text" },
+      { id: "z-image-turbo", type: "image" },
+      { id: "deepseek-v4-1-flash", type: "text" },
+    ];
+    assert.deepEqual(curated(venice).map((m) => m.id), ["deepseek-v4-1-flash", "grok-4-7", "z-image-turbo", "wai-Illustrious"], "text first, curated order, the rest left out");
 
     r = await t.cli(["venice.balance", "--json"]);
     assert.equal(JSON.parse(r.stdout).usd, 10);
