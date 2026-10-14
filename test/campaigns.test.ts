@@ -68,7 +68,7 @@ describe("campaigns: the example, import, clone (T07)", () => {
       if (b.kind === "image") assert.deepEqual(b.tool, src.tool);
       assert.deepEqual(b.reasoning, { enabled: false, effort: "low" }, "reasoning off: nothing hidden");
     }
-    assert.deepEqual(conv.templates, EXAMPLE.templates);
+    assert.deepEqual(conv.templates, { ...DEFAULT_TEMPLATES, ...EXAMPLE.templates }, "a template the file leaves out (T09: roll) is the default");
     assert.deepEqual(conv.settings.image, EXAMPLE.settings.image);
     assert.equal(conv.settings.image.hideWatermark, true);
     assert.deepEqual(conv.setup.map((s) => [s.label, s.content]), [["World Bible", EXAMPLE.setup[0].content]]);

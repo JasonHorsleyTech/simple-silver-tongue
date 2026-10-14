@@ -4,10 +4,10 @@ import type { StreamEvent } from "../registry.ts";
 import type { ChatEvent } from "../venice/chat.ts";
 import type { VeniceClient } from "../venice/client.ts";
 import type { ModelInfo } from "../venice/models.ts";
-import { buildRequest, nothingToAnswer, REASONING_NOTE, reasoningOn, resolveBrain, type ModelCaps } from "./prompt.ts";
+import { buildRequest, nothingToAnswer, REASONING_NOTE, reasoningOn, render, resolveBrain, templateProblem, type ModelCaps } from "./prompt.ts";
 import { partialPrompt, type ToolCallParts } from "./tool-call.ts";
-import { STOP_REASONING_NOTE, stopNote } from "./wording.ts";
-import type { Brain, ChatRequest, Conversation, LedgerMessage, MessageVersion, Usage } from "./types.ts";
+import { ROLL_PREVIEW_NOTE, STOP_REASONING_NOTE, stopNote } from "./wording.ts";
+import type { Brain, ChatRequest, Conversation, LedgerMessage, MessageVersion, Roll, Usage } from "./types.ts";
 
 /**
  * What a turn will do, worked out without side effects. prompt.preview returns plan.body; turn sends exactly
@@ -17,6 +17,8 @@ export type TurnPlan = {
   brain: Brain;
   /** The player message the turn will append first, or null when content is empty (the brain just responds). */
   player: LedgerMessage | null;
+  /** T09: a roll-and-send's roll, appended after the player message (if any). Null without a roll. */
+  roll: LedgerMessage | null;
   body: ChatRequest;
 } & BodyReview;
 
@@ -31,13 +33,38 @@ export type BodyReview = {
   notes: string[];
 };
 
-export function planTurn(conv: Conversation, opts: { brain?: string; content?: string }, model: ModelCaps): TurnPlan {
+/**
+ * `roll` (T09) makes it a roll-and-send: your text first (if any), then the roll's message, then the brain answers.
+ * turn passes the Roll the server just made (dice.ts). prompt.preview passes "unrolled": the die isn't rolled until
+ * the turn is sent, so the roll's line keeps {{roll}} where the number will go, and a note says so. That one
+ * placeholder is the only difference from the body turn sends.
+ */
+export function planTurn(conv: Conversation, opts: { brain?: string; content?: string; roll?: Roll | "unrolled" }, model: ModelCaps): TurnPlan {
   const brain = resolveBrain(conv, opts.brain);
   const content = opts.content ?? "";
-  const player = content.trim() ? newMessage({ type: "player" }, "text", { content, source: "authored", createdAt: nowIso() }) : null;
-  const view = player ? { ...conv, messages: [...conv.messages, player] } : conv;
+  const createdAt = nowIso();
+  const player = content.trim() ? newMessage({ type: "player" }, "text", { content, source: "authored", createdAt }) : null;
+  const roll = opts.roll ? rollMessage(conv, opts.roll === "unrolled" ? null : opts.roll, createdAt) : null;
+  const added = [player, roll].filter((m): m is LedgerMessage => m !== null);
+  const view = added.length ? { ...conv, messages: [...conv.messages, ...added] } : conv;
   const body = buildRequest(view, brain.id, { model });
-  return { brain, player, body, ...reviewBody(brain, body, model) };
+  const review = reviewBody(brain, body, model);
+  if (opts.roll === "unrolled") review.notes.unshift(ROLL_PREVIEW_NOTE);
+  return { brain, player, roll, body, ...review };
+}
+
+/**
+ * A roll as a ledger message (T09): the player's, whose text is the conversation's roll template with the number
+ * in it. Every brain reads that text, framed like any player message; `roll` keeps what the die said, for display.
+ * With no roll (a preview), {{roll}} stays as typed. A template without {{roll}} is refused, as buildRequest
+ * refuses the other templates without their placeholder (files written before conversation.update checked it).
+ */
+export function rollMessage(conv: Conversation, roll: Roll | null, createdAt = nowIso()): LedgerMessage {
+  const problem = templateProblem("roll", conv.templates.roll);
+  if (problem) throw new CommandError(400, "bad_template", problem);
+  const version: MessageVersion = { content: render(conv.templates.roll, roll ? { roll: String(roll.result) } : {}), source: "authored", createdAt };
+  if (roll) version.roll = roll;
+  return newMessage({ type: "player" }, "text", version);
 }
 
 /**

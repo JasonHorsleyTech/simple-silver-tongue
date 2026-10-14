@@ -3,6 +3,8 @@
  * values themselves (as it imports types.ts's types) and can't drift from what the CLI prints.
  */
 
+import type { Roll } from "./types.ts";
+
 /** The same words wherever a stop is offered or reported (T03 QA-2: measured live, a stopped reply is billed in full). */
 export const STOP_BILL_NOTE =
   "Stopping saves waiting, not money: Venice still writes and bills the whole reply, so its cost is added to the conversation once Venice reports it.";
@@ -61,3 +63,13 @@ export const DEFAULT_TOOL = {
 /** A new setup message's label, and its pre-fill, an HTML comment the models can see: "<!-- This is the World Bible. -->". */
 export const DEFAULT_SETUP_LABEL = "World Bible";
 export const setupPrefill = (label: string) => `<!-- This is the ${label}. -->`;
+
+/** T09: a roll as both clients show it, apart from the line every brain reads: "🎲 d20: 14". */
+export const rollLabel = (roll: Roll) => `🎲 ${roll.die}: ${roll.result}`;
+
+/**
+ * T09: the payload view's note for a roll-and-send that hasn't been sent. The server rolls only when the turn is
+ * sent, so the preview can't know the number: it leaves the placeholder where the number will go.
+ */
+export const ROLL_PREVIEW_NOTE =
+  "The d20 isn't rolled yet. When you send, the server rolls it and puts the number (1 to 20) where {{roll}} is; the rest of this body is exactly what is sent.";

@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { DEFAULT_PORT, ROOT } from "../config.ts";
 import { createHiddenFolder, hiddenMarker, hiddenSummary, revealHint, type HiddenBlock } from "../conversations/hidden.ts";
+import { rollLabel } from "../conversations/wording.ts";
 import { renderCommandHelp, renderCommandList } from "../lib/help-text.ts";
 import type { CommandInfo, JsonSchema } from "../registry.ts";
 import { parseFlags, splitArgv, UsageError } from "./args.ts";
@@ -341,6 +342,12 @@ async function printStream(res: Response, opts: StreamOpts, io: Io, dim: (s: str
       case "following":
         io.stderr.write(dim("(following a reply in progress: what has streamed so far, then the rest live)\n"));
         break;
+      case "message": {
+        // T09: a roll-and-send's roll, before the reply. Your own text isn't echoed back.
+        const roll = ev.message?.versions?.[0]?.roll;
+        if (roll && typeof roll.result === "number") errOut(`${rollLabel(roll)}\n`);
+        break;
+      }
       case "start": {
         // With SS_CONVERSATION, name the campaign, so a stale export after a clone shows at once (T07 QA-6).
         const where = fromEnv && typeof ev.conversationTitle === "string" ? ` · in "${ev.conversationTitle}"` : "";

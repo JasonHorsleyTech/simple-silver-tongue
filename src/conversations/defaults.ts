@@ -15,6 +15,9 @@ export const DEFAULT_TEMPLATES: Templates = {
   otherBrainImage: "<!-- from: {{brain}}. It called generate_image with this exact prompt: -->\n{{prompt}}",
   steer:
     "<!-- Behind-the-scenes direction from the user. This is not part of the conversation. Write your previous response again, following this direction: -->\n{{instruction}}",
+  // T09: the line a roll adds as the player's message, which every brain then reads framed like any of theirs.
+  // Applied once, when the server rolls; earlier rolls keep their text.
+  roll: "🎲 I rolled a d20: **{{roll}}**",
 };
 
 export const DEFAULT_BRAIN_NAME = "Assistant";
@@ -55,13 +58,15 @@ export function newBrain(opts: { name: string; systemPrompt: string; color?: str
  * Bring a file written by an older version up to SCHEMA_VERSION, in memory (the next write saves it). Version 2
  * (T07 triage): a brain without `stop` gets defaultStop, so a text brain in a campaign made before stop
  * sequences existed is guarded too; prompt.preview and brain.list show it, and brain.update --stop changes it.
- * A brain whose list is empty keeps it empty. Tolerates a partial document (listConversations reports those).
+ * A brain whose list is empty keeps it empty. Version 3 (T09): templates without `roll` get the default, so
+ * every conversation can roll. Tolerates a partial document (listConversations reports those).
  */
 export function upgradeConversation(conv: Conversation): Conversation {
   if (typeof conv !== "object" || conv === null) return conv;
   for (const b of Array.isArray(conv.brains) ? conv.brains : []) {
     if (b && !Array.isArray(b.stop)) b.stop = defaultStop(b.kind === "image" ? "image" : "text");
   }
+  if (conv.templates && typeof conv.templates === "object" && typeof conv.templates.roll !== "string") conv.templates.roll = DEFAULT_TEMPLATES.roll;
   if (!(conv.schemaVersion >= SCHEMA_VERSION)) conv.schemaVersion = SCHEMA_VERSION;
   return conv;
 }

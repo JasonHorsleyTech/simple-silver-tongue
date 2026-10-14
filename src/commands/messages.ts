@@ -5,8 +5,10 @@ import { assertImageIdle, imageIdsOf } from "../conversations/images.ts";
 import { activeVersion, resolveBrain } from "../conversations/prompt.ts";
 import { addImageMessage, editImagePrompt, type Started } from "../conversations/repaint.ts";
 import { assertLedgerIdle, loadConversation, mutateConversation } from "../conversations/store.ts";
-import { addSpend, newMessage } from "../conversations/turn.ts";
+import { rollD20 } from "../conversations/dice.ts";
+import { addSpend, newMessage, rollMessage } from "../conversations/turn.ts";
 import type { Author, Conversation, LedgerMessage } from "../conversations/types.ts";
+import { rollLabel } from "../conversations/wording.ts";
 import { CommandError, conflict, notFound } from "../lib/errors.ts";
 import { nowIso } from "../lib/ids.ts";
 import { removeImageFiles } from "../images/files.ts";
@@ -98,6 +100,32 @@ Refused while a reply is being generated (it would land after your message, answ
   format: (r: ImageMessageView) => {
     const who = r.message.author.type === "player" ? "your message" : r.message.kind === "image" ? `an image prompt in ${r.author}'s mouth` : `in ${r.author}'s mouth`;
     return `Added ${r.message.id} (${who}). Every brain sees it from the next request.${r.message.kind === "image" ? paintingLine(r) : ""}`;
+  },
+});
+
+export const messageRoll = command({
+  name: "message.roll",
+  description: `Roll a d20 and add it to the ledger as your message, without asking any brain to reply.
+The server's random number generator rolls it, never a model: a whole number from 1 to 20, each as likely.
+The message is the conversation's roll template with the number in it ("🎲 I rolled a d20: **14**"; change the
+wording with conversation.update --templates.roll), and every brain reads it framed like any message of yours.
+It runs on the honor system: it is an ordinary message, to edit or delete. To roll and have a brain answer in one
+go, use turn --roll. Refused while a reply is being generated.`,
+  args: z.object({ conversation: conversationId }),
+  examples: ["./ss message.roll --conversation c_k3j9x0q2ma"],
+  handler: async (args, ctx): Promise<MessageView> => {
+    const { vault } = ctx.requireSession();
+    const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
+      assertLedgerIdle(vault, c.id);
+      const m = rollMessage(c, rollD20());
+      c.messages.push(m);
+      return m;
+    });
+    return viewOf(conv, result);
+  },
+  format: (r: MessageView) => {
+    const v = activeVersion(r.message);
+    return `${v.roll ? rollLabel(v.roll) : v.content}\nAdded ${r.message.id} (your roll). Every brain sees it from the next request. Have a brain answer it: ./ss turn --conversation ${r.conversationId} --brain <name>`;
   },
 });
 
@@ -219,4 +247,4 @@ Refused while a reply is being generated.`,
   },
 });
 
-export default [messageAdd, messageGet, messageEdit, messageDelete, messageSelectVersion];
+export default [messageAdd, messageRoll, messageGet, messageEdit, messageDelete, messageSelectVersion];

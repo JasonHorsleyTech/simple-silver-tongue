@@ -306,7 +306,7 @@ Why a fence: models write fences reliably, Markdown parses it without HTML, and 
 
 ---
 
-## T09: Dice rolls · `todo`
+## T09: Dice rolls · `qa`
 
 Jason, 2026-10-14: a button that rolls a real d20 and sends it to a brain. The server's random number generator rolls it, never a model. The result goes into the ledger as a message every brain reads, and then the brain the player picked answers the conversation. Here is the loop it serves, with T10's Show Me the Odds brain:
 1. The player sends "I try to talk the hooded figure down to half price" to Show Me the Odds.
@@ -337,6 +337,12 @@ Any brain can be sent a roll, image brains included (Jason: "sure, why not"). It
   3. A roll-and-send to the GM gets a narrated outcome that matches the roll.
 
 **Frontend scope:** A d20 control in the composer that works with every send, the big Send and each brain's chip alike. One way is a "🎲 Roll d20" toggle that the next send uses and then switches off. The roll appears in the scrollback at once, before the brain's reply streams in. It looks like a roll (a die and the number), so it stands apart from typed lines. Editing it works like any message, and the new template is in the templates editor.
+
+- **From T09 engineer** (report: `reports/T09-engineer.md`):
+  - Built: `turn --roll` (roll-and-send: your text first, if any, then the roll as a second player message, then the brain answers), `message.roll` (just roll, no brain), `templates.roll` (default `🎲 I rolled a d20: **{{roll}}**`, needs `{{roll}}`; schema 3, older files and campaign files get it), `prompt.preview --roll`. The server rolls with `crypto.randomInt`. The roll's version keeps `roll: {die: "d20", result}` for display; its `content` is the template's line, which is what every brain reads, framed as a player line. Nothing in `buildRequest` changed.
+  - **Engineer's calls:** the template is applied **once, when the server rolls** (the message holds its line, so a changed template shows in later rolls; earlier ones keep their text), not at build time: a roll's content is then exactly what the brains read, and editing it is editing that line. **Text and roll are two messages**, text first. **The preview leaves `{{roll}}` in place** (no sample number, which would look like a roll that happened) with `ROLL_PREVIEW_NOTE` as its first note. A refusal up front saves no roll, as it saves no text; a broken reply keeps the roll, and the retry never rolls again. d20 only.
+  - **For Frontend:** `turn` takes `roll: true` (in `web/src/api/types.ts` already, with `message.roll`, `prompt.preview`'s `roll`, `Roll`, `rollLabel` and `ROLL_PREVIEW_NOTE`). The roll arrives as a `message` event before `start`, after your text's; `useChat` already upserts every `message` event, so it shows at once. A version with `roll` is a roll: show `rollLabel(roll)` ("🎲 d20: 14") and the die, set apart from typed lines; its `content` is what the brains read (show it, or at least when `edited`). The templates editor needs a fifth row, `roll`. The payload view: `prompt.preview --roll` when the toggle is on. Mock: no trigger needed (rolls are real on the mock too); to break a roll-and-send, put a trigger in the roll template (`MOCK_SLOW {{roll}}`), since the roll's line is the last message. README's browser paragraphs (the example campaign's loop, Play) still describe telling the Dice Master your roll: update them with the control.
+  - **For T10:** the Gilded Goat's prompts worked unchanged with a roll (live: the GM added the Dice Master's modifier and narrated success on 18, failure on an edited 3). Its Dice Master still offers to roll for the player if asked ("roll fairly"); a preset's Show Me the Odds should say the player rolls with the app and never roll itself. A GM should treat a `🎲` line after an odds sentence as settling the action.
 
 **Deferred in:** *(none yet)*
 

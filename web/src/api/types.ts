@@ -17,12 +17,13 @@ import type {
   LedgerMessage,
   MessageVersion,
   RetryRequest,
+  Roll,
   SetupMessage,
   Templates,
 } from "../../../src/conversations/types.ts";
 import type { ModelInfo } from "../../../src/venice/models.ts";
 
-export type { Brain, BrainTool, ChatMessage, ChatRequest, Conversation, ImageRecord, ImageRequest, LedgerMessage, MessageVersion, ModelInfo, RetryRequest, SetupMessage, Templates };
+export type { Brain, BrainTool, ChatMessage, ChatRequest, Conversation, ImageRecord, ImageRequest, LedgerMessage, MessageVersion, ModelInfo, RetryRequest, Roll, SetupMessage, Templates };
 
 /**
  * The server's own words and values, shown as they are: what a stop does and doesn't save (and why an image
@@ -36,6 +37,8 @@ export {
   IMAGE_STOP_NOTE,
   MAX_STOPS,
   REASONING_NOTE,
+  ROLL_PREVIEW_NOTE,
+  rollLabel,
   STOP_BILL_NOTE,
   STOP_REASONING_NOTE,
   stopNote,
@@ -231,8 +234,11 @@ export type Commands = {
   "setup.delete": { args: { conversation: string; setup: string }; result: SetupListing };
   /** Words in a brain's mouth (or yours, as "player"), appended without generating anything. 409 while a reply is being generated. */
   "message.add": { args: { conversation: string; as: string; content: string }; result: ImageMessageView };
+  /** T09: roll a d20 (the server rolls) and add it as your message, without asking a brain. 409 while generating. */
+  "message.roll": { args: { conversation: string }; result: MessageView };
+  /** T09: `roll` previews turn --roll; the roll's line keeps {{roll}} where the number will go (ROLL_PREVIEW_NOTE). */
   "prompt.preview": {
-    args: { conversation: string; brain?: string; content?: string; regenerate?: boolean; message?: string; steer?: string };
+    args: { conversation: string; brain?: string; content?: string; roll?: boolean; regenerate?: boolean; message?: string; steer?: string };
     result: Preview;
   };
   /**
@@ -256,7 +262,11 @@ export type Commands = {
 
 /** NDJSON stream commands: POST /api/<name> with args, answered with StreamEvent lines. */
 export type StreamCommands = {
-  turn: { args: { conversation: string; content?: string; brain?: string } };
+  /**
+   * T09: `roll` rolls a d20 on the server and adds it after your text (if any). Each saved message (yours, then the
+   * roll, whose version has `roll: {die, result}`) arrives as a `message` event before the reply starts.
+   */
+  turn: { args: { conversation: string; content?: string; brain?: string; roll?: boolean } };
   /** Re-attach to a reply that is being generated right now (after a reload, or from another tab). */
   "generation.follow": { args: { conversation: string } };
   /** A new, active version of the last message (a brain's). With a steer, the brain rewrites its current version. */
@@ -282,7 +292,7 @@ export type StreamCommands = {
 export type StreamEvent =
   /** generation.follow only, first: a reply is running. What has streamed so far follows, then the rest. */
   | { type: "following"; startedAt: string }
-  /** The player message was saved. */
+  /** A player message was saved: your text, then (T09, turn --roll) your roll, each its own event. */
   | { type: "message"; message: LedgerMessage }
   /**
    * The brain starts; messageId is the id its saved message will have. For message.regenerate (also when

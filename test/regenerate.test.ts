@@ -143,7 +143,7 @@ describe("steered regeneration, versions, edit and delete: CLI → server → mo
     await ok(["message.delete", "--conversation", c, "--message", a2!.id]);
     await fails(["message.regenerate", "--conversation", c], /is your own message, so there is no reply to regenerate/);
     await fails(["prompt.preview", "--conversation", c, "--steer", "x"], /only apply to a regenerate preview/);
-    await fails(["prompt.preview", "--conversation", c, "--regenerate", "--content", "x"], /takes no content or brain/);
+    await fails(["prompt.preview", "--conversation", c, "--regenerate", "--content", "x"], /takes no content, roll or brain/);
     assert.equal(sentCount(), before, "nothing went upstream");
   });
 

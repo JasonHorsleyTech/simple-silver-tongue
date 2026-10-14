@@ -18,8 +18,8 @@ export type BuildOptions = {
   steer?: string;
 };
 
-const PLACEHOLDER = /\{\{(content|brain|prompt|instruction)\}\}/g;
-type Vars = Partial<Record<"content" | "brain" | "prompt" | "instruction", string>>;
+const PLACEHOLDER = /\{\{(content|brain|prompt|instruction|roll)\}\}/g;
+type Vars = Partial<Record<"content" | "brain" | "prompt" | "instruction" | "roll", string>>;
 
 /**
  * Literal placeholder replacement in one pass, so a value that itself contains "{{brain}}" or "$&" is never
@@ -40,6 +40,7 @@ const TEMPLATE_SLOTS: Record<keyof Templates, { label: string; placeholder: stri
   otherBrainText: { label: "other-brain text", placeholder: "{{content}}", what: "other brains' replies" },
   otherBrainImage: { label: "other-brain image", placeholder: "{{prompt}}", what: "other brains' image prompts" },
   steer: { label: "steer", placeholder: "{{instruction}}", what: "your steer" },
+  roll: { label: "roll", placeholder: "{{roll}}", what: "the number you rolled" },
 };
 
 /** Why this template can't be used, or null when it has its placeholder. */

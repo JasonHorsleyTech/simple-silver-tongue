@@ -5,8 +5,11 @@
  * image brains and images (T05). The prompt builder (prompt.ts) already handles all of them.
  */
 
-/** 2 (T07 triage): every brain has `stop`. loadConversation upgrades older files (upgradeConversation, store.ts). */
-export const SCHEMA_VERSION = 2;
+/**
+ * 2 (T07 triage): every brain has `stop`. 3 (T09): templates.roll. loadConversation upgrades older files
+ * (upgradeConversation, defaults.ts), in memory; the next write saves them.
+ */
+export const SCHEMA_VERSION = 3;
 
 export type Conversation = {
   schemaVersion: number;
@@ -48,12 +51,18 @@ export type ImageSettings = {
   negativePrompt?: string;
 };
 
-/** Framing strings. Placeholders are literal, single-pass replacements: {{content}} {{brain}} {{prompt}} {{instruction}}. */
+/**
+ * Framing strings. Placeholders are literal, single-pass replacements: {{content}} {{brain}} {{prompt}} {{instruction}}
+ * {{roll}}. Four are applied each time a request is built; `roll` (T09) once, when the server rolls: the roll's
+ * message holds the line it makes, so every brain reads that line framed as a player message.
+ */
 export type Templates = {
   player: string;
   otherBrainText: string;
   otherBrainImage: string;
   steer: string;
+  /** T09: a roll's message, with {{roll}} for the number. Default ROLL_TEMPLATE: "🎲 I rolled a d20: **{{roll}}**". */
+  roll: string;
 };
 
 export type SetupMessage = { id: string; label: string; content: string };
@@ -151,6 +160,12 @@ export type MessageVersion = {
   repaintOf?: number;
   /** Display only, never sent (hard rule 4). */
   reasoning?: string;
+  /**
+   * T09: this player message is a roll the server made (turn --roll, message.roll). Display only: brains read
+   * `content`, the roll template's line. It is the honor system, so the content can be edited like any message
+   * (`edited` then says so) while this keeps what the die said.
+   */
+  roll?: Roll;
   /** authored = typed by the user (a player message, or words put in a brain's mouth). */
   source: "generated" | "authored";
   edited?: boolean;
@@ -168,6 +183,9 @@ export type MessageVersion = {
   costUsd?: number;
   createdAt: string;
 };
+
+/** T09: one die roll, made by the server's random number generator (dice.ts), never by a model. d20 only for now. */
+export type Roll = { die: "d20"; result: number };
 
 export type Usage = { promptTokens: number; completionTokens: number; reasoningTokens?: number; cachedTokens?: number };
 

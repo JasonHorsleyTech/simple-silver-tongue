@@ -43,6 +43,8 @@ const version = z.object({
   createdAt: z.string().optional(),
   // Only what the image was made with: a campaign file brings prompts, never pictures.
   image: z.object({ model: z.string(), safeMode: z.boolean() }).partial().optional(),
+  // T09: what a player's roll said, for display. The content is what the brains read.
+  roll: z.object({ die: z.literal("d20"), result: z.number().int().min(1).max(20) }).optional(),
 });
 const campaignSchema = z.object({
   /** One line for examples.list. Not sent to any model, and not stored. */
@@ -154,6 +156,7 @@ function toConversation(doc: Campaign, where: string): Conversation {
       // Display-only pointers to other versions: dropped if they point nowhere.
       if (out.steeredFrom !== undefined && out.steeredFrom >= m.versions.length) delete out.steeredFrom;
       if (out.repaintOf !== undefined && out.repaintOf >= m.versions.length) delete out.repaintOf;
+      if (author.type === "brain") delete out.roll; // only the player rolls
       if (msgKind === "image") out.image = { id: "", status: "error", model: image?.model ?? doc.settings?.imageModel ?? DEFAULT_IMAGE_MODEL, safeMode: image?.safeMode ?? safe, createdAt: now };
       return out;
     });

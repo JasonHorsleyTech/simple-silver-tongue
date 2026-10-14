@@ -36,7 +36,7 @@ Open http://localhost:4747, pick your name and type your password. The start pag
 
 From the terminal instead: `./ss auth.login --username jason`, then `./ss conversation.import --example dnd-tavern` (`./ss examples.list` lists the examples).
 
-The Game Master's system prompt holds the evening's secrets, so the Payload view and the GM's settings will spoil them. When you try something uncertain (a lie, a sneak, a song), the GM names the check and stops: ask the Dice Master what to roll, tell it your roll, then press Send with nothing typed (or `./ss turn`) and the GM tells you how it goes.
+The Game Master's system prompt holds the evening's secrets, so the Payload view and the GM's settings will spoil them. When you try something uncertain (a lie, a sneak, a song), the GM names the check and stops: ask the Dice Master what to roll, tell it your roll, then press Send with nothing typed (or `./ss turn`) and the GM tells you how it goes. From the terminal, `./ss turn --roll` rolls a real d20 for you and sends it to the GM in one go.
 
 ## Play
 
@@ -62,12 +62,15 @@ Everything the browser does is a `./ss` command (`./ss help` lists them all). To
 export SS_CONVERSATION=c_...
 ./ss turn --content "I walk over to the hooded figure."
 ./ss turn --brain "Dice Master" --content "What do I roll?"
+./ss turn --brain "Game Master" --roll   # rolls a real d20 (the server rolls it) and sends it: "🎲 d20: 14", then the GM's reply
 ./ss message.regenerate --steer "Make her more nervous."
 ./ss turn --brain "Scene Painter"
 ./ss image.get --id img_... --open       # look at the picture (the turn prints this line for you)
 ```
 
 A brain can keep notes you only see on purpose (a character sheet with its secrets, the GM's plans) in a ```` ```hidden ```` block: every brain reads it, but the terminal folds it to one line, `[Hidden · 11 lines]`. Add `--reveal` to see it (`./ss conversation.get --reveal`, or the `message.get ... --reveal` line a reply prints after it). A brain's reasoning, when you switch it on, folds the same way as it streams: `--reveal` shows it. Any brain whose system prompt asks for it can write one, and so can you.
+
+**Rolling dice.** `--roll` on any `turn` rolls a d20 (the server's random number generator, never a model), adds it to the conversation as your message, "🎲 I rolled a d20: **14**", after your text if you typed some, and then that brain answers. Every brain reads the roll. `./ss message.roll` just rolls, without asking anyone. It's the honor system: a roll is a normal message you can edit or delete. Its wording is a template like the others (`./ss conversation.update --templates.roll "..."`, with `{{roll}}` where the number goes).
 
 Each reply's header names the campaign (`[Game Master · in "The Gilded Goat (D&D 5e)"]`), so after a clone you can see whether `SS_CONVERSATION` still points at the old one.
 

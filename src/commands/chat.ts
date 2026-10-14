@@ -12,6 +12,7 @@ import {
 } from "../conversations/store.ts";
 import { beginPainting, endPainting, newImageRecord } from "../conversations/images.ts";
 import { followImages, imageNote, painterFor, startPainting, type Painter } from "../conversations/paint.ts";
+import { rollD20 } from "../conversations/dice.ts";
 import { promptOf } from "../conversations/tool-call.ts";
 import {
   addSpend,
@@ -47,12 +48,19 @@ const steer = z
   .describe('A one-off direction for this regenerate only ("say it\'s blue"). Never sent again. Blank or omitted: a plain re-roll');
 const regenerateTarget = messageId.optional().describe("The message to regenerate: it must be the last one, written by a brain (default: the last message)");
 
+const roll = z
+  .boolean()
+  .optional()
+  .describe("Roll a d20 and send it too (T09): the server rolls it, never a model. The roll is added after your message, as your own message, then the brain answers");
+
 export const promptPreview = command({
   name: "prompt.preview",
   description: `Show the exact request body a brain would be sent, built by the same code path as turn and message.regenerate.
 --brain picks the brain (default: the default brain), so you can see the ledger from each one's point of view.
-With --content, it shows what turn --content would send (your message included). With --regenerate (plus
---message and --steer), it shows what message.regenerate would send instead. Nothing is saved or sent.
+With --content, it shows what turn --content would send (your message included). With --roll, what turn --roll
+would send: the die isn't rolled until you send, so the roll's line has {{roll}} where the number will go (the
+only difference), and a note says so. With --regenerate (plus --message and --steer), it shows what
+message.regenerate would send instead. Nothing is saved, rolled or sent.
 --json prints the body byte for byte as it would go to Venice (minus the auth header), plus notes on text the
 provider adds that we can't show (reasoning on), and the reason the send would be refused, if it would.
 For an image brain it also shows the /image/generate request its prompt goes into: every field but the prompt,
@@ -61,6 +69,7 @@ which is the one its generate_image call writes, word for word.`,
     conversation: conversationId,
     brain: brainRef.optional(),
     content,
+    roll,
     regenerate: z.boolean().optional().describe("Preview message.regenerate instead of turn (the message's own brain answers)"),
     message: regenerateTarget,
     steer,
@@ -69,20 +78,21 @@ which is the one its generate_image call writes, word for word.`,
     "./ss prompt.preview --conversation c_k3j9x0q2ma",
     './ss prompt.preview --conversation c_k3j9x0q2ma --brain "Dice Master"',
     './ss prompt.preview --conversation c_k3j9x0q2ma --content "Next message" --json',
+    './ss prompt.preview --conversation c_k3j9x0q2ma --brain "Game Master" --roll',
     './ss prompt.preview --conversation c_k3j9x0q2ma --regenerate --steer "Make it iambic pentameter."',
   ],
   handler: async (args, ctx): Promise<Preview> => {
     if (!args.regenerate && (args.message !== undefined || args.steer !== undefined)) {
       throw badRequest("message and steer only apply to a regenerate preview: add regenerate (--regenerate).");
     }
-    if (args.regenerate && (args.content !== undefined || args.brain !== undefined)) {
-      throw badRequest("A regenerate preview takes no content or brain: the message's own brain answers the messages as they are.");
+    if (args.regenerate && (args.content !== undefined || args.brain !== undefined || args.roll)) {
+      throw badRequest("A regenerate preview takes no content, roll or brain: the message's own brain answers the messages as they are.");
     }
     const conv = await loadConversation(ctx.requireSession().vault, args.conversation);
     const model = await lookupModel(ctx.deps.venice, "text", conv.settings.textModel);
     const plan = args.regenerate
       ? planRegenerate(conv, { message: args.message, steer: args.steer }, model)
-      : planTurn(conv, { brain: args.brain, content: args.content }, model);
+      : planTurn(conv, { brain: args.brain, content: args.content, roll: args.roll ? "unrolled" : undefined }, model);
     const preview: Preview = { conversationId: conv.id, brainId: plan.brain.id, brainName: plan.brain.name, body: plan.body, notes: plan.notes };
     if (plan.refusal) preview.refusal = plan.refusal;
     if (plan.brain.kind === "image") {
@@ -99,7 +109,7 @@ which is the one its generate_image call writes, word for word.`,
   format: formatPreview,
 });
 
-const turnArgs = z.object({ conversation: conversationId, content, brain: brainRef.optional() });
+const turnArgs = z.object({ conversation: conversationId, content, brain: brainRef.optional(), roll });
 
 export const turn = streamCommand({
   name: "turn",
@@ -110,8 +120,12 @@ shows exactly what it gets). Without --content the brain just responds to the le
 refused only when its request would end with its own reply (a brain with a final reminder always has one to
 answer). Your message is saved once Venice accepts the request. If the reply then fails, your message stays
 and no reply is saved: to retry, run turn again with the same --brain and no --content (the error says so).
-One reply at a time per conversation (409 if busy). The reply prints to stdout as it streams; reasoning and
-status lines go to stderr. Hidden notes and reasoning fold to one line each; --reveal shows
+--roll rolls a d20 (the server rolls it, never a model) and adds it as your message, after your text if you
+gave some, before the brain answers: the roll-and-send of the play loop ("Roll a d20: 15 or higher succeeds" →
+turn --brain "Game Master" --roll). Its line is the roll template ("🎲 I rolled a d20: **14**"), which every
+brain reads; it is an ordinary message of yours, to edit or delete. prompt.preview --roll shows the request.
+One reply at a time per conversation (409 if busy). The reply prints to stdout as it streams; the roll, reasoning
+and status lines go to stderr. Hidden notes and reasoning fold to one line each; --reveal shows
 them. Another terminal or a reloaded browser can watch it with generation.follow.
 An image brain's prompt streams the same way; once it is saved the conversation is free (the next brain can
 take its turn) and this stream goes on until the image lands.`,
@@ -121,6 +135,7 @@ take its turn) and this stream goes on until the image lands.`,
     "./ss turn --conversation c_k3j9x0q2ma --content @message.md --reveal > reply.md   # --reveal: notes unfolded",
     "./ss turn --conversation c_k3j9x0q2ma   # no message: the brain just responds",
     './ss turn --conversation c_k3j9x0q2ma --brain "Dice Master" --content "I swing at the goblin."',
+    './ss turn --conversation c_k3j9x0q2ma --brain "Game Master" --roll   # roll a d20, send it, the GM answers',
   ],
   async *handler(args, ctx) {
     const gen = beginGeneration(ctx.requireSession().vault, args.conversation); // 409 before any event, so it's a real HTTP status
@@ -138,7 +153,8 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
   const { vault } = ctx.requireSession();
   const conv = await gen.load(); // through the write queue, so no edit lands between the lock and this read (T03 QA-1)
   const model = await lookupModel(ctx.deps.venice, "text", conv.settings.textModel);
-  const plan = planTurn(conv, { brain: args.brain, content: args.content }, model);
+  // The server rolls here, never a model (T09). Nothing is saved, and the roll is never shown, unless Venice takes the request.
+  const plan = planTurn(conv, { brain: args.brain, content: args.content, roll: args.roll ? rollD20() : undefined }, model);
   gen.forBrain(plan.brain.id); // from here on, only this brain is busy (brain.delete, kind changes)
   if (plan.refusal) throw new CommandError(400, "nothing_to_answer", plan.refusal);
   // An image brain's image model is checked now, before its prompt is asked for (and paid for).
@@ -146,19 +162,25 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
   // Up-front refusals (no balance, bad model) throw here, before anything is saved.
   const upstream = await openUpstream(ctx, conv.id, plan.body, gen, "Stopped before the reply started. Nothing was saved.");
 
-  if (plan.player) {
-    const player = plan.player;
-    await mutateConversation(vault, conv.id, (c) => void c.messages.push(player));
-    yield { type: "message", message: player };
+  // Your message, then your roll (T09), saved together; each is a `message` event, so a client shows the roll
+  // before the reply starts streaming.
+  const added = [plan.player, plan.roll].filter((m): m is LedgerMessage => m !== null);
+  if (added.length) {
+    await mutateConversation(vault, conv.id, (c) => void c.messages.push(...added));
+    for (const message of added) yield { type: "message", message };
   }
   const messageId = newId("m");
   // The title lets the CLI say which campaign SS_CONVERSATION sent this to (T07 QA-6).
   yield { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId, kind: plan.brain.kind, conversationTitle: conv.title };
 
+  const kept = plan.player && plan.roll ? "Your message and your roll are" : plan.roll ? "Your roll is" : plan.player ? "Your message is" : null;
   const say: Say = {
-    kept: plan.player ? "Your message is saved; the reply isn't." : "No reply was saved.",
+    kept: kept ? `${kept} saved; the reply isn't.` : "No reply was saved.",
     // Name the brain: with several, a bare "turn" goes to the default brain, which may be another one (T04 QA-1).
-    retry: `To retry, send again to ${plan.brain.name} with no new message: turn --brain ${plan.brain.id} without --content, or Retry in the browser.`,
+    // A roll is already in the ledger: retrying must not roll again.
+    retry: plan.roll
+      ? `To retry, send again to ${plan.brain.name} with no new message and no new roll: turn --brain ${plan.brain.id} without --content or --roll, or Retry in the browser.`
+      : `To retry, send again to ${plan.brain.name} with no new message: turn --brain ${plan.brain.id} without --content, or Retry in the browser.`,
     again: { command: "turn", args: { conversation: conv.id, brain: plan.brain.id } },
   };
   const reply = yield* collectReply(vault, conv.id, upstream, gen, say);

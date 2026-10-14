@@ -92,6 +92,7 @@ export const templates = z
     otherBrainText: template("otherBrainText", "How a brain sees another brain's text. {{brain}}, and {{content}} (required)"),
     otherBrainImage: template("otherBrainImage", "How a brain sees another brain's image prompt. {{brain}}, and {{prompt}} (required)"),
     steer: template("steer", "How a steer is sent when regenerating. Must contain {{instruction}}, the steer"),
+    roll: template("roll", "The line a roll adds as your message (turn --roll, message.roll). Must contain {{roll}}, the number. Used when you roll: earlier rolls keep their text"),
   })
   .partial();
 
@@ -116,7 +117,8 @@ Image brains' images use the image model and --settings.image.* (size, format, w
 what the model takes is sent: prompt.preview --brain <image brain> shows the exact image request and says what
 was left out. A size the current model can't take is refused.
 Templates are sent to the models, so they are yours to edit; prompt.preview shows the effect. Each one must keep
-its placeholder ({{content}}, {{prompt}} or {{instruction}}), where the text goes.`,
+its placeholder ({{content}}, {{prompt}}, {{instruction}} or {{roll}}), where the text goes. The roll template
+(T09) makes a roll's message when you roll, so a change shows in later rolls; earlier ones keep their text.`,
   args: z.object({
     id: conversationId,
     title: title.optional(),
@@ -136,6 +138,7 @@ its placeholder ({{content}}, {{prompt}} or {{instruction}}), where the text goe
     "./ss conversation.update --id c_k3j9x0q2ma --title 'Gilded Goat'",
     "./ss conversation.update --id c_k3j9x0q2ma --settings.text-model venice-uncensored-1-2 --settings.max-tokens 400",
     "./ss conversation.update --id c_k3j9x0q2ma --templates.player '{{content}}'",
+    "./ss conversation.update --id c_k3j9x0q2ma --templates.roll 'I roll the d20 and get {{roll}}.'",
     "./ss conversation.update --id c_k3j9x0q2ma --settings.image.width 1024 --settings.image.height 768 --settings.image.format png",
   ],
   handler: async (args, ctx): Promise<Conversation> => {

@@ -38,6 +38,7 @@ const PHRASES = {
   edit: "Silver thimble edited message",
   imagePrompt: "Violet comet image prompt",
   wordsInMouth: "Iron grate words in a brain mouth",
+  rollTemplate: "Hexmoor roll template", // T09: in the template and in the roll's message it makes
 };
 /** Only ever in requests that fail: never stored, and never logged either. */
 const FAILING = { brain: "Nosuch Velzaroth brain", template: "Placeholderless Thornvale template" };
@@ -93,6 +94,8 @@ async function play(cli: Cli, username: string, password: string) {
   await ok(["image.follow", "--conversation", c, "--message", added.message.id]); // the image is on disk once this ends
   await ok(["message.add", "--conversation", c, "--as", P.brainName, "--content", P.wordsInMouth]);
   await ok(["turn", "--conversation", c, "--brain", P.painterName]); // its prompt quotes the last message; the stream waits for the image
+  await ok(["conversation.update", "--id", c, "--templates.roll", `${P.rollTemplate}: {{roll}}`]);
+  await ok(["message.roll", "--conversation", c]);
 
   // Requests that fail, carrying text of their own: the client hears why, the log only the code.
   assert.equal((await cli(["turn", "--conversation", c, "--brain", FAILING.brain])).code, 1);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
-import type { ChatRequest, Conversation } from "../src/conversations/types.ts";
+import { SCHEMA_VERSION, type ChatRequest, type Conversation } from "../src/conversations/types.ts";
 import { FRAMING_STOP, stopNote } from "../src/conversations/wording.ts";
 import { createUser } from "../src/storage/users.ts";
 import { startTestServer } from "./helpers.ts";
@@ -93,13 +93,13 @@ describe("stop sequences: a brain can't write another speaker's framing (T07 tri
     writeFileSync(fileOf(conv.id), JSON.stringify(old));
 
     const loaded = await get(conv.id);
-    assert.equal(loaded.schemaVersion, 2);
+    assert.equal(loaded.schemaVersion, SCHEMA_VERSION);
     assert.deepEqual(loaded.brains.map((b) => [b.name, b.stop]), [["Assistant", [FRAMING_STOP]], ["Scene Painter", []], ["Quiet", []]]);
     assert.deepEqual((await json(["prompt.preview", "--conversation", conv.id, "--content", "hi"])).body.stop, [FRAMING_STOP]);
     // The next write saves the upgrade.
     await ok(["conversation.update", "--id", conv.id, "--title", "Upgraded"]);
     const saved = JSON.parse(readFileSync(fileOf(conv.id), "utf8"));
-    assert.equal(saved.schemaVersion, 2);
+    assert.equal(saved.schemaVersion, SCHEMA_VERSION);
     assert.deepEqual(saved.brains.map((b: { stop: string[] }) => b.stop), [[FRAMING_STOP], [], []]);
   });
 
