@@ -1,10 +1,10 @@
 import { z } from "zod";
-import { prepareRepaint, repaintEvents } from "../conversations/repaint.ts";
-import { beginGeneration, type GenerationHandle } from "../conversations/store.ts";
+import { followImages, imageNote } from "../conversations/paint.ts";
+import { retryImage } from "../conversations/repaint.ts";
 import { notFound } from "../lib/errors.ts";
 import { IMAGE_ID_RE, readImageFile } from "../images/files.ts";
 import { sniffImage } from "../images/sniff.ts";
-import { binaryCommand, streamCommand, type Ctx, type StreamEvent } from "../registry.ts";
+import { binaryCommand, streamCommand } from "../registry.ts";
 import { conversationId } from "./conversations.ts";
 import { messageId } from "./messages.ts";
 
@@ -12,7 +12,8 @@ import { messageId } from "./messages.ts";
  * Images (T05). An image brain's reply is a prompt (the message's content) and an image made from it. turn and
  * message.regenerate get the prompt from the brain and paint it (chat.ts). These are the other ways an image
  * gets made, all from a prompt that is already in the ledger: retrying it, editing it, and writing it yourself.
- * Each one holds the conversation's lock until the image is settled (paint.ts).
+ * Since T05 triage an image is a job of its own, not part of the conversation's generation (paint.ts), and
+ * image.follow watches one.
  */
 
 export const imageId = z.string().regex(IMAGE_ID_RE, "Image ids look like img_k3j9x0q2ma").describe("Image id (img_...), from conversation.get or a stream's image events");
@@ -36,28 +37,41 @@ const target = z.object({ conversation: conversationId, message: messageId.descr
 
 export const imageRetry = streamCommand({
   name: "image.retry",
-  description: `Paint an image message's prompt again: for an image that failed, was interrupted, or came back blurred.
-It paints the active version's prompt as it stands, with the conversation's image model and the brain's safe mode
-as they are now (for a blurred image, turn safe mode off first: brain.update --no-safe-mode). No brain is asked. The current image stays until the new one is ready, then the new one replaces it. Streams like turn:
-image_pending, then image_done or image_error, then done. One generation at a time per conversation (409).`,
+  description: `Paint an image message's prompt again, with the conversation's image model and the brain's safe mode as
+they are now. No brain is asked. A failed, interrupted or blurred image is replaced: it stays until the new one is
+ready (for a blurred one, turn safe mode off first: brain.update --no-safe-mode). A finished image is never thrown
+away: retrying it makes a new version with the same prompt, so you keep both and can page back to the first.
+Streams like turn: image_pending, then image_done or image_error, then done. It doesn't hold the conversation, so
+other brains can take their turn meanwhile; it is refused (409) while this version's own image is still being made.`,
   args: target,
   examples: ["./ss image.retry --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a"],
   async *handler(args, ctx) {
     const { vault } = ctx.requireSession();
-    const gen = beginGeneration(vault, args.conversation); // 409 before any event
-    try {
-      yield* gen.relay(retryEvents(args, ctx, gen));
-    } finally {
-      gen.release();
-    }
+    const s = await retryImage(vault, ctx.deps.venice, args.conversation, args.message); // 409 / 400 before any event
+    const { imageId, model } = s.painting;
+    yield { type: "start", brainId: s.brain.id, brainName: s.brain.name, messageId: s.message.id, kind: "image", imageOnly: true };
+    yield { type: "image_pending", messageId: s.message.id, imageId, model, message: s.message };
+    const { message, spentUsd } = yield* followImages(vault, args.conversation, s.message.id, { imageId, announced: [imageId] });
+    const img = message.versions.find((v) => v.image?.id === imageId)?.image;
+    yield { type: "done", message, note: `${s.brain.name} · ${img ? imageNote(img) : imageId}`, spentUsd };
   },
 });
 
-async function* retryEvents(args: z.output<typeof target>, ctx: Ctx, gen: GenerationHandle): AsyncGenerator<StreamEvent, void> {
-  const { vault } = ctx.requireSession();
-  const conv = await gen.load(); // through the queue, after the lock (T03 QA-1)
-  const job = await prepareRepaint(ctx.deps.venice, vault, gen, conv, args.message, {});
-  yield* repaintEvents(job, vault, ctx.deps.venice, conv.id);
-}
+export const imageFollow = streamCommand({
+  name: "image.follow",
+  description: `Watch a message's image being made, until it lands. Images don't hold the conversation (other brains
+can take their turn meanwhile), so this is how a client that saw a pending image learns how it ended: after an
+edit or an add, after a reload, from another terminal. It streams image_pending for each image of the message
+being made, then image_done or image_error as each lands, and ends with done and the message as saved. When none
+is being made it ends at once with done and the message as it is, so a result that landed first is never missed.`,
+  args: z.object({ conversation: conversationId, message: messageId.describe("The image message (m_...)") }),
+  examples: ["./ss image.follow --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a"],
+  async *handler(args, ctx) {
+    const { vault } = ctx.requireSession();
+    const { message, spentUsd } = yield* followImages(vault, args.conversation, args.message);
+    const img = message.versions[message.activeVersion]?.image;
+    yield { type: "done", message, note: img ? imageNote(img) : `${message.id} has no image`, spentUsd };
+  },
+});
 
-export default [imageGet, imageRetry];
+export default [imageGet, imageRetry, imageFollow];

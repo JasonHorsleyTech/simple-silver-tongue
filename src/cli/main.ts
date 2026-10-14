@@ -214,7 +214,7 @@ async function printStream(res: Response, json: boolean, io: Io, dim: (s: string
         io.stderr.write(dim(`[${ev.brainName ?? ev.brainId ?? "start"}]\n`));
         break;
       case "image_pending":
-        io.stderr.write(dim(`\n(making image ${ev.imageId ?? ""} with ${ev.model ?? "the image model"}...)\n`));
+        io.stderr.write(dim(`\n(making image ${ev.imageId ?? ""} with ${ev.model ?? "the image model"}... the conversation is free meanwhile)\n`));
         break;
       case "image_done": {
         const ext = String(ev.image?.mime ?? "image/png").replace("image/", "").replace("jpeg", "jpg");

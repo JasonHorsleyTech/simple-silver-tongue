@@ -38,6 +38,10 @@ export function createVeniceClient(opts: { baseUrl: string; apiKey: string; fetc
     try {
       res = await doFetch(`${opts.baseUrl}${path}`, { ...rest, headers, signal });
     } catch (err) {
+      // Our own timeout: Venice was reached and just didn't answer in time (T05 QA-3), so don't say it wasn't.
+      if ((err as Error)?.name === "TimeoutError") {
+        throw upstreamError(`Venice didn't answer ${path.split("?")[0]} within ${Math.round(timeoutMs / 1000)} s.`, { timeout: true });
+      }
       const why = err instanceof Error ? err.message : String(err);
       throw upstreamError(`Could not reach Venice at ${host}: ${why}`);
     }

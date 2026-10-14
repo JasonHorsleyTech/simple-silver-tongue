@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { formatMessage, imageLine, type MessageView } from "../conversations/format.ts";
-import { imageIdsOf } from "../conversations/images.ts";
+import { assertImageIdle, imageIdsOf } from "../conversations/images.ts";
 import { activeVersion, resolveBrain } from "../conversations/prompt.ts";
 import { addImageMessage, editImagePrompt, type Started } from "../conversations/repaint.ts";
 import { assertLedgerIdle, loadConversation, mutateConversation } from "../conversations/store.ts";
@@ -44,7 +44,7 @@ function paintingLine(r: ImageMessageView): string {
   const v = activeVersion(r.message);
   if (!r.painting) return v.image ? ` It keeps its ${imageLine(v.image)}.` : "";
   const keeps = v.image?.previous ? ` ${v.image.previous.id} stays until it is ready.` : "";
-  return ` Making its image ${r.painting.imageId} with ${r.painting.model}.${keeps} Watch it: ./ss generation.follow --conversation ${r.conversationId}`;
+  return ` Making its image ${r.painting.imageId} with ${r.painting.model}.${keeps} Other brains can go on meanwhile. Watch it: ./ss image.follow --conversation ${r.conversationId} --message ${r.message.id}`;
 }
 
 const target = { conversation: conversationId, message: messageId };
@@ -62,7 +62,7 @@ export const messageAdd = command({
 Master's opening scene: that brain sees them as its own past reply (assistant), every other brain sees them
 framed with its name, exactly as if it had written them. Then send a turn, to any brain, to carry on.
 --as <image brain> makes the content its image prompt, and its image is made from it: this answers at once,
-and the image is painted after (generation.follow watches it; conversation.get shows its state).
+and the image is painted after (image.follow watches it; conversation.get shows its state).
 Refused while a reply is being generated (it would land after your message, answering what came before it).`,
   args: z.object({
     conversation: conversationId,
@@ -77,7 +77,7 @@ Refused while a reply is being generated (it would land after your message, answ
     const { vault } = ctx.requireSession();
     const player = args.as.trim().toLowerCase() === PLAYER;
     if (!player && resolveBrain(await loadConversation(vault, args.conversation), args.as).kind === "image") {
-      // A prompt in an image brain's mouth: saved, then painted, holding the lock (repaint.ts).
+      // A prompt in an image brain's mouth: saved, then painted as a job of its own (repaint.ts).
       return startedView(await addImageMessage(vault, ctx.deps.venice, args.conversation, args.as, args.content));
     }
     const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
@@ -120,7 +120,8 @@ It edits the active version in place (marked edited). From the next request on, 
 what was always there; prompt.preview shows it. To edit another version, select it first. Refused while a reply
 is being generated. For an image message the text is its prompt, and a new image is made from the new prompt:
 the edit answers at once, the old image stays until the new one is ready, and then the new one replaces it
-(generation.follow watches it). If the new one fails, the old one is still there, and image.retry tries again.`,
+(image.follow watches it). If the new one fails, the old one is still there, and image.retry tries again.
+While this version's image is still being made, its prompt can't be edited (409): wait for it to land.`,
   args: z.object({
     ...target,
     content: messageText("The new text can't be empty. To remove a message, delete it", "The new text (Markdown; @file.md or - for stdin)"),
@@ -156,7 +157,8 @@ export const messageDelete = command({
   name: "message.delete",
   description: `Delete a message, with all its versions: any message, yours or a brain's, at any depth.
 From the next request on, it is as if it was never there. What it cost stays in the conversation's total.
-An image message's image files (every version's) are deleted with it. Refused while a reply is being generated.`,
+An image message's image files (every version's) are deleted with it. Refused while a reply is being generated,
+and while any of the message's images is still being made (Venice is making and billing it: wait for it to land).`,
   args: z.object(target),
   examples: ["./ss message.delete --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a"],
   handler: async (args, ctx) => {
@@ -164,6 +166,7 @@ An image message's image files (every version's) are deleted with it. Refused wh
     const { conv, result: gone } = await mutateConversation(vault, args.conversation, (c) => {
       assertLedgerIdle(vault, c.id);
       const m = findMessage(c, args.message);
+      assertImageIdle(vault, m, "all", "delete");
       addSpend(c); // pin the running total first: the money is spent, even when the message goes (T03 QA-2)
       c.messages.splice(c.messages.indexOf(m), 1);
       return m;

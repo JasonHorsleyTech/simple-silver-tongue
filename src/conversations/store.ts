@@ -3,7 +3,7 @@ import { nowIso } from "../lib/ids.ts";
 import type { StreamEvent } from "../registry.ts";
 import { listFiles, readJson, removeFile, writeJson, type Vault } from "../storage/vault.ts";
 import type { UnreadableConversation } from "./format.ts";
-import { settleStaleImages } from "./images.ts";
+import { allPaintJobs, paintingIn, settleStaleImages } from "./images.ts";
 import type { Conversation, LedgerMessage } from "./types.ts";
 
 /**
@@ -81,6 +81,10 @@ export async function mutateConversation<T>(
 export async function deleteConversationFile(vault: Vault, id: string): Promise<Conversation> {
   return serialize(keyOf(vault, id), async () => {
     if (generations.has(keyOf(vault, id))) throw busy(id); // checked inside the queue, like assertLedgerIdle
+    const images = paintingIn(vault, id).length; // their jobs would find nothing to save into (T05 triage)
+    if (images) {
+      throw conflict(`Conversation ${id} still has ${images === 1 ? "an image" : `${images} images`} being made. Venice is already making (and billing) ${images === 1 ? "it" : "them"}; wait a moment, then delete it.`);
+    }
     const conv = await loadConversation(vault, id); // 404 if it isn't there
     await removeFile(vault, fileOf(id));
     return conv;
@@ -133,7 +137,7 @@ type Live = {
 const generations = new Map<string, Generation>();
 
 const busy = (id: string) =>
-  conflict(`Conversation ${id} is busy: a reply or an image is still being generated. Wait for it to finish, then try again.`);
+  conflict(`Conversation ${id} is busy: a reply is still being generated. Wait for it to finish, then try again.`);
 
 const MERGEABLE = new Set(["reasoning", "delta", "prompt"]);
 
@@ -149,8 +153,16 @@ export type GenerationHandle = {
   /** For the Venice request. Aborted by release(), unless keepUpstream() handed the request to a drain. */
   upstreamSignal: AbortSignal;
   keepUpstream(): void;
-  /** Pass the generation's events through, recording them for followers (generation.follow). */
-  relay(events: AsyncIterable<StreamEvent>): AsyncGenerator<StreamEvent, void, undefined>;
+  /**
+   * Pass the generation's events through, recording them for followers (generation.follow), and return what
+   * `events` returns (an image brain's turn hands back the image it started, to follow after the lock is free).
+   */
+  relay<R>(events: AsyncGenerator<StreamEvent, R, undefined>): AsyncGenerator<StreamEvent, R, undefined>;
+  /**
+   * Record an event for followers only: the caller yields it itself, after release(). An image brain's turn
+   * announces its image_pending so, and the lock is free by the time its own client hears of the image (T05 triage).
+   */
+  announce(ev: StreamEvent): void;
   /**
    * Say which brain is writing, right after planning (T04). Until then a brain delete or kind change is refused
    * for every brain (assertBrainIdle), since the generation may be about to answer as any of them.
@@ -161,6 +173,7 @@ export type GenerationHandle = {
 
 export function beginGeneration(vault: Vault, id: string): GenerationHandle {
   const key = keyOf(vault, id);
+  assertAcceptingWork();
   if (generations.has(key)) throw busy(id);
   let settle = () => {};
   const settled = new Promise<void>((resolve) => (settle = resolve));
@@ -198,20 +211,30 @@ export function beginGeneration(vault: Vault, id: string): GenerationHandle {
       keepUpstream = true;
     },
     async *relay(events) {
+      let finished = false;
       try {
-        for await (const ev of events) {
-          publish(ev);
-          yield ev;
+        for (;;) {
+          const r = await events.next();
+          if (r.done) {
+            finished = true;
+            end();
+            return r.value;
+          }
+          publish(r.value);
+          yield r.value;
         }
-        end();
       } catch (err) {
+        finished = true;
         end(toErrorBody(err)); // followers get the same error the caller does
         throw err;
+      } finally {
+        if (!finished) await events.return(undefined as never); // closed early by the caller: close `events` too
       }
     },
     forBrain(brainId) {
       gen.brainId = brainId;
     },
+    announce: publish,
     release() {
       end({ status: 500, body: { code: "internal", message: "The reply ended unexpectedly. Check what was saved." } });
       if (generations.get(key) === gen) generations.delete(key);
@@ -290,8 +313,11 @@ export type StopOutcome = {
   message: LedgerMessage | null;
   error?: ErrorBody;
   note?: string;
-  /** T05: the stop came while an image was being made. Venice was already making (and billing) it, so it was finished and kept. */
-  imageFinished?: true;
+  /**
+   * T05 triage: the conversation's images still being made. A stop doesn't touch them: once a prompt is saved
+   * its image is with Venice, being made and billed, so it is kept when it arrives (IMAGE_STOP_NOTE).
+   */
+  painting?: Array<{ messageId: string; imageId: string }>;
 };
 
 /**
@@ -302,16 +328,55 @@ export type StopOutcome = {
 export async function stopGeneration(vault: Vault, id: string, waitMs = 10_000): Promise<StopOutcome | null> {
   const gen = generations.get(keyOf(vault, id));
   if (!gen) return null;
-  const painting = gen.live.log.some((ev) => ev.type === "image_pending"); // past the prompt: the image is with Venice
   gen.stop.abort(new CommandError(499, "stopped", "Stopped."));
   let timer: ReturnType<typeof setTimeout> | undefined;
   await Promise.race([gen.settled, new Promise<void>((resolve) => (timer = setTimeout(resolve, waitMs)))]);
   clearTimeout(timer);
-  // The newest saved message the generation reported: its done, or (an image still being painted, which a stop
-  // doesn't cut short, since Venice is already making and billing it) the message its image_pending carried.
+  // The newest saved message the generation reported: its done, or (an image brain's, whose generation ends
+  // once the prompt is saved) the message its image_pending carried.
   const last = gen.live.log.findLast((ev) => ev.type === "done" || ev.type.startsWith("image_"));
   const outcome: StopOutcome = { stopped: true, message: (last?.message as LedgerMessage | null | undefined) ?? null };
   if (gen.live.failure) outcome.error = gen.live.failure.body;
-  if (painting) outcome.imageFinished = true;
+  else if (!gen.live.ended) {
+    outcome.error = { code: "still_saving", message: `The reply was stopped but hadn't finished saving after ${Math.round(waitMs / 1000)} s. Check what was saved with conversation.get.` };
+  }
   return outcome;
+}
+
+/** The images of a conversation being made right now, as StopOutcome lists them. */
+export function paintingNow(vault: Vault, id: string): StopOutcome["painting"] {
+  const jobs = paintingIn(vault, id);
+  return jobs.length ? jobs.map((j) => ({ messageId: j.messageId, imageId: j.imageId })) : undefined;
+}
+
+/**
+ * Graceful shutdown (T05 QA-1). `npm run up` / `down` restart the server with SIGTERM; a reply or an image in
+ * flight then would be lost, though Venice bills it. So the server stops taking new work (stopTakingWork: a
+ * 503 for a new turn, regenerate, edit, add or retry), then waits for what is running (finishInFlight).
+ */
+let closing = false;
+
+export function stopTakingWork(): void {
+  closing = true;
+}
+
+export function assertAcceptingWork(): void {
+  if (closing) throw new CommandError(503, "shutting_down", "The server is restarting. Try again in a moment, once it is back up.");
+}
+
+/**
+ * Wait, up to `ms`, for every generation and every image being made. An image turn's image starts as its
+ * generation ends, so it looks again until both are empty. Returns how many were still running at the deadline.
+ */
+export async function finishInFlight(ms: number, onWait?: (n: number) => void): Promise<number> {
+  const deadline = Date.now() + ms;
+  let told = -1;
+  for (;;) {
+    const work = [...[...generations.values()].map((g) => g.settled), ...allPaintJobs().map((j) => j.settled)];
+    if (!work.length) return 0;
+    const left = deadline - Date.now();
+    if (left <= 0) return work.length;
+    if (work.length !== told) onWait?.((told = work.length));
+    await Promise.race([Promise.allSettled(work), new Promise((r) => setTimeout(r, Math.min(left, 200)))]);
+  }
 }

@@ -54,13 +54,27 @@ export function listeners(port: number): number[] {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function kill(pid: number): Promise<void> {
+/**
+ * SIGTERM, then wait: the server finishes the replies and images in flight before it exits (up to 60 s,
+ * src/server/main.ts), so a restart doesn't lose a paid image (T05 QA-1). Only then SIGKILL.
+ */
+const GRACE_MS = 65_000;
+
+async function kill(pid: number, name: string): Promise<void> {
   try {
     process.kill(pid, "SIGTERM");
   } catch {
     return;
   }
-  for (let i = 0; i < 40 && alive(pid); i++) await sleep(50);
+  const t0 = Date.now();
+  let told = false;
+  while (alive(pid) && Date.now() - t0 < GRACE_MS) {
+    await sleep(50);
+    if (!told && Date.now() - t0 > 1000 && alive(pid)) {
+      told = true;
+      console.log(`(the ${name} is finishing what it is making first: replies and images in flight are saved, not lost)`);
+    }
+  }
   if (alive(pid)) {
     try {
       process.kill(pid, "SIGKILL");
@@ -79,7 +93,7 @@ export async function stop(p: Proc): Promise<boolean> {
   for (const pid of listeners(p.port)) {
     if (commandOf(pid).includes(p.marker)) pids.add(pid);
   }
-  for (const pid of pids) await kill(pid);
+  for (const pid of pids) await kill(pid, p.name);
   rmSync(p.pidFile, { force: true });
   return pids.size > 0;
 }

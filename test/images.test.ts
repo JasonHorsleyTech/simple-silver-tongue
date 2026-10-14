@@ -4,7 +4,7 @@ import { request } from "node:http";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import type { Brain, ChatRequest, Conversation, ImageRequest, LedgerMessage } from "../src/conversations/types.ts";
-import type { StopOutcome } from "../src/conversations/store.ts";
+import { finishInFlight, type StopOutcome } from "../src/conversations/store.ts";
 import { createUser } from "../src/storage/users.ts";
 import { startTestServer } from "./helpers.ts";
 
@@ -27,9 +27,9 @@ describe("image brains: CLI → server → mock Venice, encrypted user (T05)", (
     return r;
   };
   const json = async (argv: string[]) => JSON.parse((await ok([...argv, "--json"])).stdout);
-  const events = async (argv: string[], code = 0) => {
+  const events = async (argv: string[], code: number | undefined = 0) => {
     const r = await t.cli([...argv, "--json"]);
-    assert.equal(r.code, code, `${argv.join(" ")}\n${r.stderr}`);
+    if (code !== undefined) assert.equal(r.code, code, `${argv.join(" ")}\n${r.stderr}`);
     return r.stdout.trim().split("\n").map((l) => JSON.parse(l)) as Array<{ type: string; [k: string]: any }>;
   };
   const get = async (id: string) => (await json(["conversation.get", "--id", id])) as Conversation;
@@ -43,14 +43,11 @@ describe("image brains: CLI → server → mock Venice, encrypted user (T05)", (
     }
     assert.fail(`timed out waiting for ${what}`);
   };
-  /** Wait for a message's image to settle, and for the generation that painted it to let go of the lock. */
+  /** Wait for a message's images to land: image.follow ends with the message as saved (T05 triage). */
   const settled = async (c: string, id: string) => {
-    const m = await until(async () => {
-      const m = (await get(c)).messages.find((x) => x.id === id);
-      const img = m?.versions[m.activeVersion]?.image;
-      return img && img.status !== "pending" ? m : undefined;
-    }, `${id}'s image`);
-    await ok(["generation.follow", "--conversation", c]); // returns once nothing is running
+    const evs = await events(["image.follow", "--conversation", c, "--message", id], undefined);
+    const m = evs.at(-1)!.message as LedgerMessage;
+    assert.ok(m.versions.every((v) => v.image?.status !== "pending"), "nothing pending once image.follow is done");
     return m;
   };
 
@@ -125,8 +122,8 @@ describe("image brains: CLI → server → mock Venice, encrypted user (T05)", (
     const edited = await json(["message.edit", "--conversation", c, "--message", m.id, "--content", "MOCK_IMAGE_SLOW A worn leather coat by the fire."]);
     const pending = edited.message.versions[1].image;
     assert.deepEqual([pending.status, pending.previous?.id, edited.painting.imageId], ["pending", old, pending.id]);
-    const busy = await t.cli(["turn", "--conversation", c, "--content", "x"]);
-    assert.deepEqual([busy.code, /busy: a reply or an image/.test(busy.stderr)], [1, true], "the lock is held while it paints");
+    const again = await t.cli(["message.edit", "--conversation", c, "--message", m.id, "--content", "Something else."]);
+    assert.deepEqual([again.code, /its image img_\w+ is still being made/.test(again.stderr)], [1, true], "its own image waits to land first");
     const done = await settled(c, m.id);
     const img = done.versions[1]!.image!;
     assert.deepEqual([img.id, img.status, img.previous], [pending.id, "done", undefined], "swapped in");
@@ -178,7 +175,7 @@ describe("image brains: CLI → server → mock Venice, encrypted user (T05)", (
     assert.deepEqual([after.versions[0]!.image!.status, after.versions[0]!.content], ["done", "MOCK_IMAGE_SLOW the stairs, at night"]);
   });
 
-  test("a stop mid-prompt keeps the prompt without an image; a stop mid-image waits for it and keeps it", async () => {
+  test("a stop mid-prompt keeps the prompt without an image; once the prompt is saved there is nothing to stop, and the image is kept", async () => {
     const { c } = await table();
     const stopAt = async (content: string, marker: string) => {
       const res = await post("turn", { conversation: c, brain: "Scene Painter", content });
@@ -198,9 +195,12 @@ describe("image brains: CLI → server → mock Venice, encrypted user (T05)", (
     assert.equal(t.mock.state.requests.filter((r) => r.path === "/image/generate").length, n0, "no image was asked for");
 
     const n = t.mock.state.requests.filter((r) => r.path === "/image/generate").length;
+    // Once the prompt is saved the conversation is free: there is nothing to stop, and the image is never cut short.
     const late = await stopAt("MOCK_IMAGE_SLOW the door", '"image_pending"');
-    assert.equal(late.stop.imageFinished, true);
-    assert.equal(late.stop.message?.versions[0]?.image?.status, "done", "the paid image is kept");
+    const pendingEv = late.events.find((e) => e.type === "image_pending");
+    assert.deepEqual([late.stop.stopped, late.stop.painting], [false, [{ messageId: pendingEv.messageId, imageId: pendingEv.imageId }]], "the stop names the image still being made");
+    assert.deepEqual(late.events.map((e) => e.type).slice(-2), ["image_done", "done"], "the turn's stream goes on to the image");
+    assert.equal(late.events.at(-1)!.message.versions[0].image.status, "done", "the paid image is kept");
     assert.equal(t.mock.state.requests.filter((r) => r.path === "/image/generate").length, n + 1);
   });
 
@@ -243,6 +243,102 @@ describe("image brains: CLI → server → mock Venice, encrypted user (T05)", (
     const id = (await last(c)).versions[0]!.image!.id;
     await ok(["conversation.delete", "--id", c]);
     assert.ok(!imageFiles().some((f) => f.startsWith(id)));
+  });
+
+  test("the play loop: once the prompt is saved, the GM can answer while the image is made; changes that would lose that image wait", async () => {
+    const { c, painter } = await table();
+    const res = await post("turn", { conversation: c, brain: "Scene Painter", content: "MOCK_IMAGE_SLOW the hooded figure" });
+    const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+    let text = "";
+    while (!text.includes('"image_pending"')) text += (await reader.read()).value ?? "";
+    const m = (await last(c)) as LedgerMessage;
+    assert.equal(m.versions[0]!.image!.status, "pending");
+
+    // The GM takes its turn at once and sees the exact prompt, framed, though the image isn't there yet.
+    const gm = await events(["turn", "--conversation", c, "--content", "What is the figure wearing?"]);
+    assert.equal(gm.at(-1)!.type, "done");
+    assert.equal(((sent("/chat/completions") as ChatRequest).messages.at(-2) as { content: string }).content, `${FRAME}\n${m.versions[0]!.content}`);
+    assert.equal((await get(c)).messages.find((x) => x.id === m.id)!.versions[0]!.image!.status, "pending", "the GM answered while it painted");
+
+    // What would replace or remove the image waits for it; nothing else does.
+    for (const argv of [
+      ["message.edit", "--conversation", c, "--message", m.id, "--content", "another prompt"],
+      ["message.delete", "--conversation", c, "--message", m.id],
+      ["image.retry", "--conversation", c, "--message", m.id],
+      ["conversation.delete", "--id", c],
+    ]) {
+      const r = await t.cli(argv);
+      assert.deepEqual([r.code, /being made/.test(r.stderr)], [1, true], `${argv[0]} waits for the image: ${r.stderr}`);
+    }
+    await ok(["message.edit", "--conversation", c, "--message", gm.at(-1)!.message.id, "--content", "A red coat."]);
+    await ok(["brain.update", "--conversation", c, "--brain", painter.id, "--system-prompt", "You paint, brightly."]);
+
+    for (let r = await reader.read(); !r.done; r = await reader.read()) text += r.value;
+    const painted = text.trim().split("\n").map((l) => JSON.parse(l));
+    assert.deepEqual(painted.map((e) => e.type).slice(-2), ["image_done", "done"]);
+    assert.equal(painted.at(-1).message.versions[0].image.status, "done");
+
+    // A follower that attached mid-prompt sees the image land too, as the turn's own stream does.
+    const slow = post("turn", { conversation: c, brain: painter.id, content: "MOCK_SLOW MOCK_IMAGE_SLOW the stairs" });
+    await until(async () => ((await get(c)).messages.at(-1)!.author.type === "player" ? true : undefined), "the player message");
+    const followed = await events(["generation.follow", "--conversation", c]);
+    assert.deepEqual(followed.map((e) => e.type).filter((x, i, a) => a[i - 1] !== x).slice(-3), ["image_pending", "image_done", "done"]);
+    await (await slow).text();
+
+    // A regenerate while the image is being made: a new version with its own image; the first lands in its own version.
+    const r1 = await post("turn", { conversation: c, brain: painter.id, content: "MOCK_IMAGE_SLOW the cellar" });
+    const rd = r1.body!.pipeThrough(new TextDecoderStream()).getReader();
+    for (let seen = ""; !seen.includes('"image_pending"'); ) seen += (await rd.read()).value ?? "";
+    const regen = await events(["message.regenerate", "--conversation", c]);
+    for (let r = await rd.read(); !r.done; r = await rd.read());
+    const both = await settled(c, regen.at(-1)!.message.id);
+    assert.deepEqual(both.versions.map((v) => v.image?.status), ["done", "done"]);
+  });
+
+  test("image.follow never misses a result: an image that settled before it attached is reported from the saved record (QA-2)", async () => {
+    const { c } = await table();
+    await ok(["turn", "--conversation", c, "--brain", "Scene Painter", "--content", "the bar"]);
+    const m = await last(c);
+    const edited = await json(["message.edit", "--conversation", c, "--message", m.id, "--content", "MOCK_IMAGE_ERROR now"]);
+    await until(async () => ((await last(c)).versions[0]!.image!.status === "error" ? true : undefined), "the image to fail");
+    const evs = await events(["image.follow", "--conversation", c, "--message", m.id], undefined);
+    assert.deepEqual(evs.map((e) => e.type), ["done"]);
+    assert.deepEqual([evs[0]!.message.versions[0].image.id, evs[0]!.message.versions[0].image.status], [edited.painting.imageId, "error"]);
+
+    // While one is being made: image_pending, then how it ended, then done.
+    await json(["message.edit", "--conversation", c, "--message", m.id, "--content", "MOCK_IMAGE_SLOW later"]);
+    const live = await events(["image.follow", "--conversation", c, "--message", m.id]);
+    assert.deepEqual(live.map((e) => e.type), ["image_pending", "image_done", "done"]);
+    assert.equal(live.at(-1)!.message.versions[0].image.status, "done");
+    const r = await t.cli(["image.follow", "--conversation", c, "--message", "m_nosuchmsg"]);
+    assert.equal(r.code, 1);
+  });
+
+  test("retrying a finished image keeps it: the new image is a new version of the same prompt (QA-5)", async () => {
+    const { c } = await table();
+    await ok(["turn", "--conversation", c, "--brain", "Scene Painter", "--content", "the hearth"]);
+    const m = await last(c);
+    const first = m.versions[0]!.image!.id;
+    const evs = await events(["image.retry", "--conversation", c, "--message", m.id]);
+    const after = evs.at(-1)!.message as LedgerMessage;
+    assert.deepEqual([after.versions.length, after.activeVersion, after.versions[1]!.repaintOf, after.versions[1]!.content], [2, 1, 0, m.versions[0]!.content]);
+    assert.deepEqual(after.versions.map((v) => v.image?.status), ["done", "done"]);
+    assert.ok(imageFiles().some((f) => f.startsWith(first)), "the first image is still on disk");
+    // A blurred one is still replaced in place (it was never usable).
+    await ok(["turn", "--conversation", c, "--brain", "Scene Painter", "--content", "MOCK_BLURRED the bath"]);
+    const b = await last(c);
+    await ok(["image.retry", "--conversation", c, "--message", b.id]);
+    assert.equal((await last(c)).versions.length, 1);
+  });
+
+  test("a graceful shutdown waits for an image being made, so a restart doesn't lose it (QA-1)", async () => {
+    const { c } = await table();
+    const res = await post("turn", { conversation: c, brain: "Scene Painter", content: "MOCK_IMAGE_SLOW the gate" });
+    const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+    for (let seen = ""; !seen.includes('"image_pending"'); ) seen += (await reader.read()).value ?? "";
+    assert.equal(await finishInFlight(5000), 0, "nothing left running");
+    assert.equal((await last(c)).versions[0]!.image!.status, "done", "saved before the server would exit");
+    for (let r = await reader.read(); !r.done; r = await reader.read());
   });
 
   const cookie = () => `ss_session=${JSON.parse(readFileSync(join(t.config.runDir, "cli-session.json"), "utf8")).token}`;

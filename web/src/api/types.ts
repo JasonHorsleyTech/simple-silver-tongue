@@ -81,8 +81,17 @@ export type MessageView = { conversationId: string; author: string; message: Led
 /** message.edit and message.add: for an image message (T05), `painting` names the image being made for it now. */
 export type ImageMessageView = MessageView & { painting?: { imageId: string; model: string } };
 
-/** generation.stop. `message` is what the stopped reply saved (null when no text had arrived; `error` says so). */
-export type StopOutcome = { stopped: boolean; message: LedgerMessage | null; error?: { code: string; message: string }; note?: string; imageFinished?: true };
+/**
+ * generation.stop. `message` is what the stopped reply saved (null when no text had arrived; `error` says so).
+ * `painting` (T05 triage): the conversation's images still being made, which no stop touches (IMAGE_STOP_NOTE).
+ */
+export type StopOutcome = {
+  stopped: boolean;
+  message: LedgerMessage | null;
+  error?: { code: string; message: string };
+  note?: string;
+  painting?: Array<{ messageId: string; imageId: string }>;
+};
 
 export type ConversationUpdate = {
   id: string;
@@ -176,8 +185,18 @@ export type StreamCommands = {
   "generation.follow": { args: { conversation: string } };
   /** A new, active version of the last message (a brain's). With a steer, the brain rewrites its current version. */
   "message.regenerate": { args: { conversation: string; message?: string; steer?: string } };
-  /** T05: paint an image message's active prompt again (a failed, interrupted or blurred image). */
+  /**
+   * T05: paint an image message's active prompt again. A failed, interrupted or blurred image is replaced; a
+   * finished one is kept, and the retry becomes a new version with the same prompt (`repaintOf`). 409 while
+   * that version's image is still being made.
+   */
   "image.retry": { args: { conversation: string; message: string } };
+  /**
+   * T05 triage: watch a message's images being made: image_pending, then image_done / image_error, then done
+   * with the message as saved. Nothing being made: done at once with the message as it is. Follow every
+   * pending image in your copy of the ledger with it (after a load, an edit, an add): it can't miss a result.
+   */
+  "image.follow": { args: { conversation: string; message: string } };
 };
 
 /**

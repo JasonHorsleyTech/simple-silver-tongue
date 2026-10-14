@@ -9,11 +9,14 @@ import { partialPrompt, promptOf } from "../src/conversations/tool-call.ts";
 import { newMessage, relayReply, type Reply } from "../src/conversations/turn.ts";
 import { MOCK_MODELS } from "../src/dev/mock-models.ts";
 import { solidPng } from "../src/dev/mock-venice.ts";
-import { saveImageFile } from "../src/images/files.ts";
+import { findImageFile, saveImageFile } from "../src/images/files.ts";
 import { buildImageRequest, imagePriceUsd, imageSettingsProblem } from "../src/images/request.ts";
 import { sniffImage } from "../src/images/sniff.ts";
 import type { StreamEvent } from "../src/registry.ts";
 import type { ChatEvent } from "../src/venice/chat.ts";
+import { createVeniceClient } from "../src/venice/client.ts";
+import { generateImage } from "../src/venice/images.ts";
+import type { ImageRequest } from "../src/conversations/types.ts";
 import { normalizeModel, type ModelInfo } from "../src/venice/models.ts";
 
 const model = (id: string) => normalizeModel(MOCK_MODELS.find((m) => m.id === id) as never) as ModelInfo;
@@ -102,7 +105,7 @@ describe("image brains' parts (T05)", () => {
       const [written, lost, owned] = [pending(), pending(), pending()];
       for (const image of [written, lost, owned]) conv.messages.push(newMessage(by, "image", { content: "a prompt", source: "generated", createdAt: image.createdAt, image }));
       await saveImageFile(vault, written.id, { mime: "image/png", ext: "png" }, solidPng(2, 2, [9, 9, 9])); // written, then the server stopped
-      beginPainting(vault, owned.id); // still being painted by a running job: left alone
+      beginPainting(vault, owned.id, { convId: conv.id, messageId: "m_x" }); // still being painted by a running job: left alone
       await settleStaleImages(vault, conv);
       assert.deepEqual([written.status, written.mime], ["done", "image/png"], "a paid image that reached disk is kept");
       assert.deepEqual([lost.status, lost.error], ["error", INTERRUPTED], "never pending forever");
@@ -113,8 +116,30 @@ describe("image brains' parts (T05)", () => {
       assert.equal(next.previous?.id, written.id);
       assert.equal(next.previous?.previous, undefined);
       assert.equal(newImageRecord({ model: "m", safeMode: true, replacing: { ...lost, previous: written } }).previous?.id, written.id, "a failed one keeps showing the last good one");
+
+      // T05 QA-4: an image recovered as done swaps in like a painted one: the image shown meanwhile goes, file and all.
+      const shown = { ...newImageRecord({ model: "z-image-turbo", safeMode: true }), status: "done" as const };
+      const swapped = { ...newImageRecord({ model: "z-image-turbo", safeMode: true }), previous: shown };
+      conv.messages.push(newMessage(by, "image", { content: "p", source: "generated", createdAt: shown.createdAt, image: swapped }));
+      await saveImageFile(vault, shown.id, { mime: "image/png", ext: "png" }, solidPng(2, 2, [1, 1, 1]));
+      await saveImageFile(vault, swapped.id, { mime: "image/png", ext: "png" }, solidPng(2, 2, [2, 2, 2]));
+      await settleStaleImages(vault, conv);
+      assert.deepEqual([swapped.status, swapped.previous], ["done", undefined]);
+      assert.equal(await findImageFile(vault, shown.id), null, "no orphan left behind for a later replacement");
+      assert.ok(await findImageFile(vault, swapped.id));
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  test("an image request that times out says Venice may have made (and billed) it, not that it was unreachable (T05 QA-3)", async () => {
+    const hang: typeof fetch = (_url, init) =>
+      new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true }));
+    const venice = createVeniceClient({ baseUrl: "http://127.0.0.1:9/api/v1", apiKey: "k", fetch: hang });
+    await assert.rejects(generateImage(venice, { model: "z-image-turbo", prompt: "p" } as ImageRequest, { timeoutMs: 30 }), (err: Error) => {
+      assert.match(err.message, /^Venice didn't send the image within 0 s\. It may still have made \(and billed\) it; retry/);
+      assert.doesNotMatch(err.message, /Could not reach/);
+      return true;
+    });
   });
 });

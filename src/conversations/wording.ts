@@ -7,6 +7,13 @@
 export const STOP_BILL_NOTE =
   "Stopping saves waiting, not money: Venice still writes and bills the whole reply, so its cost is added to the conversation once Venice reports it.";
 
+/**
+ * T05 triage: why an image being made isn't stopped. Once its prompt is saved the image is with Venice, so a stop
+ * would save nothing; the image is its message's own job, and the conversation is free meanwhile.
+ */
+export const IMAGE_STOP_NOTE =
+  "An image can't be stopped once its prompt is saved: Venice is already making it, and billing it, so it is kept when it arrives.";
+
 /** The payload view's and the brain editor's words for reasoning (design.md, "Reasoning on adds provider-side text"). */
 export const REASONING_NOTE = "Reasoning on: the provider adds a small hidden instruction we can't see or edit.";
 

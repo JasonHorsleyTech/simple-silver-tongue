@@ -1,5 +1,5 @@
 import type { ImageRequest } from "../conversations/types.ts";
-import { upstreamError } from "../lib/errors.ts";
+import { CommandError, upstreamError } from "../lib/errors.ts";
 import type { VeniceClient } from "./client.ts";
 
 /**
@@ -14,21 +14,28 @@ export type GeneratedImage = { bytes: Buffer; blurred: boolean; contentViolation
 export const IMAGE_TIMEOUT_MS = 180_000;
 
 export async function generateImage(venice: VeniceClient, body: ImageRequest, opts: { timeoutMs?: number } = {}): Promise<GeneratedImage> {
-  const res = await venice.request("/image/generate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    timeoutMs: opts.timeoutMs ?? IMAGE_TIMEOUT_MS,
-  });
+  const timeoutMs = opts.timeoutMs ?? IMAGE_TIMEOUT_MS;
+  // Venice may well have made (and billed) an image we stopped waiting for; say so, and how to get one (T05 QA-3).
+  const lateText = `Venice didn't send the image within ${Math.round(timeoutMs / 1000)} s. It may still have made (and billed) it; retry to paint the prompt again.`;
+  let res: Response;
+  try {
+    res = await venice.request("/image/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      timeoutMs,
+    });
+  } catch (err) {
+    if (err instanceof CommandError && (err.details as { timeout?: boolean } | undefined)?.timeout) throw upstreamError(lateText);
+    throw err;
+  }
   const blurred = res.headers.get("x-venice-is-blurred") === "true";
   const contentViolation = res.headers.get("x-venice-is-content-violation") === "true";
   let json: { images?: unknown };
   try {
     json = (await res.json()) as { images?: unknown };
   } catch (err) {
-    if ((err as Error)?.name === "TimeoutError" || (err as Error)?.name === "AbortError") {
-      throw upstreamError(`Venice did not finish sending the image within ${Math.round((opts.timeoutMs ?? IMAGE_TIMEOUT_MS) / 1000)}s.`);
-    }
+    if ((err as Error)?.name === "TimeoutError" || (err as Error)?.name === "AbortError") throw upstreamError(lateText);
     throw upstreamError("Venice's image answer was not valid JSON.");
   }
   const b64 = Array.isArray(json?.images) ? json.images[0] : undefined;

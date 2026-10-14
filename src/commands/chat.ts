@@ -5,12 +5,13 @@ import {
   followGeneration,
   loadConversation,
   mutateConversation,
+  paintingNow,
   stopGeneration,
   type GenerationHandle,
   type StopOutcome,
 } from "../conversations/store.ts";
 import { beginPainting, endPainting, newImageRecord } from "../conversations/images.ts";
-import { imageNote, paint, painterFor, type Painter } from "../conversations/paint.ts";
+import { followImages, imageNote, painterFor, startPainting, type Painter } from "../conversations/paint.ts";
 import { promptOf } from "../conversations/tool-call.ts";
 import {
   addSpend,
@@ -24,7 +25,7 @@ import {
   type Reply,
 } from "../conversations/turn.ts";
 import type { Brain, ChatRequest, Conversation, LedgerMessage, MessageVersion, RetryRequest, Usage } from "../conversations/types.ts";
-import { STOP_BILL_NOTE } from "../conversations/wording.ts";
+import { IMAGE_STOP_NOTE, STOP_BILL_NOTE } from "../conversations/wording.ts";
 import { badRequest, CommandError } from "../lib/errors.ts";
 import { newId } from "../lib/ids.ts";
 import { command, streamCommand, type Ctx, type StreamEvent } from "../registry.ts";
@@ -110,7 +111,9 @@ refused only when its request would end with its own reply (a brain with a final
 answer). Your message is saved once Venice accepts the request. If the reply then fails, your message stays
 and no reply is saved: to retry, run turn again with the same --brain and no --content (the error says so).
 One reply at a time per conversation (409 if busy). The reply prints to stdout as it streams; reasoning and
-status lines go to stderr. Another terminal or a reloaded browser can watch it with generation.follow.`,
+status lines go to stderr. Another terminal or a reloaded browser can watch it with generation.follow.
+An image brain's prompt streams the same way; once it is saved the conversation is free (the next brain can
+take its turn) and this stream goes on until the image lands.`,
   args: turnArgs,
   examples: [
     './ss turn --conversation c_k3j9x0q2ma --content "Hello there"',
@@ -120,15 +123,17 @@ status lines go to stderr. Another terminal or a reloaded browser can watch it w
   ],
   async *handler(args, ctx) {
     const gen = beginGeneration(ctx.requireSession().vault, args.conversation); // 409 before any event, so it's a real HTTP status
+    let image: ImageStarted | void;
     try {
-      yield* gen.relay(turnEvents(args, ctx, gen));
+      image = yield* gen.relay(turnEvents(args, ctx, gen));
     } finally {
-      gen.release();
+      gen.release(); // an image brain's generation ends once its prompt is saved: the next brain can go
     }
+    if (image) yield* imageTail(ctx, image);
   },
 });
 
-async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: GenerationHandle): AsyncGenerator<StreamEvent, void, undefined> {
+async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: GenerationHandle): AsyncGenerator<StreamEvent, ImageStarted | void, undefined> {
   const { vault } = ctx.requireSession();
   const conv = await gen.load(); // through the write queue, so no edit lands between the lock and this read (T03 QA-1)
   const model = await lookupModel(ctx.deps.venice, "text", conv.settings.textModel);
@@ -157,7 +162,7 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
   const reply = yield* collectReply(vault, conv.id, upstream, gen, say);
   if (painter) {
     const author = { type: "brain" as const, brainId: plan.brain.id };
-    return yield* paintReply(ctx, conv.id, reply, { painter, brain: plan.brain, textModel: plan.body.model, say, head: plan.brain.name }, (c, version) => {
+    return yield* paintReply(ctx, gen, conv.id, reply, { painter, brain: plan.brain, textModel: plan.body.model, say, head: plan.brain.name }, (c, version) => {
       const message = newMessage(author, "image", version, messageId);
       c.messages.push(message);
       return message;
@@ -191,15 +196,17 @@ per conversation (409 if busy); generation.follow watches it, generation.stop st
   ],
   async *handler(args, ctx) {
     const gen = beginGeneration(ctx.requireSession().vault, args.conversation); // 409 before any event
+    let image: ImageStarted | void;
     try {
-      yield* gen.relay(regenerateEvents(args, ctx, gen));
+      image = yield* gen.relay(regenerateEvents(args, ctx, gen));
     } finally {
       gen.release();
     }
+    if (image) yield* imageTail(ctx, image);
   },
 });
 
-async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx, gen: GenerationHandle): AsyncGenerator<StreamEvent, void, undefined> {
+async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx, gen: GenerationHandle): AsyncGenerator<StreamEvent, ImageStarted | void, undefined> {
   const { vault } = ctx.requireSession();
   const conv = await gen.load(); // through the write queue (T03 QA-1): a delete that got in first is seen here
   const model = await lookupModel(ctx.deps.venice, "text", conv.settings.textModel);
@@ -234,7 +241,7 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
     m.updatedAt = version.createdAt;
     return m;
   };
-  if (painter) return yield* paintReply(ctx, conv.id, reply, { painter, brain: plan.brain, textModel: plan.body.model, say, head }, addVersion);
+  if (painter) return yield* paintReply(ctx, gen, conv.id, reply, { painter, brain: plan.brain, textModel: plan.body.model, say, head }, addVersion);
 
   const version = generatedVersion(reply, plan.body.model);
   let message!: LedgerMessage;
@@ -255,20 +262,27 @@ const UNFINISHED = {
   open: "The prompt never finished arriving (its closing quote is missing), so no image was requested. Edit the prompt or retry it as it is.",
 };
 
+/** An image brain's turn or regenerate once its prompt is saved: the image being made, and the done note so far. */
+type ImageStarted = { convId: string; messageId: string; imageId: string; note: string; spentUsd: number; pending?: StreamEvent };
+
 /**
  * An image brain's reply: save its prompt as the image message (put adds it to the ledger: a new message for a
- * turn, a new version for a regenerate), then paint it. The stream ends after the image is settled, and its
- * done carries the message with the image in it. A prompt that only partly arrived (a stop, max_tokens) is
- * saved, since it was shown and paid for, but not painted: its image is an error to edit or retry from. A reply
- * with no prompt at all saves nothing and fails like a broken reply, with the same retry.
+ * turn, a new version for a regenerate), start its image, and say image_pending. That is where the generation
+ * ends (T05 triage): the conversation's lock is free while the image is made, so the next brain can take its
+ * turn, and the caller's stream follows the image to its end (imageTail). image_pending goes to followers now
+ * (announce) and to the caller only after the lock is released, so the client that hears it can go straight on.
+ * A prompt that only partly arrived (a stop, max_tokens) is saved, since it was shown and paid for, but not
+ * painted: its image is an error to edit or retry from. A reply with no prompt at all saves nothing and fails
+ * like a broken reply, with the same retry.
  */
 async function* paintReply(
   ctx: Ctx,
+  gen: GenerationHandle,
   convId: string,
   reply: Reply,
   opts: { painter: Painter; brain: Brain; textModel: string; say: Say; head: string },
   put: (c: Conversation, version: MessageVersion) => LedgerMessage,
-): AsyncGenerator<StreamEvent, void> {
+): AsyncGenerator<StreamEvent, ImageStarted | void> {
   const { vault } = ctx.requireSession();
   const { painter, brain, say } = opts;
   const call = promptOf(reply.toolCalls);
@@ -295,7 +309,7 @@ async function* paintReply(
   let message!: LedgerMessage;
   const spentUsd = await saveReply(vault, convId, reply, (c) => {
     message = put(c, version);
-    if (!unfinished) beginPainting(vault, image.id); // owned before the pending record reaches disk
+    if (!unfinished) beginPainting(vault, image.id, { convId, messageId: message.id }); // owned before the pending record reaches disk
     return { messageId: message.id, version: message.versions.indexOf(version) };
   }).catch((err) => {
     endPainting(vault, image.id);
@@ -309,9 +323,18 @@ async function* paintReply(
     yield { type: "done", message, note: `${replyNote(opts.head, reply)} · ${imageNote(image)}${extra}`, spentUsd };
     return;
   }
-  yield { type: "image_pending", messageId: message.id, imageId: image.id, model: image.model, message };
-  const painted = yield* paint(vault, ctx.deps.venice, convId, { messageId: message.id, image, prompt }, painter);
-  yield { type: "done", message: painted.message, note: `${replyNote(opts.head, reply)} · ${imageNote(painted.image)}${extra}`, spentUsd: painted.spentUsd };
+  startPainting(vault, ctx.deps.venice, convId, { messageId: message.id, image, prompt }, painter);
+  const pending: StreamEvent = { type: "image_pending", messageId: message.id, imageId: image.id, model: image.model, message };
+  gen.announce(pending);
+  return { convId, messageId: message.id, imageId: image.id, note: `${replyNote(opts.head, reply)}${extra}`, spentUsd, pending };
+}
+
+/** The rest of an image turn's stream, after its generation has let go: image_pending, the image landing, then done. */
+async function* imageTail(ctx: Ctx, s: ImageStarted): AsyncGenerator<StreamEvent, void> {
+  if (s.pending) yield s.pending;
+  const { message, spentUsd } = yield* followImages(ctx.requireSession().vault, s.convId, s.messageId, { imageId: s.imageId, announced: [s.imageId] });
+  const img = message.versions.find((v) => v.image?.id === s.imageId)?.image;
+  yield { type: "done", message, note: img ? `${s.note} · ${imageNote(img)}` : s.note, spentUsd: Math.max(spentUsd, s.spentUsd) };
 }
 
 /**
@@ -424,17 +447,40 @@ export const generationFollow = streamCommand({
   name: "generation.follow",
   description: `Watch a reply that is being generated right now: from a second terminal, or a browser tab reloaded mid-reply.
 It replays what has streamed so far, then streams the rest live and ends the way that turn does (done or error).
-When nothing is being generated it ends at once, with an empty done ("message": null).`,
+For an image brain it follows the image too, like the turn's own stream. When nothing is being generated it ends
+at once, with an empty done ("message": null). Images made after a reply (an edit, an add, a retry, or an image
+turn whose prompt is done) don't hold the conversation: watch one with image.follow.`,
   args: z.object({ conversation: conversationId }),
   examples: ["./ss generation.follow --conversation c_k3j9x0q2ma"],
   async *handler(args, ctx) {
     const { vault } = ctx.requireSession();
     const live = followGeneration(vault, args.conversation);
-    if (live) return yield* live;
+    if (live) {
+      // An image brain's generation ends at image_pending (T05 triage); carry on with its image, as turn does.
+      let pending: StreamEvent | undefined;
+      for await (const ev of live) {
+        if (ev.type === "image_pending") pending = ev;
+        if (ev.type === "done") pending = undefined;
+        yield ev;
+      }
+      if (!pending) return;
+      const id = { messageId: String(pending.messageId), imageId: String(pending.imageId) };
+      const conv = await loadConversation(vault, args.conversation);
+      const brain = brainOf(conv, id.messageId);
+      return yield* imageTail(ctx, { convId: args.conversation, ...id, note: brain ?? "image", spentUsd: 0 });
+    }
     await loadConversation(vault, args.conversation); // an unknown id is a 404, not "nothing running"
-    yield { type: "done", message: null, note: "Nothing is being generated for this conversation." };
+    const images = paintingNow(vault, args.conversation);
+    const also = images ? ` ${images.length === 1 ? "An image is" : `${images.length} images are`} still being made (${images.map((i) => i.messageId).join(", ")}): image.follow watches one.` : "";
+    yield { type: "done", message: null, note: `Nothing is being generated for this conversation.${also}` };
   },
 });
+
+/** The name of the brain that wrote a message, for a note. */
+function brainOf(conv: Conversation, messageId: string): string | undefined {
+  const m = conv.messages.find((x) => x.id === messageId);
+  return m?.author.type === "brain" ? conv.brains.find((b) => b.id === (m.author as { brainId: string }).brainId)?.name : undefined;
+}
 
 export const generationStop = command({
   name: "generation.stop",
@@ -442,9 +488,9 @@ export const generationStop = command({
 What had arrived is kept, marked "stopped": a turn's partial reply is saved as the brain's message, and a
 regenerate's as a new, active version, so you can edit it, regenerate it or delete it. If no reply text had
 arrived yet, nothing is saved: a turn keeps only your message, a regenerate keeps the current version.
-An image brain's prompt that is cut short is kept without an image (retry or edit it). Once the prompt is done
-and its image is with Venice, a stop can't help: the image is being made and billed, so it is waited for, kept
-and returned (imageFinished).
+An image brain's prompt that is cut short is kept without an image (retry or edit it). Images are never stopped:
+once a prompt is saved its image is with Venice, being made and billed, so it is kept when it arrives. The
+result lists the conversation's images still being made (painting).
 Stopping saves waiting, not money: Venice still writes and bills the whole reply. So the server keeps reading
 it quietly in the background, discards the text, and adds the real cost to the stopped version and to the
 conversation's total once Venice reports it. It returns once the stopped reply is saved.`,
@@ -452,23 +498,28 @@ conversation's total once Venice reports it. It returns once the stopped reply i
   examples: ["./ss generation.stop --conversation c_k3j9x0q2ma"],
   handler: async (args, ctx): Promise<StopOutcome> => {
     const { vault } = ctx.requireSession();
-    const outcome = await stopGeneration(vault, args.conversation);
-    if (outcome) return { ...outcome, note: STOP_BILL_NOTE };
-    await loadConversation(vault, args.conversation); // an unknown id is a 404, not "nothing running"
-    return { stopped: false, message: null };
+    const outcome = (await stopGeneration(vault, args.conversation)) ?? { stopped: false, message: null };
+    if (!outcome.stopped) await loadConversation(vault, args.conversation); // an unknown id is a 404, not "nothing running"
+    const painting = paintingNow(vault, args.conversation);
+    if (painting) outcome.painting = painting;
+    if (outcome.stopped) outcome.note = STOP_BILL_NOTE;
+    return outcome;
   },
   format: (r: StopOutcome) => {
-    if (!r.stopped) return "Nothing is being generated for this conversation.";
     const m = r.message;
     // Without a message, the stopped generation's own error says what it left behind ("Stopped before ...").
-    const head = r.imageFinished
-      ? `Too late to stop the image: Venice was already making it (and billing it), so it was finished and kept${m ? ` in ${m.id}` : ""}.`
+    const head = !r.stopped
+      ? "Nothing is being generated for this conversation."
       : m
-      ? `Stopped. What had arrived is saved: ${m.id}, version ${m.activeVersion + 1}/${m.versions.length}.`
-      : r.error?.code === "stopped"
-        ? r.error.message
-        : `Stopped. ${r.error ? r.error.message : "Nothing was saved."}`;
-    return r.note ? `${head}\n${r.note}` : head;
+        ? `Stopped. What had arrived is saved: ${m.id}, version ${m.activeVersion + 1}/${m.versions.length}.`
+        : r.error?.code === "stopped"
+          ? r.error.message
+          : `Stopped. ${r.error ? r.error.message : "Nothing was saved."}`;
+    const lines = [head];
+    if (r.stopped && m && r.error) lines.push(r.error.message);
+    if (r.painting) lines.push(`Still being made: ${r.painting.map((p) => `${p.imageId} (${p.messageId})`).join(", ")}. ${IMAGE_STOP_NOTE}`);
+    if (r.note) lines.push(r.note);
+    return lines.join("\n");
   },
 });
 

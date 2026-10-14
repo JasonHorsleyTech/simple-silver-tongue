@@ -97,9 +97,10 @@ export type LedgerMessage = {
 
 /**
  * One image of an image message's version (T05). The file is images/<id>.<ext> in the user's folder (ciphertext
- * for encrypted users), written before the status says done. Pending means a generation is painting it right
- * now: a pending image that no running job owns (the server stopped mid-image) is settled on the next read,
- * as done if its file made it to disk, or as an error to retry (settleStaleImages, images.ts).
+ * for encrypted users), written before the status says done. Pending means a job is painting it right now
+ * (its own job since T05 triage, not the conversation's generation): a pending image that no running job owns
+ * (the server stopped mid-image) is settled on the next read, as done if its file made it to disk, or as an
+ * error to retry (settleStaleImages, images.ts).
  */
 export type ImageRecord = {
   id: string; // img_...
@@ -136,6 +137,11 @@ export type MessageVersion = {
   steer?: string;
   /** With a steer: the index of the version the steer revised (the one that was active). Display only. */
   steeredFrom?: number;
+  /**
+   * T05 triage: image.retry of a finished image. This version paints the same prompt as version `repaintOf`
+   * (an index) again, so both images are kept. Display only.
+   */
+  repaintOf?: number;
   /** Display only, never sent (hard rule 4). */
   reasoning?: string;
   /** authored = typed by the user (a player message, or words put in a brain's mouth). */

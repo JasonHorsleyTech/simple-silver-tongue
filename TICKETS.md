@@ -132,7 +132,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T05: Image brains (CP4) · `triage`
+## T05: Image brains (CP4) · `frontend`
 
 **Engineer scope**
 - `kind: "image"` brains with a per-brain `safeMode` (default on) and editable tool text (`tool.description`, `tool.promptParamDescription`, `tool.resultContent`). The request carries `tools` and a forced `tool_choice`, with the tool args streamed.
@@ -166,6 +166,14 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
   - **Settings.** `conversation.update {settings: {image: {width, height, aspectRatio, resolution, format, hideWatermark, negativePrompt}}}` (`null` unsets; `ConversationUpdate` in types.ts has it). The server refuses a size the current model can't take (400 with the reason): z-image-turbo is width × height in multiples of 8; Nano Banana is a listed resolution and aspect ratio. Use the model's `constraints` from `models.list` to offer the right controls. `prompt.preview` for an image brain has `image: {path, params, notes}`: show it in the payload view under the chat body ("then POST /image/generate with the prompt from the call"), with its notes.
   - The "T05" wording to remove is listed under **From T04 frontend** above.
 
+- **From T05 triage** (this replaces the engineer's notes above where they differ: the lock, `generation.follow` for images, Stop, Retry):
+  - **The conversation is free while an image is made.** An image brain's generation ends at `image_pending` (the prompt is saved). Jason's loop is "the painter paints, I send the next line to the GM at once, the image fades in": so at `image_pending` the composer must go back to Send and the chips come back, while the image card keeps its loader. Never show a 409 here; there is none. The turn's own stream keeps going to `image_done` / `image_error` + `done`: either keep reading it in the background for that message, or drop it and use `image.follow`. Don't let it hold `useChat`'s single live reply (that would block the GM's send in the UI).
+  - **Render a pending image from the saved record, and follow it with `image.follow {conversation, message}`** (stream: `image_pending`…, then `image_done` / `image_error`, then `done {message}` with the message as saved; `StreamCommands` has it). Do this for every version whose `image.status` is `pending` in your copy: after `conversation.get` (page load, focus), after `message.edit` / `message.add` (`painting`), and for a turn whose stream you dropped. It can't miss a result: with nothing being made it answers `done` at once with the current message (T05 QA-2). `generation.follow` is for replies; it no longer covers images made after an edit, add or retry.
+  - **What waits for an image being made (409, inline in the server's words):** editing that version's prompt, its Retry, deleting the message, deleting the conversation. Everything else works meanwhile: other brains' turns, Regenerate (a new version with its own image), the pager, other messages. Hide or disable those four actions on a message whose image is pending, or show the 409 inline.
+  - **Stop never touches an image.** During the prompt, Stop works as before. Once `image_pending` arrives there is nothing to stop: hide Stop for the image. `generation.stop` returns `painting: [{messageId, imageId}]` (images still being made); show `IMAGE_STOP_NOTE` (wording.ts) if Stop is ever offered then. `imageFinished` is gone.
+  - **Retry.** Offer Retry on a failed, interrupted, blurred or flagged image (it replaces it). `image.retry` of a finished image now keeps it and adds a new version with the same prompt (`version.repaintOf`: the version it repaints), so an "Another image" action on a done image is safe; the pager label can say "same prompt as v1".
+  - A restart (`npm run up`) now lets a running image finish first, so a reload after a restart finds it done.
+
 **Deferred in:**
 - ~~Mock: add a trigger (e.g. `MOCK_BLURRED` in the prompt, with `safe_mode` on) that answers `x-venice-is-blurred: true`~~ Done in T05 engineer: `MOCK_BLURRED`, plus `MOCK_VIOLATION`, `MOCK_IMAGE_ERROR`, `MOCK_IMAGE_FLAKY`, `MOCK_IMAGE_SLOW` (design.md, "Mock Venice").
 - ~~`relayReply` glues parallel tool calls' fragments into invalid JSON (T02 QA-7)~~ Done in T05 engineer: fragments are kept per `index`, only the first call is used (a second is named in the `done` note), and `parallel_tool_calls` is still not sent. The mock's `MOCK_TWO_TOOL_CALLS` interleaves two calls.
@@ -185,6 +193,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 **Frontend scope:** Login polish (user picker from `user.list`, a lock icon for encrypted users, error on a wrong password), logout and switching users, and a session-expired redirect to login.
 
 **Deferred in:**
+- Encrypted users' image files show their sniffed type in the extension (`images/img_….webp` / `.png`), which hints at the model family; the contents are ciphertext. Use one neutral name for encrypted users (`img_….bin`): `image.get` already sniffs the decrypted bytes, `findImageFile` must still find the old names, and `settleStaleImages` would then sniff the decrypted file for `mime` (T05 QA-6).
 - `user.delete` while that user has work in flight: since T01 triage, running work holds its own key copy and finishes after logout. Its last save would recreate `data/users/<u>/conversations/` with no `user.json`, and that name then can't be reused. Refuse with a 409, or wait, while the user has requests running (T01 QA-2).
 
 ---

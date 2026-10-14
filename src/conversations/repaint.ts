@@ -1,30 +1,24 @@
 import { CommandError, conflict, notFound } from "../lib/errors.ts";
 import { nowIso } from "../lib/ids.ts";
-import type { StreamEvent } from "../registry.ts";
 import type { Vault } from "../storage/vault.ts";
 import type { VeniceClient } from "../venice/client.ts";
-import { beginPainting, endPainting, newImageRecord } from "./images.ts";
-import { imageNote, paint, painterFor, runDetached, type Painter } from "./paint.ts";
+import { assertImageIdle, beginPainting, endPainting, newImageRecord } from "./images.ts";
+import { painterFor, startPainting, type Painter } from "./paint.ts";
 import { activeVersion, resolveBrain } from "./prompt.ts";
-import { beginGeneration, mutateConversation, type GenerationHandle } from "./store.ts";
+import { assertAcceptingWork, assertLedgerIdle, loadConversation, mutateConversation } from "./store.ts";
 import { newMessage } from "./turn.ts";
-import type { Brain, Conversation, ImageRecord, LedgerMessage } from "./types.ts";
+import type { Brain, Conversation, ImageRecord, LedgerMessage, MessageVersion } from "./types.ts";
 
 /**
  * Making an image from a prompt that is already in the ledger (T05): retrying it (image.retry), editing it
  * (message.edit), or writing it yourself in an image brain's mouth (message.add). No brain is asked; the prompt
- * is painted as it stands. Each holds the conversation's lock from the save to the settled image.
+ * is painted as it stands. Since T05 triage none of them holds the conversation's lock while the image is
+ * made: the prompt is saved with a pending image, the image is a job of its own (startPainting), and only
+ * what would replace or remove that image waits for it (assertImageIdle).
  */
 
-/** A new image for a message that is in the ledger, saved as pending and owned by this generation. */
-export type Repaint = { message: LedgerMessage; brain: Brain; painter: Painter; image: ImageRecord; prompt: string; changed: boolean };
-
-/**
- * Give an image message's active version a new pending image (and, for an edit, its new prompt), keeping the
- * one it had as `previous` until the new one is done. Call it holding the lock, after gen.load().
- * With `content` equal to the current prompt nothing changes and no image is made (changed: false).
- */
-export async function prepareRepaint(venice: VeniceClient, vault: Vault, gen: GenerationHandle, conv: Conversation, id: string, opts: { content?: string }): Promise<Repaint> {
+/** An image message, and the brain whose mouth it is in, with the painter for that brain. */
+async function imageMessage(venice: VeniceClient, conv: Conversation, id: string): Promise<{ message: LedgerMessage; brain: Brain; painter: Painter }> {
   const m = conv.messages.find((x) => x.id === id);
   if (!m) throw notFound(`No message ${id} in conversation ${conv.id}.`);
   if (m.kind !== "image" || m.author.type !== "brain") {
@@ -33,71 +27,66 @@ export async function prepareRepaint(venice: VeniceClient, vault: Vault, gen: Ge
   const brainId = m.author.brainId;
   const brain = conv.brains.find((b) => b.id === brainId);
   if (!brain) throw new Error(`message ${m.id}: author brain ${brainId} is missing from conversation ${conv.id}`);
-  gen.forBrain(brain.id);
-  const painter = await painterFor(venice, conv, brain); // an unknown image model: 400, nothing changed
-  if (opts.content !== undefined && activeVersion(m).content === opts.content) {
-    return { message: m, brain, painter, image: activeVersion(m).image!, prompt: opts.content, changed: false };
-  }
-  let image!: ImageRecord;
-  let prompt = "";
+  return { message: m, brain, painter: await painterFor(venice, conv, brain) }; // an unknown image model: 400, nothing changed
+}
+
+/** What an edit, add or retry that makes an image answers: the conversation as saved, the message, and its new image. */
+export type Started = { conv: Conversation; message: LedgerMessage; brain: Brain; painting?: { imageId: string; model: string } };
+
+/**
+ * Save `change` (which gives the message a new pending image and returns it) and start painting that image.
+ * The image is owned before the pending record reaches disk, and given up if the save fails.
+ */
+async function saveAndPaint(
+  vault: Vault,
+  venice: VeniceClient,
+  convId: string,
+  painter: Painter,
+  change: (c: Conversation) => { message: LedgerMessage; image: ImageRecord; prompt: string } | null,
+): Promise<{ conv: Conversation; message: LedgerMessage | null; image?: ImageRecord }> {
+  const owned = { id: "" };
   try {
-    const { result } = await mutateConversation(vault, conv.id, (c) => {
-      const mm = c.messages.find((x) => x.id === id);
-      if (!mm) throw notFound(`No message ${id} in conversation ${conv.id}.`);
-      const v = activeVersion(mm);
-      if (opts.content !== undefined) {
-        v.content = opts.content;
-        v.edited = true;
-      }
-      image = newImageRecord({ model: painter.model.id, safeMode: painter.safeMode, replacing: v.image });
-      v.image = image;
-      prompt = v.content;
-      mm.updatedAt = nowIso();
-      beginPainting(vault, image.id); // owned before the pending record reaches disk
-      return mm;
+    const { conv, result: made } = await mutateConversation(vault, convId, (c) => {
+      const made = change(c);
+      if (made) beginPainting(vault, (owned.id = made.image.id), { convId, messageId: made.message.id }); // the write comes next
+      return made;
     });
-    return { message: result, brain, painter, image, prompt, changed: true };
+    if (!made) return { conv, message: null };
+    startPainting(vault, venice, convId, { messageId: made.message.id, image: made.image, prompt: made.prompt }, painter);
+    return { conv, message: made.message, image: made.image };
   } catch (err) {
-    if (image) endPainting(vault, image.id);
+    if (owned.id) endPainting(vault, owned.id);
     throw err;
   }
 }
-
-/** The events of an image-only generation (retry, edit, add): no text streams, the message is already saved. */
-export async function* repaintEvents(job: Repaint, vault: Vault, venice: VeniceClient, convId: string): AsyncGenerator<StreamEvent, void> {
-  const { message, brain, image } = job;
-  try {
-    yield { type: "start", brainId: brain.id, brainName: brain.name, messageId: message.id, kind: "image", imageOnly: true };
-    yield { type: "image_pending", messageId: message.id, imageId: image.id, model: image.model, message };
-  } catch (err) {
-    endPainting(vault, image.id); // a generator that never reaches paint() still gives its image up
-    throw err;
-  }
-  const painted = yield* paint(vault, venice, convId, { messageId: message.id, image, prompt: job.prompt }, job.painter);
-  yield { type: "done", message: painted.message, note: `${brain.name} · ${imageNote(painted.image)}`, spentUsd: painted.spentUsd };
-}
-
-/** What an edit or add that makes an image answers: the conversation as saved, the message, and its new image. */
-export type Started = { conv: Conversation; message: LedgerMessage; painting?: { imageId: string; model: string } };
 
 /**
  * message.edit on an image message: the prompt is edited in place, and a new image is made from it. The old
- * image stays (as `previous`) until the new one is ready, then the new one swaps in. The edit answers at once;
- * the image is painted after it, holding the lock (generation.follow shows it). The same prompt: no change.
+ * image stays (as `previous`) until the new one is ready, then the new one swaps in. The edit answers at once,
+ * and the image is painted after it. Refused while a reply is being written (it answers the prompt as it was),
+ * and while this version's own image is still being made (it would be replaced before it was ever shown).
+ * The same prompt: no change, no image.
  */
 export async function editImagePrompt(vault: Vault, venice: VeniceClient, convId: string, id: string, content: string): Promise<Started> {
-  const gen = beginGeneration(vault, convId); // 409 while another generation runs, like any ledger edit
-  let handedOff = false;
-  try {
-    const conv = await gen.load();
-    const job = await prepareRepaint(venice, vault, gen, conv, id, { content });
-    if (!job.changed) return { conv, message: job.message };
-    runDetached(gen, vault, (own) => repaintEvents(job, own, venice, conv.id));
-    handedOff = true;
-    return { conv, message: job.message, painting: { imageId: job.image.id, model: job.image.model } };
-  } finally {
-    if (!handedOff) gen.release();
-  }
+  assertAcceptingWork();
+  const conv = await loadConversation(vault, convId);
+  const { message: m, brain, painter } = await imageMessage(venice, conv, id);
+  if (activeVersion(m).content === content) return { conv, message: m, brain }; // nothing to change, nothing to paint
+  const saved = await saveAndPaint(vault, venice, convId, painter, (c) => {
+    assertLedgerIdle(vault, c.id);
+    const mm = c.messages.find((x) => x.id === id);
+    if (!mm) throw notFound(`No message ${id} in conversation ${c.id}.`);
+    const v = activeVersion(mm);
+    if (v.content === content) return null;
+    assertImageIdle(vault, mm, "active", "edit");
+    v.content = content;
+    v.edited = true;
+    v.image = newImageRecord({ model: painter.model.id, safeMode: painter.safeMode, replacing: v.image });
+    mm.updatedAt = nowIso();
+    return { message: mm, image: v.image, prompt: content };
+  });
+  const message = saved.message ?? saved.conv.messages.find((x) => x.id === id) ?? m;
+  return { conv: saved.conv, message, brain, ...(saved.image ? { painting: { imageId: saved.image.id, model: saved.image.model } } : {}) };
 }
 
 /**
@@ -105,34 +94,51 @@ export async function editImagePrompt(vault: Vault, venice: VeniceClient, convId
  * brain sees the prompt framed, as if the brain had written it. Answers at once; the image is painted after.
  */
 export async function addImageMessage(vault: Vault, venice: VeniceClient, convId: string, as: string, content: string): Promise<Started> {
-  const gen = beginGeneration(vault, convId);
-  let handedOff = false;
-  try {
-    const conv = await gen.load();
-    const brain = resolveBrain(conv, as);
-    gen.forBrain(brain.id);
-    const painter = await painterFor(venice, conv, brain);
-    let image!: ImageRecord;
-    try {
-      const { conv: saved, result } = await mutateConversation(vault, conv.id, (c) => {
-        const now = c.brains.find((b) => b.id === brain.id);
-        if (now?.kind !== "image") throw conflict(`${brain.name} changed while you were adding this. Try again.`);
-        image = newImageRecord({ model: painter.model.id, safeMode: painter.safeMode });
-        const m = newMessage({ type: "brain", brainId: brain.id }, "image", { content, source: "authored", createdAt: nowIso(), image });
-        c.messages.push(m);
-        beginPainting(vault, image.id);
-        return m;
-      });
-      const job: Repaint = { message: result, brain, painter, image, prompt: content, changed: true };
-      runDetached(gen, vault, (own) => repaintEvents(job, own, venice, conv.id));
-      handedOff = true;
-      return { conv: saved, message: result, painting: { imageId: image.id, model: image.model } };
-    } catch (err) {
-      if (image && !handedOff) endPainting(vault, image.id);
-      throw err;
-    }
-  } finally {
-    if (!handedOff) gen.release();
-  }
+  assertAcceptingWork();
+  const conv = await loadConversation(vault, convId);
+  const brain = resolveBrain(conv, as);
+  const painter = await painterFor(venice, conv, brain);
+  const saved = await saveAndPaint(vault, venice, convId, painter, (c) => {
+    assertLedgerIdle(vault, c.id); // a reply being written would land after it, answering what came before it
+    const now = c.brains.find((b) => b.id === brain.id);
+    if (now?.kind !== "image") throw conflict(`${brain.name} changed while you were adding this. Try again.`);
+    const image = newImageRecord({ model: painter.model.id, safeMode: painter.safeMode });
+    const m = newMessage({ type: "brain", brainId: brain.id }, "image", { content, source: "authored", createdAt: nowIso(), image });
+    c.messages.push(m);
+    return { message: m, image, prompt: content };
+  });
+  return { conv: saved.conv, message: saved.message!, brain, painting: { imageId: saved.image!.id, model: saved.image!.model } };
 }
 
+/**
+ * image.retry: paint the active version's prompt again, with the image model and safe mode as they are now.
+ * A failed, interrupted or blurred image is replaced in place (it stays as `previous`, if it was shown, until
+ * the new one is done). A finished, clean image is never thrown away (T05 QA-5): the retry adds a new version
+ * with the same prompt, so both images are kept and the pager goes back to the first. Not a ledger edit (no
+ * brain sees anything new), so a reply being written doesn't stop it; this version's image being made does.
+ */
+export async function retryImage(vault: Vault, venice: VeniceClient, convId: string, id: string): Promise<Started & { painting: { imageId: string; model: string } }> {
+  assertAcceptingWork();
+  const { brain, painter } = await imageMessage(venice, await loadConversation(vault, convId), id);
+  const saved = await saveAndPaint(vault, venice, convId, painter, (c) => {
+    const mm = c.messages.find((x) => x.id === id);
+    if (!mm) throw notFound(`No message ${id} in conversation ${c.id}.`);
+    assertImageIdle(vault, mm, "active", "retry the image of");
+    const v = activeVersion(mm);
+    const img = v.image;
+    const keep = img?.status === "done" && !img.blurred && !img.contentViolation;
+    const image = newImageRecord({ model: painter.model.id, safeMode: painter.safeMode, ...(keep ? {} : { replacing: img }) });
+    if (keep) {
+      const again: MessageVersion = { content: v.content, source: v.source, repaintOf: mm.activeVersion, image, createdAt: image.createdAt };
+      if (v.edited) again.edited = true;
+      if (v.model) again.model = v.model;
+      mm.versions.push(again);
+      mm.activeVersion = mm.versions.length - 1;
+    } else {
+      v.image = image;
+    }
+    mm.updatedAt = nowIso();
+    return { message: mm, image, prompt: v.content };
+  });
+  return { conv: saved.conv, message: saved.message!, brain, painting: { imageId: saved.image!.id, model: saved.image!.model } };
+}
