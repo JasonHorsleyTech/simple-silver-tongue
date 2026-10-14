@@ -5,7 +5,8 @@
  * image brains and images (T05). The prompt builder (prompt.ts) already handles all of them.
  */
 
-export const SCHEMA_VERSION = 1;
+/** 2 (T07 triage): every brain has `stop`. loadConversation upgrades older files (upgradeConversation, store.ts). */
+export const SCHEMA_VERSION = 2;
 
 export type Conversation = {
   schemaVersion: number;
@@ -69,6 +70,12 @@ export type Brain = {
   /** Never empty (design.md hard rule 1). */
   systemPrompt: string;
   finalReminder: { enabled: boolean; content: string };
+  /**
+   * Stop sequences (T07 triage), sent as the request's `stop` when not empty: Venice ends the reply just before
+   * any of them. Text brains start with ["<!-- from:"] (FRAMING_STOP), so a brain can't continue the framing
+   * pattern and write lines for another speaker. A request setting, not text the model reads; at most 4.
+   */
+  stop: string[];
   /** Image brains only. All of this text reaches the model. */
   tool?: BrainTool;
 };
@@ -188,6 +195,8 @@ export type ChatRequest = {
   reasoning_effort?: string;
   max_tokens?: number;
   temperature?: number;
+  /** The brain's stop sequences (T07 triage); omitted when it has none. */
+  stop?: string[];
   tools?: Array<{
     type: "function";
     function: {

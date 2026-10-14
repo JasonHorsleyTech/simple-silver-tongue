@@ -1,7 +1,7 @@
 import { DEFAULT_IMAGE_MODEL, DEFAULT_TEXT_MODEL } from "../config.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { SCHEMA_VERSION, type Brain, type Conversation, type SetupMessage, type Templates } from "./types.ts";
-import { BRAIN_COLORS, DEFAULT_SETUP_LABEL, DEFAULT_TOOL, REMINDER_EXAMPLE, setupPrefill } from "./wording.ts";
+import { BRAIN_COLORS, DEFAULT_SETUP_LABEL, DEFAULT_TOOL, FRAMING_STOP, REMINDER_EXAMPLE, setupPrefill } from "./wording.ts";
 
 /**
  * Starting values for new conversations, brains and setup messages. Every string here reaches a model, so
@@ -21,7 +21,13 @@ export const DEFAULT_BRAIN_NAME = "Assistant";
 
 // The pre-fills (reminder, tool text, setup) are in wording.ts, which has no dependencies, so the web imports them too.
 // So is the badge palette, which the browser's color picker offers.
-export { BRAIN_COLORS, DEFAULT_SETUP_LABEL, DEFAULT_TOOL, REMINDER_EXAMPLE, setupPrefill };
+export { BRAIN_COLORS, DEFAULT_SETUP_LABEL, DEFAULT_TOOL, FRAMING_STOP, REMINDER_EXAMPLE, setupPrefill };
+
+/**
+ * A new brain's stop sequences (T07 triage): a text brain stops before a framing line it would write for someone
+ * else. An image brain answers with a forced tool call, so it can't write one, and starts with none.
+ */
+export const defaultStop = (kind: Brain["kind"]): string[] => (kind === "text" ? [FRAMING_STOP] : []);
 
 /** The first badge color no brain uses yet; once all are taken, they repeat. */
 export function nextColor(conv: Pick<Conversation, "brains">): string {
@@ -39,9 +45,25 @@ export function newBrain(opts: { name: string; systemPrompt: string; color?: str
     reasoning: { enabled: false, effort: "low" },
     systemPrompt: opts.systemPrompt,
     finalReminder: { enabled: !opts.isDefault, content: REMINDER_EXAMPLE },
+    stop: defaultStop(opts.kind ?? "text"),
   };
   if (brain.kind === "image") makeImageBrain(brain);
   return brain;
+}
+
+/**
+ * Bring a file written by an older version up to SCHEMA_VERSION, in memory (the next write saves it). Version 2
+ * (T07 triage): a brain without `stop` gets defaultStop, so a text brain in a campaign made before stop
+ * sequences existed is guarded too; prompt.preview and brain.list show it, and brain.update --stop changes it.
+ * A brain whose list is empty keeps it empty. Tolerates a partial document (listConversations reports those).
+ */
+export function upgradeConversation(conv: Conversation): Conversation {
+  if (typeof conv !== "object" || conv === null) return conv;
+  for (const b of Array.isArray(conv.brains) ? conv.brains : []) {
+    if (b && !Array.isArray(b.stop)) b.stop = defaultStop(b.kind === "image" ? "image" : "text");
+  }
+  if (!(conv.schemaVersion >= SCHEMA_VERSION)) conv.schemaVersion = SCHEMA_VERSION;
+  return conv;
 }
 
 /** What a brain needs to be an image brain: tool text and safe mode (on by default). Existing values are kept. */

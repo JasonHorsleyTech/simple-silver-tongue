@@ -136,6 +136,8 @@ export type BrainFields = {
   finalReminder?: Partial<Brain["finalReminder"]>;
   safeMode?: boolean;
   tool?: Partial<BrainTool>;
+  /** T07 triage: the whole list (at most 4, none blank); [] clears it. Text brains start with ["<!-- from:"]. */
+  stop?: string[];
 };
 
 export type BrainUpdate = BrainFields & { conversation: string; brain?: string };

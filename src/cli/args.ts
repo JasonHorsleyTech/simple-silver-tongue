@@ -2,7 +2,7 @@ import { schemaType } from "../lib/help-text.ts";
 import type { JsonSchema } from "../registry.ts";
 
 /** Flags the CLI itself owns. Commands must not define args with these names. */
-export type GlobalFlags = { json: boolean; help: boolean; out?: string };
+export type GlobalFlags = { json: boolean; help: boolean; out?: string; open: boolean };
 
 export type Split = { command?: string; global: GlobalFlags; rest: string[] };
 
@@ -10,13 +10,15 @@ const looksLikeFlag = (t: string | undefined) => t !== undefined && /^--[A-Za-z]
 
 /** Find the command name and pull out global flags. Everything else is left for parseFlags. */
 export function splitArgv(argv: string[]): Split {
-  const global: GlobalFlags = { json: false, help: false };
+  const global: GlobalFlags = { json: false, help: false, open: false };
   const rest: string[] = [];
   let command: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i]!;
     if (t === "--json") global.json = true;
     else if (t === "--help" || t === "-h") global.help = true;
+    else if (t === "--open") global.open = true; // binary results (image.get): show it in the default viewer
+
     else if (t === "--out" || t.startsWith("--out=")) {
       const v = t === "--out" ? argv[++i] : t.slice(6);
       if (v === undefined) throw new UsageError("--out needs a file path");

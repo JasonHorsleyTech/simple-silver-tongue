@@ -20,10 +20,12 @@ export const imageId = z.string().regex(IMAGE_ID_RE, "Image ids look like img_k3
 export const imageGet = binaryCommand({
   name: "image.get",
   description: `Fetch an image's bytes (decrypted, for an encrypted user). GET /api/image.get?id=img_... works too, for <img src>.
-The Content-Type is what the bytes really are (sniffed), whatever format was asked for. From the terminal, save
-it with --out, or pipe it. An image that is still being made, failed or was deleted is a 404.`,
+The Content-Type is what the bytes really are (sniffed), whatever format was asked for. From the terminal, look at
+it with --open (a copy in your private temp folder, opened in the default viewer), save it with --out, or pipe it.
+Either way the copy is a plain file, readable without your password. An image that is still being made, failed or
+was deleted is a 404.`,
   args: z.object({ id: imageId }),
-  examples: ["./ss image.get --id img_k3j9x0q2ma --out scene.webp", "./ss image.get --id img_k3j9x0q2ma > scene.png"],
+  examples: ["./ss image.get --id img_k3j9x0q2ma --open", "./ss image.get --id img_k3j9x0q2ma --out ~/Desktop/scene.webp"],
   handler: async (args, ctx) => {
     const file = await readImageFile(ctx.requireSession().vault, args.id);
     if (!file) throw notFound(`No image ${args.id}: it is still being made, it failed, or it was deleted. conversation.get shows each image's state.`);

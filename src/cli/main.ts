@@ -1,5 +1,8 @@
+import { execFile } from "node:child_process";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { DEFAULT_PORT, ROOT } from "../config.ts";
 import { renderCommandHelp, renderCommandList } from "../lib/help-text.ts";
 import type { CommandInfo, JsonSchema } from "../registry.ts";
@@ -21,6 +24,10 @@ export type Io = {
   readStdin(): Promise<string>;
   /** Ask on the terminal. Hidden input unless `visible` (a confirmation, not a secret). */
   promptSecret(question: string, opts?: { visible?: boolean }): Promise<string>;
+  /** --open: show a file in the default viewer (default: macOS `open`, xdg-open elsewhere). Tests pass their own. */
+  openFile?(path: string): Promise<void>;
+  /** Where --open puts its copy (default: the OS's per-user temp folder). */
+  tmpDir?: string;
 };
 
 type SavedSession = { token: string; username?: string; url: string; savedAt: string };
@@ -86,8 +93,12 @@ export async function run(argv: string[], io: Io): Promise<number> {
     });
     if (positionals.length) throw new UsageError(`unexpected argument ${JSON.stringify(positionals[0])} (flags look like --name value)`);
     // T07: SS_CONVERSATION=c_... stands in for --conversation wherever a command takes one and it was left out,
-    // so a campaign played from the terminal doesn't need its id pasted into every line.
-    if (io.env.SS_CONVERSATION && info.args.properties?.conversation && args.conversation === undefined) args.conversation = io.env.SS_CONVERSATION;
+    // so a campaign played from the terminal doesn't need its id pasted into every line. T07 QA-6: and for the
+    // --id of conversation.get, .update and .clone (not .delete, which asks for nothing more before it deletes).
+    const fromEnv = io.env.SS_CONVERSATION || undefined;
+    const envKey = !fromEnv ? null : info.args.properties?.conversation ? "conversation" : ENV_ID_COMMANDS.has(name) ? "id" : null;
+    const usedEnv = envKey !== null && args[envKey] === undefined;
+    if (usedEnv && envKey) args[envKey] = fromEnv;
     for (const flag of inlineSecrets) {
       // The data on disk is ciphertext, but a password typed here sits in ~/.zsh_history in plain text (T06).
       err(`warning: ${flag} on the command line is saved in your shell history (and shows in ps while ./ss runs). Leave it out to be asked for it, or pass ${flag} - and pipe it in.`);
@@ -104,20 +115,30 @@ export async function run(argv: string[], io: Io): Promise<number> {
       const why = STALE_SESSION[stale];
       if (why && (stale === "invalid" || (res.ok && name !== "auth.login"))) err(dim(`(${yours} ${why})`));
     }
-    if (!res.ok) return await printError(res, saved, err, stale);
+    if (!res.ok) {
+      const code = await printError(res, saved, err, stale);
+      if (usedEnv && res.status === 404) err(dim(`(The conversation id came from SS_CONVERSATION=${fromEnv}: export another one, or pass --${envKey === "id" ? "id" : "conversation"}.)`));
+      return code;
+    }
 
-    if (info.kind === "stream") return await printStream(res, global.json, io, dim);
+    if (info.kind === "stream") return await printStream(res, global.json, io, dim, usedEnv);
 
     if (info.kind === "binary") {
       const bytes = new Uint8Array(await res.arrayBuffer());
       const type = res.headers.get("content-type") ?? "application/octet-stream";
       if (global.out) {
         await writeFile(resolve(io.cwd, global.out), bytes);
-        err(`Wrote ${bytes.length} bytes (${type}) to ${global.out}`);
+        err(`Wrote ${bytes.length} bytes (${type}) to ${global.out}. It is a plain file, readable without your password.`);
+        if (global.open) await (io.openFile ?? openWithSystem)(resolve(io.cwd, global.out));
+      } else if (global.open) {
+        // T07 QA-3: a decrypted picture to look at goes to the OS's per-user temp folder, never the project folder.
+        const file = await privateCopy(io.tmpDir ?? tmpdir(), `${typeof args.id === "string" ? args.id : "download"}.${extensionOf(type)}`, bytes);
+        await (io.openFile ?? openWithSystem)(file);
+        err(`Opened ${file}: a plaintext copy, outside the encrypted data folder. Delete it when you're done: rm "${file}"`);
       } else if (!io.stdout.isTTY) {
         io.stdout.write(bytes);
       } else {
-        err(`error: ${name} returns binary data (${type}). Use --out <file>, or pipe the output.`);
+        err(`error: ${name} returns binary data (${type}). Use --open to look at it, --out <file> to save it, or pipe the output.`);
         return EXIT.usage;
       }
       return EXIT.ok;
@@ -141,6 +162,26 @@ export async function run(argv: string[], io: Io): Promise<number> {
     err(`error: ${(e as Error).message}`);
     return EXIT.failed;
   }
+}
+
+/** Commands whose --id SS_CONVERSATION fills in (T07 QA-6). conversation.delete is left out on purpose. */
+const ENV_ID_COMMANDS = new Set(["conversation.get", "conversation.update", "conversation.clone"]);
+
+const extensionOf = (type: string) => ({ "image/webp": "webp", "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif" })[type.split(";")[0]!.trim()] ?? "bin";
+
+/** A file only this user can read, in <base>/simple-silver/ (the folder is 0700, the file 0600). */
+async function privateCopy(base: string, name: string, bytes: Uint8Array): Promise<string> {
+  const dir = join(base, "simple-silver");
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmod(dir, 0o700);
+  const file = join(dir, name);
+  await writeFile(file, bytes, { mode: 0o600 });
+  await chmod(file, 0o600);
+  return file;
+}
+
+async function openWithSystem(file: string): Promise<void> {
+  await promisify(execFile)(process.platform === "darwin" ? "open" : "xdg-open", [file]);
 }
 
 /** Static schema for `help`, so `./ss help` needs one request and works offline. */
@@ -207,7 +248,7 @@ async function printError(res: Response, saved: SavedSession | null, err: (s: st
 }
 
 /** Stream events: text deltas go to stdout as they arrive; reasoning and status lines go to stderr. */
-async function printStream(res: Response, json: boolean, io: Io, dim: (s: string) => string): Promise<number> {
+async function printStream(res: Response, json: boolean, io: Io, dim: (s: string) => string, fromEnv = false): Promise<number> {
   if (!res.body) return EXIT.failed;
   let code: number = EXIT.ok;
   let ended = false;
@@ -240,16 +281,19 @@ async function printStream(res: Response, json: boolean, io: Io, dim: (s: string
       case "following":
         io.stderr.write(dim("(following a reply in progress: what has streamed so far, then the rest live)\n"));
         break;
-      case "start":
-        io.stderr.write(dim(`[${ev.brainName ?? ev.brainId ?? "start"}]\n`));
+      case "start": {
+        // With SS_CONVERSATION, name the campaign, so a stale export after a clone shows at once (T07 QA-6).
+        const where = fromEnv && typeof ev.conversationTitle === "string" ? ` · in "${ev.conversationTitle}"` : "";
+        io.stderr.write(dim(`[${ev.brainName ?? ev.brainId ?? "start"}${where}]\n`));
         break;
+      }
       case "image_pending":
         io.stderr.write(dim(`\n(making image ${ev.imageId ?? ""} with ${ev.model ?? "the image model"}... the conversation is free meanwhile)\n`));
         break;
       case "image_done": {
-        const ext = String(ev.image?.mime ?? "image/png").replace("image/", "").replace("jpeg", "jpg");
         const flags = [ev.image?.blurred ? "blurred by safe mode" : "", ev.image?.contentViolation ? "flagged by Venice's content policy" : ""].filter(Boolean);
-        io.stderr.write(dim(`(image ready${flags.length ? `, ${flags.join(", ")}` : ""}: ./ss image.get --id ${ev.imageId} --out ${ev.imageId}.${ext})\n`));
+        // --open, not --out <file>: a file saved here would be a decrypted copy in the project folder (T07 QA-3).
+        io.stderr.write(dim(`(image ready${flags.length ? `, ${flags.join(", ")}` : ""}: ./ss image.get --id ${ev.imageId} --open)\n`));
         break;
       }
       case "image_error":

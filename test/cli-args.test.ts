@@ -31,7 +31,7 @@ const parse = (argv: string[]) => parseFlags(argv, schema, readers).then((r) => 
 test("splitArgv finds the command and the global flags anywhere", () => {
   const s = splitArgv(["--json", "user.create", "--username", "dev-a", "--out", "x.png", "-h"]);
   assert.equal(s.command, "user.create");
-  assert.deepEqual(s.global, { json: true, help: true, out: "x.png" });
+  assert.deepEqual(s.global, { json: true, help: true, open: false, out: "x.png" });
   assert.deepEqual(s.rest, ["--username", "dev-a"]);
 });
 

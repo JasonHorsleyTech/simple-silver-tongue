@@ -151,7 +151,8 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
     yield { type: "message", message: player };
   }
   const messageId = newId("m");
-  yield { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId, kind: plan.brain.kind };
+  // The title lets the CLI say which campaign SS_CONVERSATION sent this to (T07 QA-6).
+  yield { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId, kind: plan.brain.kind, conversationTitle: conv.title };
 
   const say: Say = {
     kept: plan.player ? "Your message is saved; the reply isn't." : "No reply was saved.",
@@ -173,7 +174,7 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
     c.messages.push(message);
     return { messageId, version: 0 };
   });
-  yield { type: "done", message, note: replyNote(plan.brain.name, reply), spentUsd };
+  yield { type: "done", message, note: replyNote(plan.brain.name, reply, plan.body.stop), spentUsd };
 }
 
 const regenerateArgs = z.object({ conversation: conversationId, message: regenerateTarget, steer });
@@ -218,7 +219,7 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
   const keeps = `${id} keeps its current version.`;
   const upstream = await openUpstream(ctx, conv.id, plan.body, gen, `Stopped before the new version started. ${keeps}`);
 
-  const start: StreamEvent = { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId: id, regenerate: true, kind: plan.brain.kind };
+  const start: StreamEvent = { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId: id, regenerate: true, kind: plan.brain.kind, conversationTitle: conv.title };
   if (plan.steer !== undefined) start.steer = plan.steer;
   yield start;
   const say: Say = {
@@ -249,7 +250,7 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
     message = addVersion(c, version);
     return { messageId: id, version: message.activeVersion };
   });
-  yield { type: "done", message, note: replyNote(head, reply), spentUsd };
+  yield { type: "done", message, note: replyNote(head, reply, plan.body.stop), spentUsd };
 }
 
 /** What a broken reply's error says was kept and how to retry, plus the retry request itself (details.retry). */
@@ -524,7 +525,7 @@ conversation's total once Venice reports it. It returns once the stopped reply i
 });
 
 /** The one-line summary the CLI prints after a reply. An empty reply says why, since it is saved as is (T02 QA-6). */
-function replyNote(head: string, reply: Reply): string {
+function replyNote(head: string, reply: Reply, stops?: string[]): string {
   const note = [head];
   if (reply.usage) note.push(`${reply.usage.promptTokens} in / ${reply.usage.completionTokens} out`);
   if (reply.costUsd !== undefined) note.push(usd(reply.costUsd));
@@ -534,7 +535,8 @@ function replyNote(head: string, reply: Reply): string {
   } else if (reply.finishReason === "length") {
     note.push(empty && reply.reasoning ? "cut off by max_tokens while reasoning: no reply text" : "cut off by max_tokens");
   } else if (empty) {
-    note.push("no reply text");
+    // A reply that began with a stop sequence is cut to nothing (T07 triage): say which, so it isn't a mystery.
+    note.push(stops?.length ? `no reply text (a stop sequence may have cut it, in the reply or its reasoning: ${stops.map((x) => JSON.stringify(x)).join(", ")}); regenerate it` : "no reply text");
   }
   return note.join(" · ");
 }

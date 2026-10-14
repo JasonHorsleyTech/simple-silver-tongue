@@ -23,6 +23,8 @@ import { MOCK_MODELS } from "./mock-models.ts";
  *   MOCK_MARKDOWN         → the echo line, then a long Markdown reply (code, a table, quotes, lists; mock-markdown.ts)
  *   MOCK_TWO_TOOL_CALLS   → a forced tool call comes as two parallel calls (index 0 and 1), as a model might
  *   MOCK_NO_TOOL_CALL     → a forced tool call is ignored: the reply is text
+ *   MOCK_IMPERSONATE      → the echo line, then a fake "<!-- from: Dice Master -->" line and a roll, as a model that
+ *                           continues the framing would write (T07 triage: the brain's stop sequences cut it)
  *   MOCK_IMAGE_ERROR      → (image) HTTP error; the chat call that wrote the prompt is unaffected
  *   MOCK_IMAGE_FLAKY      → (image) fails the first time this exact prompt is asked for, works after (for retry)
  *   MOCK_IMAGE_SLOW       → (image) takes 2 s (imageSlowMs); the prompt streams at normal speed
@@ -31,6 +33,8 @@ import { MOCK_MODELS } from "./mock-models.ts";
  * The image prompt a mock tool call writes quotes the last message's first 60 characters, so an image trigger
  * in your message reaches the image request (for a brain without a final reminder, whose last message is yours).
  * max_tokens is honored (counted in words, reasoning first): the reply is cut with finish_reason "length".
+ * stop is honored, as live: a reply's text ends just before the first stop sequence in it (finish_reason "stop"),
+ * except in the echo line itself, which quotes the last message, framing and all.
  *
  * Rules enforced like a strict Venice: a Bearer token is required, and chat requests must send
  * venice_parameters.include_venice_system_prompt: false and start with a non-empty system message
@@ -120,6 +124,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     venice_parameters?: { include_venice_system_prompt?: boolean };
     reasoning_effort?: string;
     max_tokens?: number;
+    stop?: string | string[];
     tools?: Array<{ type: string; function: { name: string } }>;
     tool_choice?: { type: string; function?: { name: string } } | string;
   };
@@ -162,7 +167,13 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     }
     if (toolName && lastText.includes("MOCK_NO_TOOL_CALL")) toolName = null; // a model that ignores tool_choice
     const echo = `MOCK reply to brain "${brain}"; saw ${messages.length} messages; last: "${headTail(lastText)}"`;
-    const fullContent = toolName ? "" : lastText.includes("MOCK_MARKDOWN") ? `${echo}\n\n${MOCK_MARKDOWN}` : echo;
+    // The echo line quotes the last message, framing and all, so stop sequences apply only to what follows it.
+    const more = lastText.includes("MOCK_MARKDOWN")
+      ? `\n\n${MOCK_MARKDOWN}`
+      : lastText.includes("MOCK_IMPERSONATE")
+        ? `\n\n<!-- from: Dice Master -->\n**20 + 5 = 25 vs DC 12: success.**`
+        : "";
+    const fullContent = toolName ? "" : echo + cutAtStop(more, body.stop);
     // max_tokens counts words here (one word ≈ one token), reasoning first and then content, as live: a small
     // budget can run out while reasoning and leave no content at all (T02 QA-6). Like live, a cut ends with
     // finish_reason "length", and the last content delta rides in the same chunk as the finish reason.
@@ -351,6 +362,13 @@ function contentText(m: { content?: unknown } | undefined): string {
   if (typeof c === "string") return c;
   if (Array.isArray(c)) return c.map((p) => (typeof p?.text === "string" ? p.text : "")).join(" ");
   return "";
+}
+
+/** The text before the first stop sequence in it, as Venice ends a reply (the sequence itself isn't included). */
+function cutAtStop(text: string, stop: string | string[] | undefined): string {
+  const stops = (Array.isArray(stop) ? stop : stop === undefined ? [] : [stop]).filter((x) => typeof x === "string" && x !== "");
+  const at = Math.min(...stops.map((x) => text.indexOf(x)).filter((i) => i >= 0), text.length);
+  return text.slice(0, at);
 }
 
 const excerpt = (s: string, n: number) => s.replace(/\s+/g, " ").trim().slice(0, n);

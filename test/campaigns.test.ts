@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { FILE_MISSING, NOT_IMPORTED } from "../src/conversations/campaign.ts";
-import { DEFAULT_TEMPLATES, DEFAULT_TOOL } from "../src/conversations/defaults.ts";
+import { DEFAULT_TEMPLATES, DEFAULT_TOOL, defaultStop } from "../src/conversations/defaults.ts";
 import type { ChatRequest, Conversation, LedgerMessage } from "../src/conversations/types.ts";
 import { createUser } from "../src/storage/users.ts";
 import { startTestServer } from "./helpers.ts";
@@ -61,6 +61,7 @@ describe("campaigns: the example, import, clone (T07)", () => {
       const src = EXAMPLE.brains[i];
       assert.equal(b.systemPrompt, src.systemPrompt, `${b.name}'s prompt is the file's, word for word`);
       assert.deepEqual(b.finalReminder, src.finalReminder);
+      assert.deepEqual(b.stop, src.stop ?? defaultStop(b.kind), `${b.name}'s stop sequences (T07 triage)`);
       assert.equal(b.kind, src.kind);
       if (b.kind === "image") assert.deepEqual(b.tool, src.tool);
       assert.deepEqual(b.reasoning, { enabled: false, effort: "low" }, "reasoning off: nothing hidden");
@@ -138,6 +139,8 @@ describe("campaigns: the example, import, clone (T07)", () => {
     const painted = await settled(src.id, orig.messages.at(-1)!.id);
     const origImage = painted.versions[0]!.image!;
 
+    const cloneText = (await ok(["conversation.clone", "--id", src.id, "--title", "Hint check"])).stdout;
+    assert.doesNotMatch(cloneText, /still to paint/, "a clone copies finished images: nothing to retry (T07 QA-8)");
     const clone = (await json(["conversation.clone", "--id", src.id])) as Conversation;
     assert.equal(clone.title, "D&D night (copy)");
     assert.equal(clone.spentUsd, 0);
@@ -147,6 +150,21 @@ describe("campaigns: the example, import, clone (T07)", () => {
     assert.notEqual(cloneImage.id, origImage.id);
     const bytes = async (id: string) => (await t.cli(["image.get", "--id", id, "--out", `${id}.out`])).code === 0 && readFileSync(join(t.tmp, `${id}.out`));
     assert.deepEqual(await bytes(cloneImage.id), await bytes(origImage.id), "the same picture, under its own id");
+
+    // T07 QA-3: the CLI's hint after an image is --open, which puts its plaintext copy in the OS's per-user temp
+    // folder (0700 / 0600), never in the project folder where `./ss` runs.
+    const scratch = (await json(["conversation.import", "--example", "dnd-tavern", "--without-messages"])) as Conversation;
+    const painter = await ok(["turn", "--conversation", scratch.id, "--brain", "Scene Painter"]);
+    const hint = painter.stderr.match(/image ready: \.\/ss image\.get --id (img_[a-z0-9]+) --open\)/);
+    assert.ok(hint, painter.stderr);
+    assert.doesNotMatch(painter.stderr, /--out/);
+    const opened = await ok(["image.get", "--id", hint[1]!, "--open"]);
+    const file = t.opened.at(-1)!;
+    assert.equal(file, join(t.tmp, "os-tmp", "simple-silver", `${hint[1]}.png`));
+    assert.match(opened.stderr, /a plaintext copy, outside the encrypted data folder/);
+    assert.equal(statSync(file).mode & 0o777, 0o600);
+    assert.equal(statSync(join(t.tmp, "os-tmp", "simple-silver")).mode & 0o777, 0o700);
+    assert.ok(readFileSync(file).subarray(1, 4).equals(Buffer.from("PNG")), "the decrypted picture");
     const files = readdirSync(join(t.config.dataDir, "users", "dev-t07", "images"));
     assert.ok(files.includes(`${cloneImage.id}.bin`), "an encrypted user's copy has a neutral name too");
 
@@ -192,7 +210,17 @@ describe("campaigns: the example, import, clone (T07)", () => {
     await fails(["conversation.import", "--campaign", "-"], /two brains are called "Game Master"/, bad((c) => (c.brains[1].name = "game master")));
     await fails(["conversation.import", "--campaign", "-"], /messages\.0\.author\.brainId: no brain has the id b_nobody/, bad((c) => (c.messages[0].author.brainId = "b_nobody")));
     await fails(["conversation.import", "--campaign", "-"], /templates\.player: .*\{\{content\}\}/, bad((c) => (c.templates.player = "<!-- from: the player -->")));
-    await fails(["conversation.import", "--campaign", "-"], /Venice has no text model "nope"/, bad((c) => (c.settings.textModel = "nope")));
+    await fails(["conversation.import", "--campaign", "-"], /settings\.textModel: Venice has no text model "nope"\. Fix it in the file/, bad((c) => (c.settings.textModel = "nope")));
+    // T07 QA-4: blank text, and a blank image prompt, are refused as message.edit refuses them.
+    await fails(["conversation.import", "--campaign", "-"], /messages\.0\.versions\.0\.content: A message can't be blank/, bad((c) => (c.messages[0].versions[0].content = "  ")));
+    await fails(
+      ["conversation.import", "--campaign", "-"],
+      /messages\.1\.versions\.0\.content: A message can't be blank/,
+      bad((c) => c.messages.push({ author: { type: "brain", brainId: "b_scene" }, versions: [{ content: " \n " }] })),
+    );
+    // T07 QA-8: one full stop at the end, not two.
+    const r0 = await t.cli(["conversation.import", "--campaign", "-"], { stdin: bad((c) => (c.templates.player = "x")) });
+    assert.doesNotMatch(r0.stderr, /\.\./);
     await fails(["conversation.import", "--campaign", "-"], /multiples of 8/, bad((c) => (c.settings.image.width = 1001)));
     await fails(["conversation.import", "--example", "nope"], /No example "nope"\. Examples: dnd-tavern/);
     await fails(["conversation.import"], /Pass one of --example/);
@@ -212,6 +240,24 @@ describe("campaigns: the example, import, clone (T07)", () => {
     const other = (await json(["conversation.create", "--system-prompt", "x"])) as Conversation;
     const p = await t.cli(["prompt.preview", "--conversation", other.id, "--json"], { env });
     assert.equal(JSON.parse(p.stdout).conversationId, other.id, "a flag still wins");
+
+    // T07 QA-6: it fills conversation.get/.update/.clone's --id too, but never conversation.delete's.
+    const g = await t.cli(["conversation.get", "--json"], { env });
+    assert.equal(g.code, 0, g.stderr);
+    assert.equal(JSON.parse(g.stdout).id, conv.id);
+    assert.equal((await t.cli(["conversation.update", "--title", "Renamed by env"], { env })).code, 0);
+    assert.equal((await get(conv.id)).title, "Renamed by env");
+    const d = await t.cli(["conversation.delete"], { env });
+    assert.notEqual(d.code, 0);
+    assert.match(d.stderr, /id: /);
+    // The reply's header names the campaign the env var sent it to, so a stale export shows at once.
+    const named = await t.cli(["turn", "--brain", "Dice Master", "--content", "And now?"], { env });
+    assert.match(named.stderr, /\[Dice Master · in "Renamed by env"\]/);
+    const flagged = await t.cli(["turn", "--conversation", conv.id, "--brain", "Dice Master", "--content", "Again?"], { env });
+    assert.match(flagged.stderr, /\[Dice Master\]/, "with a flag, the header stays as it was");
+    const stale = await t.cli(["turn", "--content", "hi"], { env: { SS_CONVERSATION: "c_gone0000" } });
+    assert.equal(stale.code, 1);
+    assert.match(stale.stderr, /came from SS_CONVERSATION=c_gone0000/);
   });
 
   test("new conversations: accurate image framing, no watermark", async () => {

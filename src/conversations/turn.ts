@@ -6,6 +6,7 @@ import type { VeniceClient } from "../venice/client.ts";
 import type { ModelInfo } from "../venice/models.ts";
 import { buildRequest, nothingToAnswer, REASONING_NOTE, reasoningOn, resolveBrain, type ModelCaps } from "./prompt.ts";
 import { partialPrompt, type ToolCallParts } from "./tool-call.ts";
+import { STOP_REASONING_NOTE, stopNote } from "./wording.ts";
 import type { Brain, ChatRequest, Conversation, LedgerMessage, MessageVersion, Usage } from "./types.ts";
 
 /**
@@ -23,7 +24,10 @@ export type TurnPlan = {
 export type BodyReview = {
   /** Set when the send path would refuse this body. prompt.preview still shows the body, with this note. */
   refusal?: string;
-  /** Plain-language notes the payload view shows with the body: text the provider adds that we can't show. */
+  /**
+   * Plain-language notes the payload view shows with the body: text the provider adds that we can't show
+   * (reasoning on), and what the body's stop sequences do (T07 triage).
+   */
   notes: string[];
 };
 
@@ -107,6 +111,8 @@ export function reviewBody(brain: Brain, body: ChatRequest, model: ModelCaps): B
   const refusal = nothingToAnswer(body, brain.name);
   if (refusal) review.refusal = refusal;
   if (reasoningOn(brain, model)) review.notes.push(REASONING_NOTE);
+  if (body.stop?.length) review.notes.push(stopNote(body.stop));
+  if (body.stop?.length && reasoningOn(brain, model)) review.notes.push(STOP_REASONING_NOTE);
   return review;
 }
 

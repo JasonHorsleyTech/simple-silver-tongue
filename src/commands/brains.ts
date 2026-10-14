@@ -3,6 +3,7 @@ import { makeImageBrain, newBrain, nextColor } from "../conversations/defaults.t
 import { REASONING_NOTE, resolveBrain } from "../conversations/prompt.ts";
 import { assertBrainIdle, loadConversation, mutateConversation } from "../conversations/store.ts";
 import type { Brain, Conversation } from "../conversations/types.ts";
+import { FRAMING_STOP, MAX_STOPS, STOP_REASONING_NOTE } from "../conversations/wording.ts";
 import { badRequest, CommandError, conflict } from "../lib/errors.ts";
 import { command } from "../registry.ts";
 import { conversationId, systemPrompt } from "./conversations.ts";
@@ -62,6 +63,13 @@ export const tool = z
     resultContent: text("tool result").describe("The tool result the brain sees after each of its own images"),
   })
   .partial();
+/** Stop sequences (T07 triage): a request setting, sent as `stop`. Whitespace counts, so they aren't trimmed. */
+export const stop = z
+  .array(z.string().max(200).refine((s) => s.trim() !== "", "A stop sequence can't be blank"))
+  .max(MAX_STOPS, `At most ${MAX_STOPS} stop sequences (Venice's limit)`)
+  .describe(
+    `Stop sequences: Venice ends the reply just before any of them (at most ${MAX_STOPS}). Text brains start with "${FRAMING_STOP}", so a brain can't write a framing line for someone else. Repeat the flag for several; --stop '[]' clears them`,
+  );
 export const safeMode = z.boolean().describe("Image brains: Venice safe_mode, which blurs adult content (default on)");
 
 /** A new or changed name must be unique (case-insensitive), not look like an id, and not be "player". */
@@ -88,11 +96,15 @@ function applyImageFields(brain: Brain, args: { safeMode?: boolean; tool?: z.out
   if (args.tool) Object.assign(brain.tool!, args.tool);
 }
 
+/** What a brain with reasoning on should know: the provider's hidden text, and that stop sequences cut reasoning too. */
+const reasoningNotes = (b: Brain) => (b.reasoning.enabled ? `\n${REASONING_NOTE}${b.stop.length ? `\n${STOP_REASONING_NOTE}` : ""}` : "");
+
 /** The CLI's one-line summary of a brain. */
 function brainLine(b: Brain, conv?: Pick<Conversation, "defaultBrainId">): string {
   const bits = [`${b.name} (${b.id})`, b.kind];
   if (conv?.defaultBrainId === b.id) bits.push("default");
   bits.push(`reasoning ${b.reasoning.enabled ? b.reasoning.effort : "off"}`, `final reminder ${b.finalReminder.enabled && b.finalReminder.content.trim() ? "on" : "off"}`);
+  bits.push(b.stop.length ? `stops at ${b.stop.map((x) => JSON.stringify(x)).join(", ")}` : "no stop sequences");
   if (b.kind === "image") bits.push(`safe mode ${b.safeMode === false ? "off" : "on"}`);
   return bits.join(" · ");
 }
@@ -102,7 +114,8 @@ export type BrainListing = { conversationId: string; defaultBrainId: string; bra
 export const brainList = command({
   name: "brain.list",
   description: `Show every brain in a conversation, with its system prompt, final reminder and tool text in full.
-These are sent to the models word for word; prompt.preview --brain <name> shows a brain's whole request.`,
+These are sent to the models word for word; prompt.preview --brain <name> shows a brain's whole request.
+Each brain's stop sequences are listed too: Venice ends its reply just before any of them.`,
   args: z.object({ conversation: conversationId }),
   examples: ["./ss brain.list --conversation c_k3j9x0q2ma"],
   handler: async (args, ctx): Promise<BrainListing> => {
@@ -115,6 +128,7 @@ These are sent to the models word for word; prompt.preview --brain <name> shows 
         const out = [`── ${brainLine(b, r)} · ${b.color} · ${b.messageCount} message${b.messageCount === 1 ? "" : "s"} ──`, "System prompt:", b.systemPrompt];
         const sent = b.finalReminder.enabled && b.finalReminder.content.trim();
         out.push(`Final reminder (${sent ? "on: sent last" : b.finalReminder.enabled ? "on, but blank: not sent" : "off: not sent"}):`, b.finalReminder.content || "(empty)");
+        out.push(`Stop sequences (Venice ends the reply just before any of them): ${b.stop.length ? b.stop.map((x) => JSON.stringify(x)).join(", ") : "none"}`);
         if (b.kind === "image" && b.tool) {
           out.push(`Tool ${b.tool.name}:`, `  description: ${b.tool.description}`, `  prompt: ${b.tool.promptParamDescription}`, `  result: ${b.tool.resultContent}`);
         }
@@ -131,7 +145,8 @@ everyone else's framed with the templates). Talk to it with turn --brain <name>.
 Its final reminder is on and pre-filled with an editable example, sent as the last message of its requests;
 change it with --final-reminder.content, or turn it off with --no-final-reminder.enabled.
 An image brain (--kind image) answers with a forced generate_image call: its reply is an image prompt, which is
-painted with the conversation's image model. It gets editable tool text, and safe mode on (Venice blurs adult content).`,
+painted with the conversation's image model. It gets editable tool text, and safe mode on (Venice blurs adult content).
+A text brain stops before "${FRAMING_STOP}" (--stop), so it can't write a framing line for another speaker.`,
   args: z.object({
     conversation: conversationId,
     name: brainName.describe("The brain's name, unique in the conversation (other brains see it in the framing)"),
@@ -142,6 +157,7 @@ painted with the conversation's image model. It gets editable tool text, and saf
     finalReminder: finalReminder.optional(),
     safeMode: safeMode.optional(),
     tool: tool.optional(),
+    stop: stop.optional(),
   }),
   examples: [
     './ss brain.add --conversation c_k3j9x0q2ma --name "Dice Master" --system-prompt @dice.md',
@@ -156,17 +172,18 @@ painted with the conversation's image model. It gets editable tool text, and saf
       applyImageFields(brain, args);
       Object.assign(brain.reasoning, args.reasoning ?? {});
       Object.assign(brain.finalReminder, args.finalReminder ?? {});
+      if (args.stop) brain.stop = args.stop;
       c.brains.push(brain);
       return brain;
     });
     return result;
   },
-  format: (b: Brain) => `Added brain ${brainLine(b)}\nTalk to it with turn --brain "${b.name}"; prompt.preview --brain "${b.name}" shows what it sees.${b.reasoning.enabled ? `\n${REASONING_NOTE}` : ""}`,
+  format: (b: Brain) => `Added brain ${brainLine(b)}\nTalk to it with turn --brain "${b.name}"; prompt.preview --brain "${b.name}" shows what it sees.${reasoningNotes(b)}`,
 });
 
 export const brainUpdate = command({
   name: "brain.update",
-  description: `Edit a brain: name, color, system prompt, reasoning, final reminder, kind, safe mode, tool text.
+  description: `Edit a brain: name, color, system prompt, reasoning, final reminder, kind, safe mode, tool text, stop sequences.
 Only the fields you pass change, and any time is fine, mid-conversation included: the next request uses them
 (prompt.preview shows it). The system prompt can't be empty. Kind is locked once the brain has messages.
 Reasoning is off by default. Turning it on is an opt-in: the provider then adds a small hidden instruction.`,
@@ -181,18 +198,21 @@ Reasoning is off by default. Turning it on is an opt-in: the provider then adds 
     kind: kind.optional().describe("text or image. Only while the brain has no messages"),
     safeMode: safeMode.optional(),
     tool: tool.optional(),
+    stop: stop.optional(),
   }),
   examples: [
     './ss brain.update --conversation c_k3j9x0q2ma --system-prompt "You are a terse pirate."',
     "./ss brain.update --conversation c_k3j9x0q2ma --system-prompt @prompt.md --reasoning.effort high",
     './ss brain.update --conversation c_k3j9x0q2ma --brain "Dice Master" --final-reminder.content @reminder.md',
     "./ss brain.update --conversation c_k3j9x0q2ma --no-reasoning.enabled",
+    `./ss brain.update --conversation c_k3j9x0q2ma --brain "Game Master" --stop "${FRAMING_STOP}" --stop "<!-- System"`,
+    "./ss brain.update --conversation c_k3j9x0q2ma --stop '[]'   # no stop sequences",
   ],
   handler: async (args, ctx): Promise<Brain> => {
     const { vault } = ctx.requireSession();
-    const fields = ["name", "color", "systemPrompt", "reasoning", "finalReminder", "kind", "safeMode", "tool"] as const;
+    const fields = ["name", "color", "systemPrompt", "reasoning", "finalReminder", "kind", "safeMode", "tool", "stop"] as const;
     if (!fields.some((f) => args[f] !== undefined)) {
-      throw badRequest("Nothing to change. Pass --name, --color, --system-prompt, --reasoning.<field>, --final-reminder.<field>, --kind, --safe-mode or --tool.<field>.");
+      throw badRequest("Nothing to change. Pass --name, --color, --system-prompt, --reasoning.<field>, --final-reminder.<field>, --kind, --safe-mode, --tool.<field> or --stop.");
     }
     const { result } = await mutateConversation(vault, args.conversation, (c) => {
       const brain = resolveBrain(c, args.brain);
@@ -216,11 +236,12 @@ Reasoning is off by default. Turning it on is an opt-in: the provider then adds 
       if (args.systemPrompt !== undefined) brain.systemPrompt = args.systemPrompt;
       Object.assign(brain.reasoning, args.reasoning ?? {});
       Object.assign(brain.finalReminder, args.finalReminder ?? {});
+      if (args.stop) brain.stop = args.stop;
       return brain;
     });
     return result;
   },
-  format: (b: Brain) => `Updated brain ${brainLine(b)} · system prompt ${b.systemPrompt.length} chars${b.reasoning.enabled ? `\n${REASONING_NOTE}` : ""}`,
+  format: (b: Brain) => `Updated brain ${brainLine(b)} · system prompt ${b.systemPrompt.length} chars${reasoningNotes(b)}`,
 });
 
 export const brainDelete = command({

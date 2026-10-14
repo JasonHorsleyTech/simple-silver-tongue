@@ -211,7 +211,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T07: D&D acceptance, example campaign and polish · `triage`
+## T07: D&D acceptance, example campaign and polish · `frontend`
 
 **Engineer scope**
 - `examples/dnd-tavern.json` (committed) with GM (default), Dice Master, Joke Teller, Scene Painter (image) and Character Portraitist (image), a World Bible setup message, a hand-authored GM opener, and sensible templates.
@@ -243,4 +243,10 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
   - Image size is per conversation, so the Character Portraitist paints at the Scene Painter's 1024×768. A per-brain size would need a field and UI; not built.
   - **Before Jason's first login**, someone should clear the test users: `find data/users -maxdepth 1 \( -name 'dev-*' -o -name 'qa-*' \) -exec rm -rf {} +` (about 30 by now; his picker lists them all). T07 engineer removed only its own.
 
-**Deferred in:** *(none yet)*
+- **From T07 triage** (report: `reports/T07-triage.md`):
+  - **Stop sequences (QA-2).** Every brain has `stop` (text brains `["<!-- from:"]`, image brains none), sent as the request's `stop`. **For Frontend:** give the BrainEditor a "Stop sequences" field (one per line or chips, at most 4, none blank, `[]` allowed), saving with `brain.update --stop` (`BrainFields.stop` is in `web/src/api/types.ts`); show it on the brain card like the reminder. The payload view already gets the body's `stop` and the notes that say what it does (`stopNote`, and `STOP_REASONING_NOTE` when reasoning is on too); check they read well there. When reasoning is turned on for a brain with stop sequences, the editor could show `STOP_REASONING_NOTE` next to `REASONING_NOTE`.
+  - The example's GM now names the check and stops (QA-1): the browser playthrough should show the loop (GM names a check → Dice Master chip → "I rolled a 6" → Send with nothing typed → the GM narrates the result).
+  - An empty reply cut by a stop sequence says so in its `done` note; the browser shows an empty bubble with Regenerate, which is fine.
+
+**Deferred in:**
+- T07 QA-7 → handover (orchestrator): the 28 `dev-*`/`qa-*` users in `data/users/` stay for the frontend pass, which needs `dev-` users; clear them before Jason's first login (the `find ... -exec rm -rf {} +` above). T07 triage added and removed only `dev-t07-triage`.

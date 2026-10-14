@@ -40,9 +40,9 @@ export function renderCommandList(commands: CommandInfo[], header?: string): str
   }
   out.push(
     "Run ./ss help <command> (or ./ss <command> --help) for its arguments.",
-    "Global flags: --json prints the raw JSON (or NDJSON events); --out <file> saves binary output.",
+    "Global flags: --json prints the raw JSON (or NDJSON events); --out <file> saves binary output; --open shows it (image.get).",
     "Text values: --x @file.md reads a file, --x - reads stdin, @@ escapes a leading @.",
-    "Playing from the terminal: export SS_CONVERSATION=c_... and --conversation can be left out of every command that takes it.",
+    "Playing from the terminal: export SS_CONVERSATION=c_... and --conversation can be left out of every command that takes it (and --id of conversation.get, .update and .clone).",
   );
   return out.join("\n");
 }
@@ -77,7 +77,7 @@ export function renderCommandHelp(c: CommandInfo): string {
     "",
     [
       `Login required: ${c.auth ? "yes" : "no"}`,
-      c.kind === "stream" ? "Output: streamed events (text prints live)" : c.kind === "binary" ? "Output: binary (use --out <file>)" : "",
+      c.kind === "stream" ? "Output: streamed events (text prints live)" : c.kind === "binary" ? "Output: binary (use --open, or --out <file>)" : "",
       `HTTP: POST /api/${c.name}${c.httpGet ? ` (also GET)` : ""}`,
     ]
       .filter(Boolean)

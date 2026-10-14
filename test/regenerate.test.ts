@@ -205,7 +205,7 @@ describe("steered regeneration, versions, edit and delete: CLI → server → mo
     const own = text.trim().split("\n").map((l) => JSON.parse(l));
     const followed = await lines(await follow);
 
-    assert.deepEqual(own[0], { type: "start", brainId: own[0].brainId, brainName: "Assistant", messageId: a1!.id, regenerate: true, kind: "text", steer: STEER });
+    assert.deepEqual(own[0], { type: "start", brainId: own[0].brainId, brainName: "Assistant", messageId: a1!.id, regenerate: true, kind: "text", conversationTitle: own[0].conversationTitle, steer: STEER });
     assert.deepEqual(followed.slice(0, 2).map((e) => e.type), ["following", "start"]);
     assert.equal(followed[1].regenerate, true, "a reloaded tab knows to render it in the message's slot");
     assert.equal(own.at(-1).type, "done");

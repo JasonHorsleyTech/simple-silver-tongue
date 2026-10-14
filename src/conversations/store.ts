@@ -3,6 +3,7 @@ import { nowIso } from "../lib/ids.ts";
 import type { StreamEvent } from "../registry.ts";
 import { listFiles, readJson, removeFile, writeJson, type Vault } from "../storage/vault.ts";
 import type { UnreadableConversation } from "./format.ts";
+import { upgradeConversation } from "./defaults.ts";
 import { allPaintJobs, paintingIn, settleStaleImages } from "./images.ts";
 import type { Conversation, LedgerMessage } from "./types.ts";
 
@@ -22,6 +23,7 @@ export async function loadConversation(vault: Vault, id: string): Promise<Conver
   if (!conv) throw notFound(`No conversation ${id}. List yours with ./ss conversation.list.`);
   // A copy of another conversation's file under this name would list twice and take this one's writes (T06 QA-4).
   if (conv.id !== id) throw unreadableFile(fileOf(id), `holds ${typeof conv.id === "string" ? `conversation ${conv.id}` : "no conversation id"}, not ${id} (a copy of another file?), so it isn't used`);
+  upgradeConversation(conv); // older files (T07 triage: brains without stop sequences)
   await settleStaleImages(vault, conv); // a pending image no job owns is settled here, never left pending (T05)
   return conv;
 }

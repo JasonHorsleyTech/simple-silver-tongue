@@ -45,6 +45,8 @@ export async function startTestServer(
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
+  /** Files the CLI's --open would have shown (T07 triage); its copies go under <tmp>/os-tmp. */
+  const opened: string[] = [];
   async function cli(argv: string[], io: { stdin?: string; secrets?: string[]; env?: Record<string, string> } = {}): Promise<CliResult> {
     let stdout = "";
     let stderr = "";
@@ -57,6 +59,8 @@ export async function startTestServer(
       stdinIsTTY: io.secrets !== undefined,
       readStdin: async () => io.stdin ?? "",
       promptSecret: async () => secrets.shift() ?? "",
+      openFile: async (path) => void opened.push(path),
+      tmpDir: join(tmp, "os-tmp"),
     });
     return { code, stdout, stderr };
   }
@@ -71,6 +75,7 @@ export async function startTestServer(
     mock,
     sessions,
     cli,
+    opened,
     async close() {
       sessions.close();
       server.close();

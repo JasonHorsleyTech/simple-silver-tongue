@@ -13,3 +13,6 @@ web/dist/
 *.tsbuildinfo
 
 .DS_Store
+
+# a picture saved with image.get --out from the project folder: a plaintext copy, never committed (T07 QA-3)
+/img_*

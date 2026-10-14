@@ -12,7 +12,7 @@ import { imageSettingsProblem } from "../images/request.ts";
 import { badRequest, CommandError, notFound } from "../lib/errors.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { command, type Ctx } from "../registry.ts";
-import { PLAYER, brainName, color, finalReminder, kind, reasoning, safeMode, tool } from "./brains.ts";
+import { PLAYER, brainName, color, finalReminder, kind, reasoning, safeMode, stop, tool } from "./brains.ts";
 import { conversationId, imageSettings, systemPrompt, templates, title } from "./conversations.ts";
 
 /**
@@ -26,9 +26,9 @@ const EXAMPLE_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 // ── The campaign file: a conversation document (conversation.get --json), with ids and dates optional ──
 
-const blank = (what: string) => (s: string) => s.trim() !== "" || `${what} can't be blank`;
 const version = z.object({
-  content: z.string().refine(blank("A message"), "A message can't be blank"),
+  // A blank message (or image prompt) is refused here as message.edit refuses one (T07 QA-4).
+  content: z.string().refine((s) => s.trim() !== "", "A message can't be blank"),
   source: z.enum(["generated", "authored"]).default("authored"),
   steer: z.string().optional(),
   steeredFrom: z.number().int().min(0).optional(),
@@ -72,6 +72,8 @@ const campaignSchema = z.object({
         systemPrompt,
         finalReminder: finalReminder.optional(),
         tool: tool.optional(),
+        /** Absent (a file from before T07 triage): the kind's default, as for a new brain. */
+        stop: stop.optional(),
       }),
     )
     .min(1, "A campaign needs at least one brain"),
@@ -97,7 +99,7 @@ type Campaign = z.output<typeof campaignSchema>;
 function parseCampaign(raw: unknown, where: string): Campaign {
   const r = campaignSchema.safeParse(raw);
   if (r.success) return r.data;
-  const issues = r.error.issues.slice(0, 5).map((i) => `${i.path.map(String).join(".") || "(top level)"}: ${i.message}`);
+  const issues = r.error.issues.slice(0, 5).map((i) => `${i.path.map(String).join(".") || "(top level)"}: ${i.message.replace(/\.$/, "")}`);
   throw badRequest(`${where} isn't a campaign this app can import. ${issues.join("; ")}.`, { issues: r.error.issues.map((i) => ({ path: i.path.map(String).join("."), message: i.message })) });
 }
 
@@ -119,6 +121,7 @@ function toConversation(doc: Campaign, where: string): Conversation {
     Object.assign(brain.finalReminder, b.finalReminder ?? {});
     if (b.safeMode !== undefined) brain.safeMode = b.safeMode;
     if (b.tool) Object.assign(brain.tool!, b.tool);
+    if (b.stop) brain.stop = b.stop;
     if (b.id) {
       if (byId.has(b.id)) throw bad(`brains.${i}.id: two brains have the id ${b.id}.`);
       byId.set(b.id, brain);
@@ -255,10 +258,15 @@ const withoutMessages = z.boolean().describe("Leave the ledger out: brains, setu
 
 /** Check the models against Venice's list, and the image size against the image model, as conversation.update does. */
 async function checkSettings(ctx: Ctx, conv: Conversation, where: string): Promise<void> {
-  const named = (err: unknown) =>
-    Promise.reject(err instanceof CommandError && err.code === "unknown_model" ? new CommandError(err.status, err.code, `${where}: ${err.message}`) : err);
-  await lookupModel(ctx.deps.venice, "text", conv.settings.textModel).catch(named);
-  const model = await lookupModel(ctx.deps.venice, "image", conv.settings.imageModel).catch(named);
+  // Nothing has been created yet, so the fix is in the file, not conversation.update (T07 QA-8).
+  const named = (type: "text" | "image", id: string) => (err: unknown) =>
+    Promise.reject(
+      err instanceof CommandError && err.code === "unknown_model"
+        ? new CommandError(err.status, err.code, `${where}: settings.${type}Model: Venice has no ${type} model "${id}". Fix it in the file (./ss models.list --type ${type} lists them), or leave it out for the default.`)
+        : err,
+    );
+  await lookupModel(ctx.deps.venice, "text", conv.settings.textModel).catch(named("text", conv.settings.textModel));
+  const model = await lookupModel(ctx.deps.venice, "image", conv.settings.imageModel).catch(named("image", conv.settings.imageModel));
   const set = (Object.keys(conv.settings.image) as (keyof ImageSettings)[]).filter((k) => conv.settings.image[k] !== undefined);
   const problem = imageSettingsProblem(conv.settings.image, model, set);
   if (problem) throw badRequest(`${where}: settings.image: ${problem}`);
@@ -340,11 +348,12 @@ cost nothing yet; the original is untouched. With --without-messages it is a fre
 
 function started(verb: string, c: Conversation): string {
   const brains = c.brains.map((b) => `${b.name}${b.id === c.defaultBrainId ? " (default)" : ""}${b.kind === "image" ? " (image)" : ""}`).join(", ");
-  const images = c.messages.filter((m) => m.kind === "image").length;
+  // Only the images that came over unpainted: a clone copies finished ones (T07 QA-8).
+  const images = c.messages.filter((m) => m.kind === "image" && m.versions[m.activeVersion]?.image?.status === "error").length;
   return [
     `${verb} ${c.id} "${c.title}" · ${c.settings.textModel} · images ${c.settings.imageModel}`,
     `Brains: ${brains}`,
-    `Setup: ${c.setup.map((s) => s.label).join(", ") || "none"} · ${c.messages.length} message${c.messages.length === 1 ? "" : "s"}${images ? ` (${images} image prompt${images === 1 ? "" : "s"}: image.retry paints one)` : ""}`,
+    `Setup: ${c.setup.map((s) => s.label).join(", ") || "none"} · ${c.messages.length} message${c.messages.length === 1 ? "" : "s"}${images ? ` (${images} image prompt${images === 1 ? "" : "s"} still to paint: image.retry --message <id> paints one)` : ""}`,
     `Play in the browser: http://localhost:4747/c/${c.id}`,
     `Or here: export SS_CONVERSATION=${c.id}, then ./ss turn --content "..." (and turn --brain "${c.brains.find((b) => b.id !== c.defaultBrainId)?.name ?? c.brains[0]!.name}", prompt.preview, ...)`,
   ].join("\n");

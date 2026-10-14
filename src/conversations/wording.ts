@@ -28,6 +28,27 @@ export const BRAIN_COLORS = ["#60a5fa", "#f59e0b", "#34d399", "#f472b6", "#a78bf
 export const REMINDER_EXAMPLE =
   "<!-- System reminder -->\nStay in your role: do only the job your system prompt describes, and reply only as yourself.";
 
+/**
+ * T07 triage (QA-2): the stop sequence every text brain starts with. The framing marks who wrote each message,
+ * and a model will continue that pattern: live, the GM once wrote a whole fake exchange ("<!-- from: Dice
+ * Master -->", a roll, "<!-- from: the player --> I got an 11"). With this as a stop sequence, Venice ends the
+ * reply just before such a line. It matches the default templates' prefix; edit it per brain (brain.update --stop).
+ */
+export const FRAMING_STOP = "<!-- from:";
+/** Venice (like OpenAI) takes at most this many stop sequences. */
+export const MAX_STOPS = 4;
+/** The payload view's line about a request's stop sequences, so it is plain that they are sent and what they do. */
+export const stopNote = (stops: readonly string[]) =>
+  `Stop sequences: ${stops.map((s) => JSON.stringify(s)).join(", ")}. Venice ends the reply just before any of them, so this brain can't write a framing line for someone else. A request setting, not text the model reads.`;
+
+/**
+ * Measured live (T07 triage, deepseek-v4-1-flash): Venice applies stop sequences to the reasoning as well. A
+ * reasoning brain that thought "...user messages start with <!-- from: the user -->" was cut there, and its reply
+ * had no text at all. Reasoning is off by default; when someone turns it on, say so wherever both are shown.
+ */
+export const STOP_REASONING_NOTE =
+  "Reasoning is on, and Venice applies stop sequences to the reasoning too: if this brain thinks about a framing line, its reply ends right there, with no text. Turn reasoning off, or clear its stop sequences, if that happens.";
+
 /** Image brains' tool text (T05 sends it). All of it reaches the model, and all of it is editable per brain. */
 export const DEFAULT_TOOL = {
   name: "generate_image",

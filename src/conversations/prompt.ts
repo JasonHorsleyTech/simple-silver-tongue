@@ -169,6 +169,8 @@ export function buildRequest(conv: Conversation, brainId: string, opts: BuildOpt
   }
   if (conv.settings.maxTokens !== undefined) body.max_tokens = conv.settings.maxTokens;
   if (conv.settings.temperature !== undefined) body.temperature = conv.settings.temperature;
+  // A decoding setting, not text: Venice ends the reply just before any of these (T07 triage, QA-2).
+  if (brain.stop?.length) body.stop = [...brain.stop];
 
   if (brain.kind === "image" && brain.tool) {
     const tool = brain.tool;

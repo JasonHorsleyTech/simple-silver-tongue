@@ -4,6 +4,8 @@ Your local scratch pad for [Venice AI](https://venice.ai): a streaming chat with
 
 Every word sent to a model is yours to see and edit: system prompts, the World Bible, the `<!-- from: ... -->` framing, reminders, tool text. The **Payload** button (or `./ss prompt.preview`) shows the exact request.
 
+Each text brain also has a **stop sequence**, `<!-- from:`, so it can't write lines for you or for another brain: Venice ends its reply just before such a line. It isn't text the model reads, but it is in the request, so the Payload view shows it, and `./ss brain.update --brain "Game Master" --stop ...` changes it (`--stop '[]'` removes it).
+
 ## Start and stop
 
 ```bash
@@ -37,6 +39,8 @@ The app comes with a ready-made campaign: **The Gilded Goat**, a deliberately qu
 
 Then open http://localhost:4747, pick your name and type your password: "The Gilded Goat (D&D 5e)" is in the sidebar. (`./ss examples.list` lists the examples.)
 
+The Game Master's system prompt holds the evening's secrets, so the Payload view and the GM's settings will spoil them. When you try something uncertain (a lie, a sneak, a song), the GM names the check and stops: ask the Dice Master what to roll, tell it your roll, then press Send with nothing typed (or `./ss turn`) and the GM tells you how it goes.
+
 ## Play
 
 In the browser:
@@ -66,13 +70,31 @@ export SS_CONVERSATION=c_...
 ./ss turn --brain "Dice Master" --content "What do I roll?"
 ./ss message.regenerate --steer "Make her more nervous."
 ./ss turn --brain "Scene Painter"
+./ss image.get --id img_... --open       # look at the picture (the turn prints this line for you)
 ```
+
+Each reply's header names the campaign (`[Game Master · in "The Gilded Goat (D&D 5e)"]`), so after a clone you can see whether `SS_CONVERSATION` still points at the old one.
+
+`image.get --open` decrypts the picture into your own private temp folder and opens it in your image viewer (Preview). That copy, like anything saved with `--out`, is a normal file that anyone at this Mac's account can read without your password: delete it when you're done (the command prints where it is).
+
+To tweak a system prompt mid-game, or add a brain:
+
+```bash
+./ss brain.list --json | jq -r '.brains[] | select(.name=="Game Master") | .systemPrompt' > "$TMPDIR/gm.md"
+open -e "$TMPDIR/gm.md"                  # edit it in TextEdit and save
+./ss brain.update --brain "Game Master" --system-prompt @"$TMPDIR/gm.md" && rm "$TMPDIR/gm.md"
+./ss brain.add --name "Wren's Muse" --system-prompt "You are Wren's muse. Write one short verse Wren could sing right now."
+./ss turn --brain "Wren's Muse"
+```
+
+(`--final-reminder.content @file` does the same for a brain's reminder; `./ss brain.list` shows every brain's prompts in full.)
 
 One caution: whatever you type on a command line is saved in plain text in your shell history (`~/.zsh_history`). For anything private, use the browser, or `--content -` and type or paste the text (Ctrl-D ends it).
 
 ## Privacy, in short
 
 - An encrypted account's conversations, images, titles and prompts are ciphertext on disk (`data/users/<name>/`). Usernames, file sizes and dates are not hidden.
+- What you take out is plain: a picture opened or saved with `image.get`, a prompt exported with `jq` as above, a `conversation.get --json` file. Keep those out of this project folder, and delete them when you're done.
 - Venice sees your prompts, by nature. The default models (`deepseek-v4-1-flash`, `z-image-turbo`) are Venice's private ones.
 - If you ever ask Claude Code to look into one of your campaigns, what it reads lands in its transcripts in plain text. Debug with a throwaway `dev-` account instead.
 - The full list of where text can and can't end up is in [docs/design.md](docs/design.md), "Where plaintext can still appear".

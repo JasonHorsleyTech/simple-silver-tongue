@@ -82,6 +82,7 @@ describe("buildRequest: each brain sees one shared ledger from its own point of 
         stream_options: { include_usage: true },
         venice_parameters: { include_venice_system_prompt: false, enable_web_search: "off", enable_web_scraping: false },
         reasoning_effort: "none", // new brains have reasoning off (T02 QA-1)
+        stop: ["<!-- from:"], // and a text brain stops before a framing line it would write for someone else (T07 triage)
       },
     );
   });
@@ -227,6 +228,7 @@ describe("planTurn and helpers", () => {
 
   test("reviewBody: the payload view notes reasoning only when the request really turns it on (T02 QA-1)", () => {
     const { conv, gm } = table();
+    gm.stop = [];
     assert.deepEqual(planTurn(conv, { content: "x" }, DEEPSEEK).notes, []);
     gm.reasoning.enabled = true;
     assert.deepEqual(planTurn(conv, { content: "x" }, DEEPSEEK).notes, [REASONING_NOTE]);

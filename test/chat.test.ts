@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { REASONING_NOTE } from "../src/conversations/prompt.ts";
 import type { Conversation } from "../src/conversations/types.ts";
+import { FRAMING_STOP, STOP_REASONING_NOTE, stopNote } from "../src/conversations/wording.ts";
 import { createUser } from "../src/storage/users.ts";
 import { startTestServer } from "./helpers.ts";
 
@@ -42,7 +43,10 @@ describe("streaming chat end to end: CLI → server → mock Venice", () => {
       if (i === 1) assert.match((await t.cli(["brain.update", "--conversation", conv.id, "--reasoning.enabled"])).stdout, /provider adds a small hidden instruction/);
       // What turn --content X will send, asked for first, then compared with what the mock really got.
       const preview = await json(["prompt.preview", "--conversation", conv.id, "--content", msg]);
-      assert.deepEqual(preview.notes, i === 0 ? [] : [REASONING_NOTE]);
+      // Every text brain stops before a framing line (T07 triage), and the payload view says so.
+      // With reasoning on too, it says that Venice applies them to the reasoning as well (measured live, T07 triage).
+      assert.deepEqual(preview.notes, i === 0 ? [stopNote([FRAMING_STOP])] : [REASONING_NOTE, stopNote([FRAMING_STOP]), STOP_REASONING_NOTE]);
+      assert.deepEqual(preview.body.stop, [FRAMING_STOP]);
       assert.equal(preview.body.reasoning_effort, i === 0 ? "none" : "low");
       const r = await t.cli(["turn", "--conversation", conv.id, "--content", msg]);
       assert.equal(r.code, 0, r.stderr);
