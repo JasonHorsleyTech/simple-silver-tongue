@@ -211,7 +211,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T07: D&D acceptance, example campaign and polish · `todo`
+## T07: D&D acceptance, example campaign and polish · `qa`
 
 **Engineer scope**
 - `examples/dnd-tavern.json` (committed) with GM (default), Dice Master, Joke Teller, Scene Painter (image) and Character Portraitist (image), a World Bible setup message, a hand-authored GM opener, and sensible templates.
@@ -235,5 +235,12 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
   - The login is a user picker now (locks on encrypted users), and the sidebar's user card is a menu: Switch user, Change password…, Log out, Log out everywhere. Nothing in the playthrough needs more; log in as the `dev-` user by clicking it.
   - The browser can change an encrypted user's password (`user.change-password`, at the orchestrator's request); `user.create` and `user.delete` stay terminal-only.
   - Polish candidates seen in Chrome, none blocking: a visible tab asks `auth.whoami` + `health` every 30 s, which is 2 lines a minute in `.run/server.log` per open window (the server logs every request; leaving those two out of the log would quiet it). A damaged conversation can't be removed from the app (by design: every write loads first, and a damaged file may still be rescued); the page says to move it aside. With a notice, four users and a damaged one, the login card's footer ("New user? …") falls below a laptop's fold.
+
+- **From T07 engineer** (report: `reports/T07-engineer.md`):
+  - Built: `examples/dnd-tavern.json`, `examples.list`, `conversation.import --example|--campaign [--without-messages]`, `conversation.clone [--without-messages]`, the accurate image wording, `hideWatermark: true`, `SS_CONVERSATION` in the CLI, and `README.md` for Jason. The terminal playthrough ran live as an encrypted `dev-` user.
+  - **For Frontend:** the browser can't start the example or clone yet. Add the three commands to `web/src/api/types.ts`; a "Start from an example" entry on the home page (`examples.list` gives title, `about`, brain names; `conversation.import --example <name>` returns the whole conversation, then navigate to it); "Clone this campaign" in the Conversation tab (title, with or without the story). Then update README.md's "Start the example campaign" and "A new campaign from this one's setup", which say to use the terminal today.
+  - **For QA:** a campaign file is any `conversation.get --json`; try odd ones (missing ids, a player message with two versions, an image brain message, a `defaultBrainId` that matches nothing, huge or deeply nested JSON). The example's prompts were tuned live; judge only that each brain does its job, not style.
+  - Image size is per conversation, so the Character Portraitist paints at the Scene Painter's 1024×768. A per-brain size would need a field and UI; not built.
+  - **Before Jason's first login**, someone should clear the test users: `find data/users -maxdepth 1 \( -name 'dev-*' -o -name 'qa-*' \) -exec rm -rf {} +` (about 30 by now; his picker lists them all). T07 engineer removed only its own.
 
 **Deferred in:** *(none yet)*

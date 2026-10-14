@@ -69,10 +69,10 @@ describe("image brains' parts (T05)", () => {
     const s = newConversation({ title: "x", systemPrompt: "y" }).settings;
     s.image = { ...s.image, width: 1020, height: 768, aspectRatio: "16:9", negativePrompt: "text" };
     const z = buildImageRequest(s, Z, "a tavern", true);
-    assert.deepEqual(z.body, { model: "z-image-turbo", prompt: "a tavern", safe_mode: true, format: "webp", hide_watermark: false, width: 1016, height: 768, negative_prompt: "text" });
+    assert.deepEqual(z.body, { model: "z-image-turbo", prompt: "a tavern", safe_mode: true, format: "webp", hide_watermark: true, width: 1016, height: 768, negative_prompt: "text" });
     assert.equal(z.notes.length, 2, z.notes.join("\n")); // width rounded to a multiple of 8; aspect ratio not sent
     const n = buildImageRequest({ ...s, image: { ...s.image, resolution: "8K" } }, NANO, "a tavern", false);
-    assert.deepEqual(n.body, { model: "nano-banana-2", prompt: "a tavern", safe_mode: false, format: "webp", hide_watermark: false, aspect_ratio: "16:9", negative_prompt: "text" });
+    assert.deepEqual(n.body, { model: "nano-banana-2", prompt: "a tavern", safe_mode: false, format: "webp", hide_watermark: true, aspect_ratio: "16:9", negative_prompt: "text" });
     assert.match(n.notes.join("\n"), /Width and height are not sent/);
     assert.match(n.notes.join("\n"), /resolution 8K is not sent: nano-banana-2 offers 1K, 2K, 4K \(it uses 1K\)/);
     assert.match(buildImageRequest(s, Z, "x".repeat(7501), true).problem ?? "", /7501 characters, and z-image-turbo takes at most 7500/);

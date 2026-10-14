@@ -26,7 +26,7 @@ export const systemPrompt = z
   .refine((s) => s.trim() !== "", "The system prompt can't be empty: some Venice models inject their own when there is none")
   .describe("The brain's system prompt, sent verbatim as the first message. Must not be empty");
 
-const title = z.string().trim().min(1, "The title can't be empty").max(200);
+export const title = z.string().trim().min(1, "The title can't be empty").max(200);
 
 export const conversationCreate = command({
   name: "conversation.create",
@@ -85,7 +85,7 @@ const template = (name: keyof Templates, describe: string) =>
     .refine((s) => templateProblem(name, s) === null, templateProblem(name, "")!)
     .describe(describe);
 
-const templates = z
+export const templates = z
   .object({
     player: template("player", "How a brain sees the player's messages. Must contain {{content}}, the message"),
     otherBrainText: template("otherBrainText", "How a brain sees another brain's text. {{brain}}, and {{content}} (required)"),
@@ -95,14 +95,14 @@ const templates = z
   .partial();
 
 /** The image settings image brains' requests are built from (src/images/request.ts). null unsets one. */
-const imageSettings = z
+export const imageSettings = z
   .object({
     width: z.number().int().min(64).max(4096).nullable().describe("Image width in pixels, for models sized by width × height (z-image-turbo: multiples of 8). null: the model's default"),
     height: z.number().int().min(64).max(4096).nullable().describe("Image height in pixels, as width"),
     aspectRatio: z.string().regex(/^\d+:\d+$/, "Aspect ratios look like 16:9").nullable().describe("For models sized by resolution and aspect ratio (Nano Banana), one they list. null: the model's default"),
     resolution: z.string().min(1).nullable().describe("For models with a resolution list (1K, 2K, 4K), one they list. null: the model's default"),
     format: z.enum(["webp", "png", "jpeg"]).describe("The format to ask for (default webp). The stored type is what Venice really sends"),
-    hideWatermark: z.boolean().describe("Ask Venice to leave its watermark off (default off)"),
+    hideWatermark: z.boolean().describe("Ask Venice to leave its watermark off (default true: no watermark)"),
     negativePrompt: z.string().nullable().describe("What the image should not show, sent as negative_prompt with every image. null or blank: not sent"),
   })
   .partial();

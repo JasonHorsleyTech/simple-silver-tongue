@@ -42,6 +42,7 @@ export function renderCommandList(commands: CommandInfo[], header?: string): str
     "Run ./ss help <command> (or ./ss <command> --help) for its arguments.",
     "Global flags: --json prints the raw JSON (or NDJSON events); --out <file> saves binary output.",
     "Text values: --x @file.md reads a file, --x - reads stdin, @@ escapes a leading @.",
+    "Playing from the terminal: export SS_CONVERSATION=c_... and --conversation can be left out of every command that takes it.",
   );
   return out.join("\n");
 }

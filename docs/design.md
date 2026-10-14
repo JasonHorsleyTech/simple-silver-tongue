@@ -124,12 +124,14 @@ type Conversation = {
     imageModel: string;                // default "z-image-turbo"
     image: { width?: number; height?: number; aspectRatio?: string; resolution?: string;
              format: "webp" | "png" | "jpeg"; hideWatermark: boolean; negativePrompt?: string };
-             // default { format: "webp", hideWatermark: false }. T05: only what the image model takes is sent (buildImageRequest)
+             // default { format: "webp", hideWatermark: true } (T07: was false; Venice stamped its mark on T05's live image).
+             // T05: only what the image model takes is sent (buildImageRequest)
   };
   templates: {
     player: string;          // default "<!-- from: the user -->\n{{content}}"
     otherBrainText: string;  // default "<!-- from: {{brain}} -->\n{{content}}"
-    otherBrainImage: string; // default "<!-- from: {{brain}}. It called generate_image with this exact prompt, and that image is now on the player's screen: -->\n{{prompt}}"
+    otherBrainImage: string; // default "<!-- from: {{brain}}. It called generate_image with this exact prompt: -->\n{{prompt}}"
+                             // (T07: it used to add "and that image is now on the player's screen", untrue while it paints or after a failure)
     steer: string;           // default "<!-- Behind-the-scenes direction from the user. This is not part of the conversation. Write your previous response again, following this direction: -->\n{{instruction}}"
   };
   setup: Array<{ id: string; label: string; content: string }>;   // s_...; the label is for the user only, never sent
@@ -334,7 +336,7 @@ Implemented in T05: `src/conversations/paint.ts` (the job), `images.ts` (who is 
 7. **Again.** `image.retry` paints the active version's prompt as it stands, with the image model and safe mode as they are now. A failed, interrupted, blurred or flagged image is replaced: like an edit, it stays as `previous` (if it was shown) until the new one is done. **A finished, clean image is never thrown away (T05 QA-5):** retrying it adds a new version with the same prompt (`repaintOf`: the version it repaints) and makes it active, so both paid images are kept and the pager goes back to the first. That is "the same prompt, another roll"; regenerate asks the brain for a new prompt instead.
 8. **A timed-out image** says that Venice may still have made (and billed) it, not that Venice was unreachable (T05 QA-3): the client's timeout is its own error, not a connection failure.
 
-**What other brains see doesn't depend on the image.** The prompt is the canon: every image message is framed (`otherBrainImage`) or rendered as the painter's own tool call whatever its image's status. The default template says the image "is now on the player's screen", which is untrue for a failed image until it is retried.
+**What other brains see doesn't depend on the image.** The prompt is the canon: every image message is framed (`otherBrainImage`) or rendered as the painter's own tool call whatever its image's status. So the default wording claims nothing about the picture (T07): `otherBrainImage` says only that the brain "called generate_image with this exact prompt", and `DEFAULT_TOOL.resultContent` that "the prompt was sent to the image model; the player sees the image once it is made". Both used to say the image "is now on the player's screen", which stopped being true when T05 triage let the next brain answer while an image paints. Conversations made before T07 keep the wording they have (it is theirs to edit).
 
 ## Command surface
 
@@ -417,13 +419,21 @@ Initial command list (tickets add to it, and `./ss help` is the live reference):
 ```
 help · health · venice.balance · models.list
 user.create · user.list · user.delete · user.change-password · auth.login · auth.logout · auth.whoami
-conversation.create · conversation.list · conversation.get · conversation.update · conversation.delete · conversation.clone · conversation.import
+conversation.create · conversation.list · conversation.get · conversation.update · conversation.delete · conversation.clone · conversation.import · examples.list
 setup.list · setup.add · setup.update · setup.delete · setup.move
 brain.list · brain.add · brain.update · brain.delete · brain.set-default
 turn · message.add · message.edit · message.delete · message.regenerate · message.select-version
 image.get · image.retry
 prompt.preview
 ```
+
+Implemented in T07 (`src/commands/campaigns.ts`, `src/conversations/campaign.ts`, `examples/`):
+- **Campaign files.** A campaign file is the conversation document (`conversation.get --json` prints one) with everything but the brains optional: ids and images are replaced, the total (`spentUsd`) starts at 0, dates default to now (each version's own history, steer, model and cost included, comes along), and missing settings, templates, reminders and tool text get today's defaults. One more field, `about`, is a line for `examples.list` (never sent, not stored). Brains, templates and image settings are checked exactly as `brain.add` and `conversation.update` check them, and both models must be in Venice's list; a bad file is a 400 that says where it is wrong (`brains.1.systemPrompt: ...`), and nothing is created. Message authors refer to brains by their `id` in the file (`b_gm` in the example), which import replaces.
+- `examples.list` (no login: the files are committed, nothing of yours) → `{examples: [{name, title, about, brains, setup, messages}]}` from `examples/*.json`.
+- `conversation.import (--example <name> | --campaign <json>) [--title] [--without-messages]`: a new conversation, fresh ids, `spentUsd: 0`. A campaign file holds prompts, not pictures, so each imported image message keeps its prompt and its image is an `error` ("wasn't imported... Retry to paint it"); `image.retry` paints it. The CLI reads `--campaign @file.json` or `-` itself, so the server never opens a path you name; only `--example` reads a file on the server, by name, from `examples/`.
+- `conversation.clone --id [--title] [--without-messages]`: the same brains, setup messages, templates and settings, and (without the flag) the whole ledger, every version, steer and image. Finished images are copied through the vault under new ids (decrypted and re-encrypted with a fresh IV), before the document is written; an image still being made, or whose file is gone, comes over as an error to retry. The default title is "<title> (copy)". `--without-messages` is "we're doing Pathfinder" from the D&D setup.
+- **The example campaign** `examples/dnd-tavern.json`: "The Gilded Goat (D&D 5e)". Five brains (Game Master as default, Dice Master, Joke Teller, Scene Painter and Character Portraitist as image brains), each with its own final reminder (the GM's on too, which keeps it from answering as anyone else); a World Bible that every brain reads (setting, people, prices, the pre-made player character with stats the Dice Master uses), the GM's secrets in the GM's own system prompt so the other brains can't spoil them; campaign templates that say "the player" and tell every brain that the player sees the pictures; 1024×768 images, no watermark, reasoning off everywhere. Tuned live (T07 report).
+- The CLI fills in `--conversation` from `SS_CONVERSATION` when a command takes it and it wasn't given (a client convenience; the server sees an ordinary argument).
 
 ## Web app (`web/`)
 

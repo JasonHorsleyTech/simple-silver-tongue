@@ -85,6 +85,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
       readStdin: io.readStdin,
     });
     if (positionals.length) throw new UsageError(`unexpected argument ${JSON.stringify(positionals[0])} (flags look like --name value)`);
+    // T07: SS_CONVERSATION=c_... stands in for --conversation wherever a command takes one and it was left out,
+    // so a campaign played from the terminal doesn't need its id pasted into every line.
+    if (io.env.SS_CONVERSATION && info.args.properties?.conversation && args.conversation === undefined) args.conversation = io.env.SS_CONVERSATION;
     for (const flag of inlineSecrets) {
       // The data on disk is ciphertext, but a password typed here sits in ~/.zsh_history in plain text (T06).
       err(`warning: ${flag} on the command line is saved in your shell history (and shows in ps while ./ss runs). Leave it out to be asked for it, or pass ${flag} - and pipe it in.`);

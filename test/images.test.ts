@@ -9,7 +9,7 @@ import { createUser } from "../src/storage/users.ts";
 import { startTestServer } from "./helpers.ts";
 
 const FAST_KDF = { N: 2 ** 10, r: 8, p: 1 };
-const FRAME = "<!-- from: Scene Painter. It called generate_image with this exact prompt, and that image is now on the player's screen: -->";
+const FRAME = "<!-- from: Scene Painter. It called generate_image with this exact prompt: -->";
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 describe("image brains: CLI → server → mock Venice, encrypted user (T05)", () => {

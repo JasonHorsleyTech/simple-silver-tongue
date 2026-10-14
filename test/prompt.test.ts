@@ -56,7 +56,7 @@ const user = (content: string) => ({ role: "user", content });
 const assistant = (content: string) => ({ role: "assistant", content });
 const BIBLE = user("<!-- This is the World Bible. -->\nThe Gilded Goat is a tavern.");
 const PAINTED = user(
-  "<!-- from: Scene Painter. It called generate_image with this exact prompt, and that image is now on the player's screen: -->\nA hooded figure in a candle-lit tavern",
+  "<!-- from: Scene Painter. It called generate_image with this exact prompt: -->\nA hooded figure in a candle-lit tavern",
 );
 
 describe("buildRequest: each brain sees one shared ledger from its own point of view", () => {

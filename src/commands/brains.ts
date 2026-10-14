@@ -29,29 +29,29 @@ export const PLAYER = "player";
 export const authorRef = ref(`Say who wrote it: "${PLAYER}" (you), or a brain's name or id`);
 
 /** One line of visible text: it is framed into every other brain's prompt and listed in every view (T04 QA-3). */
-const name = z
+export const brainName = z
   .string()
   .trim()
   .min(1)
   .max(60)
   .refine((s) => !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(s), "A brain name is one line, with no line breaks, tabs or control characters")
   .refine((s) => /[\p{L}\p{N}\p{P}\p{S}]/u.test(s), "A brain name needs at least one visible character");
-const color = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Colors look like #60a5fa").describe("Badge color, #rrggbb");
-const kind = z.enum(["text", "image"]);
-const reasoning = z
+export const color = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Colors look like #60a5fa").describe("Badge color, #rrggbb");
+export const kind = z.enum(["text", "image"]);
+export const reasoning = z
   .object({
     enabled: z.boolean().describe("Reasoning on or off (default off). On: the provider adds a small hidden instruction we can't see or edit"),
     effort: z.enum(EFFORTS).describe("Effort level when on, if the model supports levels"),
   })
   .partial();
-const finalReminder = z
+export const finalReminder = z
   .object({
     enabled: z.boolean().describe("Send the reminder as the last message"),
     content: z.string().describe("The reminder text, sent verbatim"),
   })
   .partial();
 const text = (what: string) => z.string().refine((s) => s.trim() !== "", `The ${what} can't be blank`);
-const tool = z
+export const tool = z
   .object({
     name: z
       .string()
@@ -62,7 +62,7 @@ const tool = z
     resultContent: text("tool result").describe("The tool result the brain sees after each of its own images"),
   })
   .partial();
-const safeMode = z.boolean().describe("Image brains: Venice safe_mode, which blurs adult content (default on)");
+export const safeMode = z.boolean().describe("Image brains: Venice safe_mode, which blurs adult content (default on)");
 
 /** A new or changed name must be unique (case-insensitive), not look like an id, and not be "player". */
 function checkName(conv: Conversation, value: string, self?: Brain): void {
@@ -134,7 +134,7 @@ An image brain (--kind image) answers with a forced generate_image call: its rep
 painted with the conversation's image model. It gets editable tool text, and safe mode on (Venice blurs adult content).`,
   args: z.object({
     conversation: conversationId,
-    name: name.describe("The brain's name, unique in the conversation (other brains see it in the framing)"),
+    name: brainName.describe("The brain's name, unique in the conversation (other brains see it in the framing)"),
     systemPrompt,
     color: color.optional(),
     kind: kind.optional().describe("text (default) or image. Locked once the brain has messages"),
@@ -173,7 +173,7 @@ Reasoning is off by default. Turning it on is an opt-in: the provider then adds 
   args: z.object({
     conversation: conversationId,
     brain: brainRef.optional(),
-    name: name.optional().describe("New name (unique in the conversation)"),
+    name: brainName.optional().describe("New name (unique in the conversation)"),
     color: color.optional(),
     systemPrompt: systemPrompt.optional(),
     reasoning: reasoning.optional(),

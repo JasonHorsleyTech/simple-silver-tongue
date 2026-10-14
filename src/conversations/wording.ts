@@ -33,7 +33,8 @@ export const DEFAULT_TOOL = {
   name: "generate_image",
   description: "Generate an image from a text prompt. The image is shown to the player.",
   promptParamDescription: "The exact image prompt: a detailed description of what the image shows.",
-  resultContent: "The image was generated and is now on the player's screen.",
+  // T07: true whether the image is still being made, done or failed (the brain sees it on its next request).
+  resultContent: "The prompt was sent to the image model. The player sees the image once it is made.",
 } as const;
 
 /** A new setup message's label, and its pre-fill, an HTML comment the models can see: "<!-- This is the World Bible. -->". */

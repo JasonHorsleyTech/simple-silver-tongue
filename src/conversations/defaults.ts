@@ -10,8 +10,9 @@ import { BRAIN_COLORS, DEFAULT_SETUP_LABEL, DEFAULT_TOOL, REMINDER_EXAMPLE, setu
 export const DEFAULT_TEMPLATES: Templates = {
   player: "<!-- from: the user -->\n{{content}}",
   otherBrainText: "<!-- from: {{brain}} -->\n{{content}}",
-  otherBrainImage:
-    "<!-- from: {{brain}}. It called generate_image with this exact prompt, and that image is now on the player's screen: -->\n{{prompt}}",
+  // T07: says only what is always true. Since T05 triage the next brain can answer while the image is still
+  // being made (or after it failed), so "that image is now on the player's screen" often wasn't.
+  otherBrainImage: "<!-- from: {{brain}}. It called generate_image with this exact prompt: -->\n{{prompt}}",
   steer:
     "<!-- Behind-the-scenes direction from the user. This is not part of the conversation. Write your previous response again, following this direction: -->\n{{instruction}}",
 };
@@ -68,7 +69,7 @@ export function newConversation(opts: { title: string; systemPrompt: string; tex
     settings: {
       textModel: opts.textModel ?? DEFAULT_TEXT_MODEL,
       imageModel: DEFAULT_IMAGE_MODEL,
-      image: { format: "webp", hideWatermark: false },
+      image: { format: "webp", hideWatermark: true }, // T07: a personal scratch pad, so no Venice watermark by default
     },
     templates: { ...DEFAULT_TEMPLATES },
     setup: [],

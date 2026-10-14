@@ -1,0 +1,80 @@
+# simple-silver
+
+Your local scratch pad for [Venice AI](https://venice.ai): a streaming chat with several AI "brains" at one table, steered regeneration, image brains, and per-user encryption. It runs only on this Mac (`127.0.0.1`), and nothing is ever pushed anywhere.
+
+Every word sent to a model is yours to see and edit: system prompts, the World Bible, the `<!-- from: ... -->` framing, reminders, tool text. The **Payload** button (or `./ss prompt.preview`) shows the exact request.
+
+## Start and stop
+
+```bash
+npm run up       # builds the web app and starts the server in the background → http://localhost:4747
+npm run down     # stops it (replies and images in flight finish first, up to a minute)
+npm run logs     # the server's log (requests and timings only, never your text)
+```
+
+The Venice key lives in `.env` (`VENICE_ADMIN_KEY=...`). `npm run up:mock` starts the same app against a fake, free Venice, for trying things out. A restart logs everyone out.
+
+## Make your account (once)
+
+Accounts are made in the terminal, never in the browser:
+
+```bash
+./ss user.create --username jason
+```
+
+It asks for a password twice, hidden. **With a password, every conversation and image you make is encrypted on disk**, and there is no reset: forget the password and the data is gone for good. (An empty password makes an unencrypted account, for debugging only.) You can change the password later from the browser's user menu (click your name, bottom left) or with `./ss user.change-password --username jason`.
+
+A login ends after 60 minutes without activity, and the server wipes your key from memory. Log in again to carry on.
+
+## Start the example campaign
+
+The app comes with a ready-made campaign: **The Gilded Goat**, a deliberately quiet D&D 5e evening in a village tavern, with five brains (Game Master, Dice Master, Joke Teller, Scene Painter, Character Portraitist), a World Bible and an opening scene. A hooded figure sits in the corner booth.
+
+```bash
+./ss auth.login --username jason              # asks for your password
+./ss conversation.import --example dnd-tavern
+```
+
+Then open http://localhost:4747, pick your name and type your password: "The Gilded Goat (D&D 5e)" is in the sidebar. (`./ss examples.list` lists the examples.)
+
+## Play
+
+In the browser:
+
+- **Talk to the Game Master:** type what you do and press Enter.
+- **Ask another brain:** each one has a colored chip beside Send (⌥1, ⌥2, …). With text, your text goes to that brain ("What do I roll?", "I rolled a 14", "Tell me a joke about this"). With nothing typed, it just responds to the scene. The Scene Painter and the Character Portraitist write an image prompt, and the picture is painted while you keep playing.
+- **Regenerate with a steer:** on the last reply, Regenerate, and type a direction ("make her more nervous"), or leave it empty for a plain re-roll. The steer is used once and never sent again. The `‹ 1/2 ›` pager goes back to an earlier version.
+- **Edit or delete anything**, at any depth. Editing an image prompt paints a new picture.
+- **Change the table mid-game:** the settings panel has Brains (edit any system prompt or reminder, or add a brain), Setup (the World Bible), Templates (the `<!-- from: ... -->` framing) and Conversation (models, image size, watermark). The next message uses the change; nothing restarts.
+
+**A new campaign from this one's setup** (say, Pathfinder from the D&D one) keeps the brains, World Bible, templates and settings and leaves the story behind:
+
+```bash
+./ss conversation.list                                    # find its id (c_...)
+./ss conversation.clone --id c_... --title "Pathfinder" --without-messages
+```
+
+Then edit the World Bible and the prompts to suit. Without `--without-messages` the clone is a full copy, images included: a branch to try something else.
+
+## From the terminal
+
+Everything the browser does is a `./ss` command (`./ss help` lists them all). To play a campaign from the terminal, set it once:
+
+```bash
+export SS_CONVERSATION=c_...
+./ss turn --content "I walk over to the hooded figure."
+./ss turn --brain "Dice Master" --content "What do I roll?"
+./ss message.regenerate --steer "Make her more nervous."
+./ss turn --brain "Scene Painter"
+```
+
+One caution: whatever you type on a command line is saved in plain text in your shell history (`~/.zsh_history`). For anything private, use the browser, or `--content -` and type or paste the text (Ctrl-D ends it).
+
+## Privacy, in short
+
+- An encrypted account's conversations, images, titles and prompts are ciphertext on disk (`data/users/<name>/`). Usernames, file sizes and dates are not hidden.
+- Venice sees your prompts, by nature. The default models (`deepseek-v4-1-flash`, `z-image-turbo`) are Venice's private ones.
+- If you ever ask Claude Code to look into one of your campaigns, what it reads lands in its transcripts in plain text. Debug with a throwaway `dev-` account instead.
+- The full list of where text can and can't end up is in [docs/design.md](docs/design.md), "Where plaintext can still appear".
+
+For how the app is built, see [AGENTS.md](AGENTS.md) and [docs/design.md](docs/design.md).
