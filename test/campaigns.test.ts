@@ -46,6 +46,8 @@ describe("campaigns: the example, import, clone (T07)", () => {
       ["Game Master:text", "Dice Master:text", "Joke Teller:text", "Scene Painter:image", "Character Portraitist:image"],
     );
     assert.deepEqual(ex.setup, ["World Bible"]);
+    // T07 frontend: the browser shows the cast in their badge colors before you start.
+    assert.ok(ex.brains.every((b: { color?: string }) => /^#[0-9a-f]{6}$/i.test(b.color ?? "")), JSON.stringify(ex.brains));
   });
 
   test("import --example: the whole campaign, fresh ids, nothing spent, ready to play", async () => {

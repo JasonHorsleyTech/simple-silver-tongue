@@ -206,7 +206,8 @@ async function exampleNames(): Promise<string[]> {
 
 // ── Commands ──
 
-type ExampleInfo = { name: string; title: string; about?: string; brains: Array<{ name: string; kind: string }>; setup: string[]; messages: number; error?: string };
+/** A brain's color is its badge (T07 frontend: the browser shows the cast before you start). */
+type ExampleInfo = { name: string; title: string; about?: string; brains: Array<{ name: string; kind: string; color?: string }>; setup: string[]; messages: number; error?: string };
 
 export const examplesList = command({
   name: "examples.list",
@@ -224,7 +225,7 @@ Start one with ./ss conversation.import --example <name>. Nothing here is yours:
           name,
           title: doc.title ?? name,
           about: doc.about,
-          brains: doc.brains.map((b) => ({ name: b.name, kind: b.kind })),
+          brains: doc.brains.map((b) => ({ name: b.name, kind: b.kind, ...(b.color ? { color: b.color } : {}) })),
           setup: doc.setup.map((s) => s.label),
           messages: doc.messages.length,
         });

@@ -2,7 +2,7 @@ import { Check, Copy, RotateCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import type { Brain, ChatMessage, Preview } from "../../api/types.ts";
+import { stopNote, type Brain, type ChatMessage, type Preview } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Dialog } from "../../components/Dialog.tsx";
 import { Notice } from "../../components/Notice.tsx";
@@ -150,7 +150,8 @@ export function PayloadDialog({
       ) : preview && body ? (
         <div className={cx("space-y-4 transition-opacity", loading && "opacity-60")} aria-busy={loading || undefined}>
           {preview.notes.map((n) => (
-            <Notice key={n} tone="warn">
+            // The stop note says what a visible setting does; the rest warn of something we can't see or that will fail.
+            <Notice key={n} tone={body.stop?.length && n === stopNote(body.stop) ? "info" : "warn"}>
               {n}
             </Notice>
           ))}

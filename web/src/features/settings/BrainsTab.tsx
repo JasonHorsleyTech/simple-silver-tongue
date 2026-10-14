@@ -138,6 +138,8 @@ function BrainCard({
     brain.kind === "image" && brain.safeMode === false && "safe mode off",
     brain.reasoning.enabled && `reasoning ${brain.reasoning.effort}`,
     brain.finalReminder.enabled && brain.finalReminder.content.trim() && "reminder",
+    brain.stop.length > 0 && (brain.stop.length === 1 ? "stop sequence" : `${brain.stop.length} stop sequences`),
+    brain.kind === "text" && brain.stop.length === 0 && "no stop sequence",
   ].filter((t): t is string => !!t);
   const firstLine = brain.systemPrompt.trim().split("\n")[0];
   return (
@@ -158,7 +160,7 @@ function BrainCard({
             <BrainBadge name={brain.name} color={brain.color} className="max-w-[60%] shrink-0" />
             <span className="flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap">
               {tags.map((t) => (
-                <span key={t} className={cx("shrink-0 text-[11.5px]", t === "default" ? "text-muted" : t === "safe mode off" ? "text-amber-200/75" : "text-faint")}>
+                <span key={t} className={cx("shrink-0 text-[11.5px]", t === "default" ? "text-muted" : t === "safe mode off" || t === "no stop sequence" ? "text-amber-200/75" : "text-faint")}>
                   {t}
                 </span>
               ))}

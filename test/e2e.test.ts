@@ -315,3 +315,24 @@ describe("sessions: logging out or in mid-request never pulls the key out from u
     });
   }
 });
+
+describe("T07 frontend: a browser tab's polls stay out of the log", () => {
+  test("a successful auth.whoami or health isn't logged; a failed one and every other request are", async () => {
+    const log: string[] = [];
+    const t = await startTestServer({ log: (l) => void log.push(l) });
+    try {
+      const post = (name: string, headers: Record<string, string> = { "content-type": "application/json" }) =>
+        fetch(`${t.url}/api/${name}`, { method: "POST", headers, body: "{}" }).then((r) => r.status);
+      assert.equal(await post("health"), 200);
+      assert.equal(await post("auth.whoami"), 200);
+      assert.equal(await post("help"), 200);
+      assert.equal(await post("auth.whoami", { "content-type": "text/plain" }), 415);
+      const lines = log.filter((l) => l.includes("/api/"));
+      assert.ok(!lines.some((l) => / \/api\/(health|auth\.whoami) 200 /.test(l)), lines.join("\n"));
+      assert.ok(lines.some((l) => / \/api\/help 200 /.test(l)), lines.join("\n"));
+      assert.ok(lines.some((l) => / \/api\/auth\.whoami 415 /.test(l)), lines.join("\n"));
+    } finally {
+      await t.close();
+    }
+  });
+});

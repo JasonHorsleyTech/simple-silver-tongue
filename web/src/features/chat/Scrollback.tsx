@@ -1,8 +1,8 @@
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, ArrowUp, ImageIcon, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Conversation } from "../../api/types.ts";
 import { Markdown } from "../../components/Markdown.tsx";
-import { expectedAspect } from "./ImageCard.tsx";
+import { expectedAspect, GalleryContext, type GalleryItem } from "./ImageCard.tsx";
 import { LiveReply } from "./LiveReply.tsx";
 import { MessageItem } from "./MessageItem.tsx";
 import { PlayerBubble } from "./MessageFrame.tsx";
@@ -31,12 +31,64 @@ export function Scrollback({
 }) {
   const box = useRef<HTMLDivElement>(null);
   const stuck = useRef(true);
+  /** A jump to a landed picture is under way: scroll events don't re-pin to the bottom meanwhile. */
+  const jumping = useRef(false);
   const [away, setAway] = useState(false);
   const brains = new Map(conv.brains.map((b) => [b.id, b]));
   const { live, pendingPlayer } = chat;
   // A new object only when the size settings change, so the memo'd messages don't all re-render.
   const { width, height, aspectRatio, resolution } = conv.settings.image;
   const aspect = useMemo(() => expectedAspect({ width, height, aspectRatio, resolution }), [width, height, aspectRatio, resolution]);
+  const gallery = useMemo(() => galleryOf(conv), [conv]);
+  /** T07: an image that landed while its card was out of view, until you look at it. */
+  const [landed, setLanded] = useState<{ messageId: string; brainName: string; failed: boolean; above: boolean } | null>(null);
+  const imageStates = useRef<Map<string, string> | null>(null);
+
+  // Notice a picture finishing (or failing) out of sight: painting goes on while you play, so its card is often
+  // far up the scrollback by the time it lands.
+  useEffect(() => {
+    const now = new Map<string, string>();
+    for (const m of conv.messages) {
+      const img = m.kind === "image" ? m.versions[m.activeVersion]?.image : undefined;
+      if (img) now.set(m.id, `${img.id}:${img.status}`);
+    }
+    const before = imageStates.current;
+    imageStates.current = now;
+    if (!before) return; // the first load: nothing just landed
+    for (const [id, state] of now) {
+      const was = before.get(id);
+      const at = whereIs(box.current, id);
+      if (!was || !was.endsWith(":pending") || state.endsWith(":pending") || at === "in view") continue;
+      const m = conv.messages.find((x) => x.id === id)!;
+      const b = m.author.type === "brain" ? brains.get(m.author.brainId) : undefined;
+      setLanded({ messageId: id, brainName: b?.name ?? "The image brain", failed: !state.endsWith(":done"), above: at === "above" });
+    }
+  }, [conv.messages]); // brains only names the brain: a rename alone needn't re-run this
+
+  const showLanded = useCallback(() => {
+    const el = box.current;
+    const card = landed && document.getElementById(landed.messageId);
+    setLanded(null);
+    if (!el || !card) return;
+    // Unpin, and stay unpinned while the smooth scroll runs: its first steps are still "at the bottom", and
+    // re-pinning there would snap back. The box itself scrolls, not the page (scrollIntoView would move both).
+    stuck.current = false;
+    jumping.current = true;
+    const done = () => {
+      el.removeEventListener("scrollend", done);
+      if (!jumping.current) return;
+      jumping.current = false;
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_PX;
+      stuck.current = atBottom;
+      setAway(!atBottom);
+    };
+    el.addEventListener("scrollend", done);
+    setTimeout(done, 1500); // in case no scrollend comes (already there)
+    setAway(true);
+    const b = el.getBoundingClientRect();
+    const r = card.getBoundingClientRect();
+    el.scrollTo({ top: el.scrollTop + r.top - b.top - Math.max(16, (el.clientHeight - r.height) / 2), behavior: "smooth" });
+  }, [landed]);
 
   const toBottom = useCallback((smooth = false) => {
     const el = box.current;
@@ -69,9 +121,15 @@ export function Scrollback({
   const onScroll = () => {
     const el = box.current;
     if (!el) return;
+    if (jumping.current) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_PX;
     stuck.current = atBottom;
     setAway(!atBottom);
+    if (landed) {
+      const at = whereIs(el, landed.messageId);
+      if (at === "in view") setLanded(null);
+      else if (landed.above !== (at === "above")) setLanded({ ...landed, above: at === "above" });
+    }
   };
 
   const nothing = conv.messages.length === 0 && pendingPlayer === null && !live;
@@ -89,54 +147,111 @@ export function Scrollback({
           {nothing ? (
             empty
           ) : (
-            <ol className="space-y-7">
-              {conv.messages.map((m) => (
-                <li key={m.id} id={m.id}>
-                  <MessageItem
-                    message={m}
-                    brain={m.author.type === "brain" ? brains.get(m.author.brainId) : undefined}
-                    isLast={m === last && !atBottom && pendingPlayer === null}
-                    canRegenerate={m === last && canRegenerate}
-                    live={m.id === inSlot ? live! : undefined}
-                    busy={chat.busy}
-                    actions={chat.actions}
-                    aspect={aspect}
-                    onPreviewRegenerate={onPreviewRegenerate}
-                    onDismissLive={chat.dismissLive}
-                  />
-                </li>
-              ))}
-              {pendingPlayer !== null && (
-                <li>
-                  <PlayerBubble pending>
-                    <Markdown text={pendingPlayer} />
-                  </PlayerBubble>
-                </li>
-              )}
-              {atBottom && (
-                <li>
-                  <LiveReply
-                    live={atBottom}
-                    brain={atBottom.brainId ? brains.get(atBottom.brainId) : undefined}
-                    aspect={aspect}
-                    onRetry={onRetry}
-                    onDismiss={chat.dismissLive}
-                  />
-                </li>
-              )}
-            </ol>
+            <GalleryContext value={gallery}>
+              <ol className="space-y-7">
+                {conv.messages.map((m) => (
+                  <li key={m.id} id={m.id}>
+                    <MessageItem
+                      message={m}
+                      brain={m.author.type === "brain" ? brains.get(m.author.brainId) : undefined}
+                      isLast={m === last && !atBottom && pendingPlayer === null}
+                      canRegenerate={m === last && canRegenerate}
+                      live={m.id === inSlot ? live! : undefined}
+                      busy={chat.busy}
+                      actions={chat.actions}
+                      aspect={aspect}
+                      onPreviewRegenerate={onPreviewRegenerate}
+                      onDismissLive={chat.dismissLive}
+                    />
+                  </li>
+                ))}
+                {pendingPlayer !== null && (
+                  <li>
+                    <PlayerBubble pending>
+                      <Markdown text={pendingPlayer} />
+                    </PlayerBubble>
+                  </li>
+                )}
+                {atBottom && (
+                  <li>
+                    <LiveReply
+                      live={atBottom}
+                      brain={atBottom.brainId ? brains.get(atBottom.brainId) : undefined}
+                      aspect={aspect}
+                      onRetry={onRetry}
+                      onDismiss={chat.dismissLive}
+                    />
+                  </li>
+                )}
+              </ol>
+            </GalleryContext>
           )}
         </div>
       </div>
-      {away && (
-        <button
-          type="button"
-          onClick={() => toBottom(true)}
-          className="absolute bottom-4 left-1/2 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-line-strong bg-raised/95 px-3 py-1.5 text-[12.5px] text-muted shadow-lg shadow-black/40 backdrop-blur transition-colors hover:text-fg"
-        >
-          <ArrowDown aria-hidden className="size-3.5" /> Latest
-        </button>
-      )}
+      {/* Just right of the text column when there is room (centered, it sat on image captions). */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-3 mx-auto flex w-full max-w-[54rem] items-end justify-end gap-2 px-4">
+        {landed && (
+          <div
+            role="status"
+            className="pointer-events-auto mr-auto ml-auto inline-flex items-center gap-0.5 rounded-full border border-line-strong bg-raised/95 py-0.5 pr-0.5 pl-1 text-[12.5px] shadow-lg shadow-black/40 backdrop-blur"
+          >
+            <button
+              type="button"
+              onClick={showLanded}
+              className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-muted transition-colors hover:text-fg"
+            >
+              <ImageIcon aria-hidden className={landed.failed ? "size-3.5 text-red-300" : "size-3.5"} />
+              {landed.failed ? `${landed.brainName}'s picture couldn't be made` : `${landed.brainName}'s picture is ready`}
+              {landed.above ? <ArrowUp aria-hidden className="size-3.5" /> : <ArrowDown aria-hidden className="size-3.5" />}
+            </button>
+            <button
+              type="button"
+              onClick={() => setLanded(null)}
+              aria-label="Dismiss"
+              className="grid size-6 place-items-center rounded-full text-faint transition-colors hover:bg-hover hover:text-fg"
+            >
+              <X aria-hidden className="size-3" />
+            </button>
+          </div>
+        )}
+        {away && (
+          <button
+            type="button"
+            onClick={() => toBottom(true)}
+            aria-label="Latest"
+            title="Jump to the latest"
+            className="pointer-events-auto grid size-9 shrink-0 place-items-center rounded-full border border-line-strong bg-raised/95 text-muted shadow-lg shadow-black/40 backdrop-blur transition-colors hover:text-fg"
+          >
+            <ArrowDown aria-hidden className="size-4" />
+          </button>
+        )}
+      </div>
     </div>
   );
+}
+
+/** Where a message is, seen from the scroll box: at least partly on screen, or above or below it. */
+function whereIs(box: HTMLElement | null, id: string): "in view" | "above" | "below" {
+  const el = document.getElementById(id);
+  if (!box || !el) return "in view"; // nothing to point at
+  const b = box.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  return r.bottom <= b.top + 40 ? "above" : r.top >= b.bottom - 40 ? "below" : "in view";
+}
+
+/** Every finished picture in ledger order (each image message's active version), for the large view's ← →. */
+function galleryOf(conv: Conversation): GalleryItem[] {
+  const brains = new Map(conv.brains.map((b) => [b.id, b]));
+  const items: GalleryItem[] = [];
+  for (const m of conv.messages) {
+    const v = m.kind === "image" ? m.versions[m.activeVersion] : undefined;
+    if (!v?.image || v.image.status !== "done") continue;
+    items.push({
+      image: v.image,
+      prompt: v.content,
+      brain: m.author.type === "brain" ? brains.get(m.author.brainId) : undefined,
+      label: m.versions.length > 1 ? `version ${m.activeVersion + 1} of ${m.versions.length}` : undefined,
+    });
+  }
+  return items;
 }

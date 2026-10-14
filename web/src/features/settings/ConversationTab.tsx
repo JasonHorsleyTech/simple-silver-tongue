@@ -1,10 +1,11 @@
-import { Trash2 } from "lucide-react";
+import { CopyPlus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
 import type { Conversation, ConversationUpdate, ModelInfo } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
+import { Segmented } from "../../components/Segmented.tsx";
 import { SavedLine } from "../../components/SavedLine.tsx";
 import { Spinner } from "../../components/Spinner.tsx";
 import { navigate } from "../../lib/router.tsx";
@@ -14,7 +15,7 @@ import { ImageSettings } from "./ImageSettings.tsx";
 
 /**
  * The conversation itself: title, the text and image models (one each, from Venice's live list), the reply
- * limits every brain shares, how images are made (size, format, watermark, negative prompt), and delete. A
+ * limits every brain shares, how images are made (size, format, watermark, negative prompt), clone (T07) and delete. A
  * model change applies to the next request of every brain, and to the next image.
  */
 export function ConversationTab({
@@ -124,6 +125,8 @@ export function ConversationTab({
         />
       </section>
 
+      <CloneConversation conv={conv} />
+
       <dl className="text-[13px]">
         <div className="flex gap-2">
           <dt className="w-24 shrink-0 text-faint">Conversation id</dt>
@@ -133,6 +136,91 @@ export function ConversationTab({
 
       <DeleteConversation conv={conv} busy={busy} />
     </div>
+  );
+}
+
+/**
+ * T07: a new conversation from this one (conversation.clone). "Setup only" is a fresh start on the same table
+ * (brains, setup messages, templates, settings): the "we're doing Pathfinder" case. "With the story" copies the
+ * ledger too, every version and image: a branch to try something else. This conversation is left as it is.
+ */
+function CloneConversation({ conv }: { conv: Conversation }) {
+  const [title, setTitle] = useState("");
+  const [what, setWhat] = useState<"setup" | "all">("setup");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const n = conv.messages.length;
+  const images = conv.messages.filter((m) => m.kind === "image").length;
+
+  async function clone() {
+    if (pending) return;
+    setPending(true);
+    setError(null);
+    try {
+      const copy = await api.call("conversation.clone", {
+        id: conv.id,
+        ...(title.trim() ? { title: title.trim() } : {}),
+        ...(what === "setup" ? { withoutMessages: true } : {}),
+      });
+      void refreshConversations();
+      navigate(`/c/${copy.id}`);
+    } catch (err) {
+      setError(errorMessage(err));
+      setPending(false);
+    }
+  }
+
+  return (
+    <section aria-labelledby="cv-clone-h" className="space-y-3.5 rounded-xl border border-line bg-raised/25 p-4">
+      <div>
+        <h4 id="cv-clone-h" className="text-[13px] font-semibold text-fg">
+          Clone this campaign
+        </h4>
+        <p className="mt-0.5 text-[12.5px] leading-5 text-faint">
+          A new conversation with the same brains, setup messages, templates and settings. This one stays as it is.
+        </p>
+      </div>
+      <div>
+        <label htmlFor="cv-clone-title" className="mb-1 block text-[13px] font-medium text-fg">
+          Title
+        </label>
+        <input
+          id="cv-clone-title"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void clone();
+            }
+          }}
+          maxLength={200}
+          autoComplete="off"
+          placeholder={`${conv.title} (copy)`.slice(0, 200)}
+          className="h-9 w-full rounded-lg border border-line-strong bg-raised px-2.5 text-[13.5px] text-fg outline-none placeholder:text-faint focus:border-focus/60 focus:ring-3 focus:ring-focus/15"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Segmented<"setup" | "all">
+          label="What comes along"
+          value={what}
+          onChange={setWhat}
+          options={[
+            { value: "setup", label: "Setup only" },
+            { value: "all", label: "With the story" },
+          ]}
+        />
+        <p className="text-[12.5px] leading-5 text-faint">
+          {what === "setup"
+            ? "No messages: a fresh start at the same table. Then edit the World Bible and prompts to suit."
+            : `All ${n} message${n === 1 ? "" : "s"} too, with every version${images ? " and image" : ""}: a branch to try something else.`}
+        </p>
+      </div>
+      {error && <Notice tone="error">{error}</Notice>}
+      <Button size="sm" variant="secondary" loading={pending} onClick={() => void clone()}>
+        {!pending && <CopyPlus aria-hidden className="size-3.5" />} Clone and open it
+      </Button>
+    </section>
   );
 }
 

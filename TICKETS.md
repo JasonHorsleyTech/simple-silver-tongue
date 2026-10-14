@@ -211,7 +211,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T07: D&D acceptance, example campaign and polish · `frontend`
+## T07: D&D acceptance, example campaign and polish · `done`
 
 **Engineer scope**
 - `examples/dnd-tavern.json` (committed) with GM (default), Dice Master, Joke Teller, Scene Painter (image) and Character Portraitist (image), a World Bible setup message, a hand-authored GM opener, and sensible templates.
@@ -250,3 +250,4 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 **Deferred in:**
 - T07 QA-7 → handover (orchestrator): the 28 `dev-*`/`qa-*` users in `data/users/` stay for the frontend pass, which needs `dev-` users; clear them before Jason's first login (the `find ... -exec rm -rf {} +` above). T07 triage added and removed only `dev-t07-triage`.
+  - **Done in the T07 frontend handover:** every `dev-*`/`qa-*` user deleted with `./ss user.delete`; the frontend pass played in a scratch data dir (report: `reports/T07-frontend.md`).

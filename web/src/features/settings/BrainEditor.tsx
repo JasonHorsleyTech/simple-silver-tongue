@@ -2,7 +2,7 @@ import { Braces, Plus, Star, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import { BRAIN_COLORS, REASONING_NOTE, type Brain, type BrainFields, type ModelInfo } from "../../api/types.ts";
+import { BRAIN_COLORS, REASONING_NOTE, STOP_REASONING_NOTE, type Brain, type BrainFields, type ModelInfo } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { SavedLine } from "../../components/SavedLine.tsx";
@@ -11,10 +11,11 @@ import { Segmented } from "../../components/Segmented.tsx";
 import { Spinner } from "../../components/Spinner.tsx";
 import { Switch } from "../../components/Switch.tsx";
 import { cx } from "../../lib/cx.ts";
+import { StopSequences } from "./StopSequences.tsx";
 
 /**
  * One brain, in full: who it is (name, color, kind, default), then every text that shapes what it is sent
- * (system prompt, reasoning, final reminder, and an image brain's safe mode and tool text), then delete.
+ * (system prompt, reasoning, final reminder, stop sequences, and an image brain's safe mode and tool text), then delete.
  * Long texts save on purpose (Save / ⌘ Enter); switches, colors and kind save on click.
  */
 export function BrainEditor({
@@ -197,6 +198,7 @@ export function BrainEditor({
               </div>
             )}
             <Notice tone="warn">{REASONING_NOTE}</Notice>
+            {brain.stop.length > 0 && <Notice tone="warn">{STOP_REASONING_NOTE}</Notice>}
           </>
         )}
       </div>
@@ -222,6 +224,8 @@ export function BrainEditor({
           />
         )}
       </div>
+
+      <StopSequences brain={brain} busy={busy === "stop"} onSave={(stop) => void update({ stop }, "stop")} />
 
       {brain.kind === "image" && (
         <div className="space-y-5 rounded-lg border border-line bg-canvas/40 p-3.5">

@@ -15,6 +15,12 @@ import { endedError, type Session } from "./sessions.ts";
 export const SESSION_COOKIE = "ss_session";
 
 export type Logger = (line: string) => void;
+/**
+ * A visible browser tab asks these every 30 s (T06), two log lines a minute per window. A successful one says
+ * nothing a log reader needs, so only their failures are logged (T07 frontend).
+ */
+const QUIET_PATHS = new Set(["/api/auth.whoami", "/api/health"]);
+
 export const consoleLogger: Logger = (line) => console.log(`${new Date().toISOString()} ${line}`);
 
 /**
@@ -38,6 +44,7 @@ export function createApp(base: Omit<Deps, "commands">, commands: AnyCommand[], 
     }
     const t0 = performance.now();
     await next();
+    if (QUIET_PATHS.has(c.req.path) && c.res.status < 300) return;
     log(`${c.req.method} ${c.req.path} ${c.res.status} ${Math.round(performance.now() - t0)}ms`);
   });
 

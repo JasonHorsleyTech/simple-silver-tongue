@@ -1,5 +1,5 @@
 import { ArrowRight, Lock, LockOpen } from "lucide-react";
-import { useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
 import { useUser } from "../../app/session.tsx";
@@ -9,13 +9,14 @@ import { Notice } from "../../components/Notice.tsx";
 import { TextArea } from "../../components/TextArea.tsx";
 import { TextField } from "../../components/TextField.tsx";
 import { navigate } from "../../lib/router.tsx";
+import { ExampleCampaigns } from "./ExampleCampaigns.tsx";
 import { refreshConversations } from "./store.ts";
 
 /** Pre-filled so starting is one click, but it is only a suggestion: it is sent exactly as it reads here. */
 export const DEFAULT_SYSTEM_PROMPT = "You are a thoughtful, concise assistant. Format your answers in Markdown.";
 
 /**
- * "/" when logged in: start a conversation. The system prompt is required (design.md hard rule 1: never
+ * "/" when logged in: start a conversation, from an example campaign (T07) or from scratch. The system prompt is required (design.md hard rule 1: never
  * send a request without a user-written system message) and is sent verbatim; nothing else is added.
  */
 export function NewConversationView() {
@@ -25,6 +26,12 @@ export function NewConversationView() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const blank = systemPrompt.trim() === "";
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+
+  // Ready to type, without scrolling the example campaigns above it out of view.
+  useEffect(() => {
+    promptRef.current?.focus({ preventScroll: true });
+  }, []);
 
   async function submit(e?: FormEvent) {
     e?.preventDefault();
@@ -54,14 +61,20 @@ export function NewConversationView() {
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col justify-center px-5 py-12 sm:px-8">
-      <div className="mb-8">
+      <div className="mb-7">
         <LogoMark size={36} />
         <h1 className="mt-5 text-[22px] font-semibold tracking-tight text-silver-hi">New conversation</h1>
-        <p className="mt-1.5 text-[14px] leading-6 text-muted">
-          Write the system prompt yourself. It is sent exactly as written, as the first message of every request, and nothing else is
-          added.
-        </p>
+        <p className="mt-1.5 text-[14px] leading-6 text-muted">Start a ready-made campaign, or write your own system prompt.</p>
       </div>
+
+      <section aria-label="Example campaigns" className="mb-9">
+        <ExampleCampaigns />
+      </section>
+
+      <h2 className="mb-1 text-[11px] font-semibold tracking-[0.08em] text-faint uppercase">From scratch</h2>
+      <p className="mb-5 text-[13.5px] leading-6 text-muted">
+        Write the system prompt yourself. It is sent exactly as written, as the first message of every request, and nothing else is added.
+      </p>
 
       <form onSubmit={submit} onKeyDown={submitOnModEnter} noValidate className="space-y-5">
         {error && <Notice tone="error">{error}</Notice>}
@@ -80,7 +93,7 @@ export function NewConversationView() {
           label="System prompt"
           value={systemPrompt}
           onChange={(e) => setSystemPrompt(e.target.value)}
-          autoFocus
+          ref={promptRef}
           maxPx={360}
           aria-invalid={blank || undefined}
         />

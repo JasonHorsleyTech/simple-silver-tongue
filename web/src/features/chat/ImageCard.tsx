@@ -1,5 +1,5 @@
-import { Download, Expand, ImageOff, Paintbrush, PenLine, RotateCw, ShieldOff, X } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { ChevronLeft, ChevronRight, Download, Expand, ImageOff, Paintbrush, PenLine, RotateCw, ShieldOff, X } from "lucide-react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { api } from "../../api/client.ts";
 import type { Brain, Conversation, ImageRecord, MessageVersion } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
@@ -19,6 +19,13 @@ import { BrainBadge } from "./BrainBadge.tsx";
  *   failed               the server's words, Retry, and the last image if there was one
  * Images are fetched with GET /api/image.get (decrypted by the server for an encrypted user, never cached).
  */
+
+/**
+ * T07: every finished image in the conversation, top to bottom (each image message's active version), so the
+ * large view can step from one to the next (← →). Scrollback provides it.
+ */
+export type GalleryItem = { image: ImageRecord; prompt: string; brain?: Brain; label?: string };
+export const GalleryContext = createContext<GalleryItem[]>([]);
 
 /** Natural sizes of images already shown, by id: a remounted image takes its space at once. Memory only. */
 const sizes = new Map<string, Aspect>();
@@ -77,6 +84,7 @@ export function ImageBody({
   onEdit(): void;
 }) {
   const img = v.image;
+  const gallery = useContext(GalleryContext);
   const [open, setOpen] = useState(false);
   const [working, setWorking] = useState<null | "repaint" | "unblur">(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -193,7 +201,14 @@ export function ImageBody({
         </p>
       )}
       {editor ?? <PromptCaption text={v.content} />}
-      {open && shown && <ImageLightbox image={shown} prompt={v.content} brain={brain} label={versionLabel} onClose={() => setOpen(false)} />}
+      {open && shown && (
+        <ImageLightbox
+          // The conversation's pictures, starting at this one; a picture the gallery doesn't hold (the last good one beside a failure) alone.
+          items={gallery.some((g) => g.image.id === shown.id) ? gallery : [{ image: shown, prompt: v.content, brain, label: versionLabel }]}
+          startId={shown.id}
+          onClose={() => setOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -439,11 +454,22 @@ export function PromptCaption({ text, live, dim }: { text: string; live?: boolea
   );
 }
 
-/** The image as large as the window allows, with its prompt and a download. Escape or a click outside closes it. */
-function ImageLightbox({ image, prompt, brain, label, onClose }: { image: ImageRecord; prompt: string; brain?: Brain; label?: string; onClose(): void }) {
+/**
+ * The image as large as the window allows, with its prompt and a download. With more than one picture in the
+ * conversation, ‹ › (or ← →) step through them in ledger order. Escape or a click outside closes it.
+ */
+function ImageLightbox({ items, startId, onClose }: { items: GalleryItem[]; startId: string; onClose(): void }) {
   const ref = useRef<HTMLDialogElement>(null);
   const stage = useRef<HTMLDivElement>(null);
+  const [index, setIndex] = useState(() => Math.max(0, items.findIndex((g) => g.image.id === startId)));
+  const item = items[Math.min(index, items.length - 1)]!;
+  const { image, prompt, brain, label } = item;
+  const many = items.length > 1;
+  const step = (d: number) => setIndex((i) => (i + d + items.length) % items.length);
   const [size, setSize] = useState<Aspect | null>(() => sizes.get(image.id) ?? null);
+  useEffect(() => {
+    setSize(sizes.get(image.id) ?? null);
+  }, [image.id]);
   useEffect(() => {
     const d = ref.current;
     const before = document.activeElement;
@@ -460,6 +486,7 @@ function ImageLightbox({ image, prompt, brain, label, onClose }: { image: ImageR
   const facts = [image.model, size && `${size.w} × ${size.h}`, image.costUsd !== undefined && formatUsd(image.costUsd), image.blurred && "blurred by safe mode"]
     .filter(Boolean)
     .join(" · ");
+  const arrow = "absolute top-1/2 z-10 grid size-11 -translate-y-1/2 place-items-center rounded-full bg-white/[0.08] text-white/75 ring-1 ring-white/10 transition-colors hover:bg-white/15 hover:text-white";
   return (
     <dialog
       ref={ref}
@@ -468,14 +495,35 @@ function ImageLightbox({ image, prompt, brain, label, onClose }: { image: ImageR
         e.preventDefault();
         onClose();
       }}
+      onKeyDown={(e) => {
+        if (!many || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+        e.preventDefault();
+        step(e.key === "ArrowLeft" ? -1 : 1);
+      }}
       onClick={(e) => {
         if (e.target === ref.current || (e.target as HTMLElement).dataset.backdrop !== undefined) onClose();
       }}
       className="m-0 h-dvh max-h-none w-dvw max-w-none bg-transparent p-0 text-fg backdrop:bg-black/85 backdrop:backdrop-blur-sm"
     >
-      <div ref={stage} tabIndex={-1} data-backdrop className="flex h-full flex-col items-center justify-center gap-3 px-4 py-4 outline-none sm:px-8">
+      {many && (
+        <>
+          <button type="button" onClick={() => step(-1)} aria-label="Previous image" title="Previous image (←)" className={cx(arrow, "left-3 sm:left-5")}>
+            <ChevronLeft aria-hidden className="size-6" />
+          </button>
+          <button type="button" onClick={() => step(1)} aria-label="Next image" title="Next image (→)" className={cx(arrow, "right-3 sm:right-5")}>
+            <ChevronRight aria-hidden className="size-6" />
+          </button>
+        </>
+      )}
+      <div
+        ref={stage}
+        tabIndex={-1}
+        data-backdrop
+        className={cx("flex h-full flex-col items-center justify-center gap-3 py-4 outline-none", many ? "px-16 sm:px-20" : "px-4 sm:px-8")}
+      >
         {/* As large as the window allows, whatever the file's own size: the height left after the caption, or the full width. */}
         <img
+          key={image.id}
           src={imageUrl(image.id)}
           alt={prompt}
           onLoad={(e) => {
@@ -492,6 +540,11 @@ function ImageLightbox({ image, prompt, brain, label, onClose }: { image: ImageR
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             {brain && <BrainBadge name={brain.name} color={brain.color} />}
             {label && <span className="text-[12px] text-muted tabular-nums">{label}</span>}
+            {many && (
+              <span className="text-[12px] text-muted tabular-nums">
+                {index + 1} of {items.length}
+              </span>
+            )}
             <span className="min-w-0 truncate text-[12px] text-faint tabular-nums">{facts}</span>
             <span className="ml-auto flex items-center gap-1">
               <a

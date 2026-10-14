@@ -29,7 +29,17 @@ export type { Brain, BrainTool, ChatMessage, ChatRequest, Conversation, ImageRec
  * isn't stopped), the reasoning warning, the badge palette new brains get their colors from, and the setup
  * message pre-fill's default label.
  */
-export { BRAIN_COLORS, DEFAULT_SETUP_LABEL, IMAGE_STOP_NOTE, REASONING_NOTE, STOP_BILL_NOTE } from "../../../src/conversations/wording.ts";
+export {
+  BRAIN_COLORS,
+  DEFAULT_SETUP_LABEL,
+  FRAMING_STOP,
+  IMAGE_STOP_NOTE,
+  MAX_STOPS,
+  REASONING_NOTE,
+  STOP_BILL_NOTE,
+  STOP_REASONING_NOTE,
+  stopNote,
+} from "../../../src/conversations/wording.ts";
 
 /**
  * T06 triage: the server ends a session after `minutes` without activity, `secondsLeft` from now if nothing uses it
@@ -145,6 +155,17 @@ export type BrainUpdate = BrainFields & { conversation: string; brain?: string }
 /** Every setup command answers with the whole ordered list: replace conv.setup with it. */
 export type SetupListing = { conversationId: string; setup: SetupMessage[]; changed?: string; deleted?: string };
 
+/** examples.list (T07): a committed campaign in examples/, ready to import. `error`: the file can't be imported. */
+export type ExampleInfo = {
+  name: string;
+  title: string;
+  about?: string;
+  brains: Array<{ name: string; kind: Brain["kind"]; color?: string }>;
+  setup: string[];
+  messages: number;
+  error?: string;
+};
+
 /** For commands that take no arguments: they can then be called as api.call("auth.whoami"). */
 export type NoArgs = Record<string, never>;
 
@@ -169,6 +190,15 @@ export type Commands = {
   "conversation.get": { args: { id: string }; result: Conversation };
   "conversation.update": { args: ConversationUpdate; result: Conversation };
   "conversation.delete": { args: { id: string }; result: { deleted: string } };
+  /** T07: the committed example campaigns. No login needed. */
+  "examples.list": { args: NoArgs; result: { examples: ExampleInfo[] } };
+  /** T07: a new conversation from an example (or a campaign document): its brains, setup, templates, settings and opening. */
+  "conversation.import": {
+    args: { example?: string; campaign?: Record<string, unknown>; title?: string; withoutMessages?: boolean };
+    result: Conversation;
+  };
+  /** T07: a new conversation from one of yours: same brains, setup, templates and settings; the ledger and images too unless withoutMessages. */
+  "conversation.clone": { args: { id: string; title?: string; withoutMessages?: boolean }; result: Conversation };
   "brain.update": { args: BrainUpdate; result: Brain };
   /** Without color: the first unused badge color. Without finalReminder: on, pre-filled with REMINDER_EXAMPLE. */
   "brain.add": { args: BrainFields & { conversation: string; name: string; systemPrompt: string }; result: Brain };
