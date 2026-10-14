@@ -4,7 +4,7 @@ Each ticket goes through the four-pass loop in AGENTS.md: Engineer, QA, Triage &
 
 **Scope bullets describe outcomes. Method details in them are suggestions** (see "How we delegate" in AGENTS.md). Acceptance bullets are the real bar.
 
-Jason's checkpoints map onto tickets like this: CP1 → T02, CP2 → T03, CP3 → T04, CP4 → T05, CP5 → T01 + T06, and the final D&D acceptance → T07.
+Jason's checkpoints map onto tickets like this: CP1 → T02, CP2 → T03, CP3 → T04, CP4 → T05, CP5 → T01 + T06, and the final D&D acceptance → T07. T08 (hidden notes), T09 (dice rolls) and T10 (presets) came after the acceptance (Jason, 2026-10-14). T10 builds on both, so they run in that order.
 
 ---
 
@@ -251,3 +251,137 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 **Deferred in:**
 - T07 QA-7 → handover (orchestrator): the 28 `dev-*`/`qa-*` users in `data/users/` stay for the frontend pass, which needs `dev-` users; clear them before Jason's first login (the `find ... -exec rm -rf {} +` above). T07 triage added and removed only `dev-t07-triage`.
   - **Done in the T07 frontend handover:** every `dev-*`/`qa-*` user deleted with `./ss user.delete`; the frontend pass played in a scratch data dir (report: `reports/T07-frontend.md`).
+
+---
+
+## T08: Hidden notes · `todo`
+
+Jason, 2026-10-14: brains need a way to write text that every brain reads but the player only sees on purpose. The T10 Character Creator answers with nothing else: a full character sheet, secrets included, that the GM and the Character Actor work from and the player must not read by accident. Any brain may keep notes this way (a GM's plans, what a clue really means), and so may the player.
+
+**This doesn't bend hard rule 1.** A hidden note is ordinary ledger text. It is sent verbatim to every brain, it is in `prompt.preview`, the message editor shows it raw, and the scrollback shows it one click away. It is *folded*, not secret from the user. Nothing changes in `buildRequest`.
+
+**The convention (suggestion):** a fenced code block whose info string is `hidden`:
+
+````markdown
+```hidden
+Name: ...
+Secret: ...
+```
+````
+
+Why a fence: models write fences reliably, Markdown parses it without HTML, and a line scanner can find it in the terminal. The alternatives fit badly here. The scrollback shows raw HTML as literal text on purpose (`remarkVisibleHtml`, T02), so `<details>` would print as tags. HTML comments are already the framing language (`<!-- from: ... -->`, which the stop sequences cut). Spoiler syntax (`||...||`) is inline only and isn't Markdown. If the code shows a better form, take it and say why. Engineer's call: whether `~~~hidden` counts too; whether an optional label after the word (```` ```hidden character sheet ````) is shown on the fold, or would spoil too much; and what a note that itself needs a code fence should do.
+
+**Engineer scope**
+- One definition of "a hidden block" that the terminal and the browser agree on: fence forms, case, and an unclosed fence, which runs to the end of the message (that is also what a streaming reply looks like). A small dependency-free module the web can import, as it imports `wording.ts`, is one way.
+- The terminal folds them too. The human output of `conversation.get` and `message.get` shows a one-line marker in place of each hidden block, saying how big it is and how to see it. `turn`, `message.regenerate` and `generation.follow` print the marker instead of streaming the hidden text. A CLI-side `--reveal` shows everything, and `--json` is always the raw text.
+- A mock trigger (say `MOCK_HIDDEN`) whose reply contains a hidden block, so tests and the frontend pass need no live call.
+- design.md: a short "Hidden notes" section with the convention, why it is folded rather than hidden, and the fact that every brain sees it.
+- One live check, one or two calls: a brain whose system prompt says to put its notes in a hidden block does so on `deepseek-v4-1-flash`.
+
+**Acceptance**
+- Mock: a brain reply with a hidden block. `conversation.get` shows the marker, `--reveal` and `--json` show the text, and a streaming `turn` never prints it.
+- `prompt.preview --brain <another brain>` has the hidden text verbatim, framed as usual.
+- Unit tests cover the rule's edge cases: unclosed, inside a list or a quote, two blocks in one message, a block that is the whole message.
+
+**Frontend scope:** In the scrollback, a hidden block renders as a quiet folded bar that says it is hidden and how much (e.g. "Hidden · 14 lines"). Never show a peek at the text: a character's secrets are the point. A click (or Enter) unfolds it, rendered as Markdown, and another click folds it. Every page load starts folded. A message that is all hidden (the Character Creator's) is its badge plus the bar, not an "empty reply". A reply streaming into a hidden block shows the bar growing, never the text. Editing shows the raw source, as always, and the payload view stays raw.
+
+**Deferred in:** *(none yet)*
+
+---
+
+## T09: Dice rolls · `todo`
+
+Jason, 2026-10-14: a button that rolls a real d20 and sends it to a brain. The server's random number generator rolls it, never a model. The result goes into the ledger as a message every brain reads, and then the brain the player picked answers the conversation. Here is the loop it serves, with T10's Show Me the Odds brain:
+1. The player sends "I try to talk the hooded figure down to half price" to Show Me the Odds.
+2. Show Me the Odds answers with one sentence: "Roll a d20: 15 or higher succeeds, 19 or higher is a hard success, under 15 fails."
+3. The player clicks roll-and-send to the GM. The roll shows in the scrollback ("🎲 d20: 10"), then the GM narrates the failure.
+
+Any brain can be sent a roll, image brains included (Jason: "sure, why not"). It works in every conversation, not only presets, and its wording is editable like everything else.
+
+**It runs on the honor system.** The roll is an ordinary player message: edit it, delete it, regenerate the odds. Nothing guards it, because players don't want to spoil their own fun.
+
+**Engineer scope**
+- Roll a d20 and send it to any brain in one command (e.g. `turn --brain "Game Master" --roll`). The command rolls, saves the roll message and shows it (a CLI line, a stream event before the reply), then the brain answers the whole ledger as in any `turn`. Rolling without asking anyone, just adding the roll to the ledger, is cheap too.
+- d20 only (Jason: "only D20s because that's easy"). Whether the command takes other dice is the engineer's call. The roll is uniform 1-20 from `node:crypto`.
+- The roll is a player message, so every brain sees it framed like any player line. Its wording reaches every model, so it must be editable text (hard rule 1). One way is a new conversation template with a placeholder for the number, defaulting to something like `🎲 I rolled a d20: **{{roll}}**`, edited in the templates editor like the rest. A new template means a `schemaVersion` bump and an upgrade on load, as T07 triage did for `stop`, and campaign files take it too (absent = the default). Keep the roll itself on the message as well (the die and the number), so the scrollback can show it as a roll.
+- If the player typed text too, a roll-and-send can send the text first and then the roll, in one action, or do something simpler: the engineer's call.
+- `prompt.preview` can't know the number before the roll. Decide how a roll-and-send previews honestly (e.g. a sample number and a note saying so), and write it in design.md.
+- Tests:
+  - the rolls are in range, and every face turns up over many rolls;
+  - the roll is framed in every brain's preview;
+  - roll-and-send works with an image brain;
+  - editing the roll's text changes what the next brain sees.
+
+**Acceptance**
+- Mock: `turn --brain "Game Master" --roll` prints the roll, then the reply. Afterwards `prompt.preview --brain "Dice Master"` shows the roll framed as a player line.
+- Live, 2-3 text calls, on a clone of the Gilded Goat:
+  1. The GM names a check.
+  2. The Dice Master gives the target.
+  3. A roll-and-send to the GM gets a narrated outcome that matches the roll.
+
+**Frontend scope:** A d20 control in the composer that works with every send, the big Send and each brain's chip alike. One way is a "🎲 Roll d20" toggle that the next send uses and then switches off. The roll appears in the scrollback at once, before the brain's reply streams in. It looks like a roll (a die and the number), so it stands apart from typed lines. Editing it works like any message, and the new template is in the templates editor.
+
+**Deferred in:** *(none yet)*
+
+---
+
+## T10: Presets · `todo`
+
+Jason, 2026-10-14: typing in a campaign's brains by hand is the slow part. A **preset** is a ready-made kit of brains with good default instructions and no world: no World Bible, no story. You can start a new conversation from one ("Chinatown, film noir": pick the tabletop preset, write the World Bible, play). You can also add any one of a preset's brains to a conversation you already have.
+
+Presets are committed files, edited in the repo like `examples/`. A T07 campaign file already holds everything a preset needs (brains, templates, settings), so a preset is probably a campaign file with no setup or messages, checked by the same `toConversation`. Whether presets get their own folder or are examples flagged as presets is the engineer's call. The browser offers them as "start from a preset" (an empty world), apart from the example campaigns (ready to play).
+
+**Where the words come from.** Sassy Text (`../sassy-text`, Jason's large product) already worked out how to coach models on running a game, acting a character and writing image prompts. **`docs/sassy-text-source.md` holds that text verbatim**: 75 excerpts with source paths, lifted 2026-10-14 from sassy-text `430c28d33`. Adapt it, don't paste it. The current Sassy GM writes JavaScript `actions([...])` of XML bubbles, so keep the coaching and drop the machinery. The older Sassy pipeline (deleted 2026-09-18, quoted from git) was single-job brains writing plain prose, and maps onto this app almost one to one. Where to start:
+- **GM:** §1.1, the charter's "The loop", "Seven turns" and "House law"; also §1.2's "GM advice that *might* apply".
+- **Co-GM:** §2.1 Part one, the old Gatekeeper ("do not answer a question by advancing the plot"), plus §2.2–2.4.
+- **Show Me the Odds:** §2.1 Part two ("When a roll earns its place", "How to design a roll"), without the engine's dice.
+- **Character sheet:** §3.1 `create-character.md` and §4.2 `brief-the-actor.md` (wants / holds / knows).
+- **Acting:** §4.1 `actor.md`.
+- **Images:** §5.1–5.4 ("abundant positives", the "smile-iest smile"), plus §5.9, the image bench's laws (hands, objects in hands, "empty" backfiring).
+- **What to write ourselves:** the **Gaps** list at the end.
+
+**The first preset: "Tabletop RPG"**, genre-free: the World Bible makes it noir or fantasy. Seven brains:
+
+1. **Game Master** (default, text). Narrates in the second person ("You step into the rain"). It narrates only up to the next moment where the player has an interesting choice, or narrates the consequence of the choice the player just made, then stops. It doesn't lead the player, doesn't end every reply with "What do you do?", and never acts, speaks or decides for the player's character. When the last lines are an odds sentence and a roll (T09), it narrates the outcome the roll earned, and never rolls, rerolls or second-guesses it. When the player tries something uncertain without a roll, use the simplest rule that works (e.g. narrate up to the moment before the outcome and stop, as the Gilded Goat's GM does).
+2. **Co-GM** (text). It "sits in the chair next to the GM": it answers the player's questions and fills in details ("That looks like about a 40-foot drop"), and does nothing else. It doesn't move the plot, introduce events or narrate the player doing anything, and it doesn't reveal what the player's character couldn't know.
+3. **Show Me the Odds** (text). Given the player's latest action, it answers with one plain sentence, no tool call and no narration. The sentence is one of three: no chance ("There's no chance of that"), no roll needed, or a d20 target with its bands ("Roll a d20: 15 or higher succeeds, 19 or higher is a hard success, under 15 fails"). The player then rolls with T09's button and sends the roll to the GM.
+4. **Character Creator** (text). It answers only with one hidden block (T08): the full sheet of the most recently introduced character, or of the one the player's note points to (an empty turn means the most recent). The sheet covers name, age, appearance (detailed enough to paint), race or ancestry, religion or beliefs, personality, flaws, hopes and fears, voice and speech habits, what they want right now, what they know and don't, secrets and relationships. Sassy's shipped card is smaller: surface, underneath and observable "tells", plus the actor's wants / holds / knows (§3.1, §4.2; Gaps 3). Blend the two, and judge the sheet by how well the Character Actor plays from it. It stays consistent with the World Bible and the story so far.
+5. **Character Actor** (text). It fully embodies the character the player is talking to or dealing with, whether named in the note or implied. It rereads that character's hidden sheet, knowing the player hasn't seen it. It weighs what the character wants, fears and hopes for, what the character knows that the player doesn't, and the reverse. Then it answers **in the first person, as that character only**, and makes clear who is speaking. It never narrates the world or the player's character. Jason wants it to "think hard". Reasoning on is the obvious way, but mind the T07 triage lesson: Venice applies stop sequences to the reasoning too, so a brain that thinks about the framing can end with no reply. Decide on live evidence, and say why.
+6. **Scene Painter** (image). Paints the scene just described, taking the people's looks from their sheets. A scene with several people in it is a gap in the source (Gaps 1), so write that part.
+7. **Character Portraitist** (image). Paints the most recently mentioned character, or the one the player's note points to, from their sheet.
+
+Rules for every brain:
+- It knows the hidden-note convention: sheets are there and the player hasn't seen them, so use them, don't recite them. Text brains may keep their own notes the same way.
+- It never writes `<!-- from: ... -->` itself (T07 lesson), and text brains keep their stop sequences.
+- **An image brain's prompt is shown to the player as the image caption**, so it describes only what can be seen, never a secret from a sheet.
+- Image prompts follow the craft in the source: an abundance of positives, no negatives (a model paints whatever you name), and balanced expressions (ask for "happy" and you get "the happiest happy that ever happied"), plus the rest of what the source teaches.
+
+**Secrets can leak, and that's accepted** (Jason, 2026-10-14: this is the light version). Every brain reads every hidden sheet, whereas in Sassy an actor saw only its own brief. Use Sassy's craft to keep leaks rare, and build nothing to stop them. The key piece of craft: write holds as what is kept, what would open it and why, never as "never mention X", which puts X on the tip of the actor's tongue (§4.2).
+
+**Engineer scope**
+- The preset file and three abilities:
+  - list presets (no login, like `examples.list`);
+  - start a conversation from one (with a title; no setup, no messages);
+  - add one brain from a preset to an existing conversation: the whole brain, meaning prompt, reminder, kind, reasoning, stop, tool text and safe mode. A name clash is the usual 409, and a rename flag fixes it. Letting the same command add a brain from an example campaign too (the Gilded Goat's Dice Master) is cheap and useful.
+- Adding one brain doesn't bring the preset's templates. Write the brains so they work under any conversation's templates, or have the add say what it leaves behind.
+- Tune the seven prompts live against a made-up scenario, as an encrypted `dev-` user, using T07's method from the lessons (preview, then one non-streaming POST, nothing saved). Budget, approved by Jason: up to ~30 live text calls, plus the usual 3 images and the $4 floor.
+- Tests: the committed preset imports cleanly (as `test/campaigns.test.ts` does for the example); add-from-preset works and refuses a clash.
+- README: starting from a preset and adding a preset brain. design.md and AGENTS.md as usual.
+- Out of scope: saving your own conversation as a preset. Presets are files in the repo, and any `conversation.get --json` is already a campaign file.
+
+**Acceptance**
+- Mock: the preset list shows the preset. Starting "Chinatown" from it gives seven brains, no setup and no messages. Adding the Character Actor to a clone of the Gilded Goat works, and adding it twice is refused until it is renamed.
+- Live, from the terminal, as an encrypted `dev-` user, with a three-line made-up World Bible. This is Jason's loop:
+  1. "I approach the hooded figure" goes to the GM, which answers in the second person and stops at a choice.
+  2. The Character Creator writes the figure's sheet as one hidden block (folded in `conversation.get`).
+  3. The Character Actor answers in the first person, true to the sheet.
+  4. "I try to talk him down to half price" goes to Show Me the Odds, which answers with one sentence and a d20 target.
+  5. A roll-and-send to the GM (T09) gets the outcome the roll earned.
+  6. The Co-GM answers "how far is the drop?" without moving the story.
+  7. The Portraitist paints the figure from the sheet, with no secret in the prompt.
+
+  Judge whether each brain does its job, not its style.
+
+**Frontend scope:** The new-conversation page offers the presets (title, about, the brains as badges) next to the example campaigns and the from-scratch form. Pick one, give it a title, and the new conversation opens with a pointer to write its World Bible (the Setup tab), since a preset has none. "Add a brain" in settings gets a "From a preset" choice: the preset brains (and the example brains, if the engineer added them), each with one line on its job. The name can be edited before adding, and the new brain's card opens. README to match.
+
+**Deferred in:** *(none yet)*
