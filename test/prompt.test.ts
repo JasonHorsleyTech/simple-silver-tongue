@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { newBrain, newConversation } from "../src/conversations/defaults.ts";
+import { newBrain, newConversation, REMINDER_EXAMPLE } from "../src/conversations/defaults.ts";
 import {
   assertAnswerable,
   assertSendable,
@@ -115,7 +115,9 @@ describe("buildRequest: each brain sees one shared ledger from its own point of 
       },
       { role: "tool", tool_call_id: `call_${img.id}`, content: "It is on screen." },
     ]);
-    assert.equal(body.messages.length, 9, "reminder is on by default for a non-default brain, but blank, so it is skipped");
+    assert.deepEqual(body.messages.at(-1), user(REMINDER_EXAMPLE), "a non-default brain's reminder is on and pre-filled (T04), and goes last");
+    painter.finalReminder.content = "  \n";
+    assert.equal(buildRequest(conv, painter.id, { model: DEEPSEEK }).messages.length, body.messages.length - 1, "a blank reminder is skipped, not sent empty");
     assert.deepEqual(body.tool_choice, { type: "function", function: { name: "generate_image" } });
     assert.deepEqual(body.tools?.[0]?.function, {
       name: "generate_image",

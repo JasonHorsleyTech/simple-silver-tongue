@@ -92,7 +92,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T04: Multiple brains, setup messages and templates (CP3) · `todo`
+## T04: Multiple brains, setup messages and templates (CP3) · `qa`
 
 **Engineer scope**
 - `brain.add` / `.update` / `.delete` / `.set-default`. Delete is refused while the ledger references the brain. (`brain.update` exists since T02 for name, color, system prompt, reasoning and reminder; T04 extends it with kind, tool text and safe mode. The default brain is `conversation.defaultBrainId`.) Kind is locked once the brain has messages. The final reminder is enabled by default on non-default brains, pre-filled with an editable `<!-- System reminder -->` example.
@@ -111,6 +111,16 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 - Adding a third brain mid-conversation and editing the GM's system prompt both work without restarting the conversation.
 
 - **From T03 frontend:** message actions (edit, delete, pager, Regenerate with a steer) work for any brain's message already: `MessageItem` takes the message's own brain, and the in-slot live reply uses it. The composer's Send becomes Stop during any reply (`status` names who is writing); with several brains, pass the replying brain's name, which `useChat`'s live reply already has. `PayloadDialog` takes `request: {kind: "turn", draft} | {kind: "regenerate", messageId, steer}`, so a per-brain payload is `{kind: "turn"}` with that brain.
+
+- **From T04 engineer** (the commands are in; add them to `web/src/api/types.ts`):
+  - `brain.add {conversation, name, systemPrompt, color?, kind?, reasoning?, finalReminder?, safeMode?, tool?}` → `Brain`. Without `color` it gets the first unused badge color; without `finalReminder` it is `{enabled: true, content: REMINDER_EXAMPLE}`, so the editor opens with an example to edit. `REMINDER_EXAMPLE`, `DEFAULT_TOOL`, `DEFAULT_SETUP_LABEL` and `setupPrefill` are in `src/conversations/wording.ts` (dependency-free, like `STOP_BILL_NOTE`), so the web can import the server's own text instead of copying it.
+  - `brain.update` also takes `kind`, `safeMode`, `tool: Partial<BrainTool>`. Errors to show inline: 409 `kind_locked` (the brain has messages: disable the kind picker when `messageCount > 0`), 400 when safe mode or tool text is sent for a text brain, 409 `conflict` for a duplicate name, 400 for the reserved name `player`.
+  - `brain.delete {conversation, brain}` → `{conversationId, deleted, name, brains}`. 409 `brain_in_use` (it has messages: show delete only when unused, as the scope says), 409 `default_brain`, and 409 `conflict` while that brain is writing a reply. `brain.set-default {conversation, brain}` → `Brain`: set `conv.defaultBrainId` to its id.
+  - `brain.list {conversation}` → `{conversationId, defaultBrainId, brains: (Brain & {messageCount})[]}`: the easy way to know which brains may be deleted or change kind.
+  - `setup.list|add|update|move|delete` all return `{conversationId, setup: SetupMessage[], changed?, deleted?}`: replace `conv.setup` with it. `setup.add {conversation, label?, content?, position?}` with no content pre-fills `<!-- This is the <label>. -->` (label default "World Bible"); `setup.move {conversation, setup, position}` is 1-based, so up/down arrows send `index` / `index + 2`. They work mid-reply.
+  - `message.add {conversation, as: "player" | <brain name or id>, content}` → `MessageView`: "write as…" for the GM's opener. 409 while a reply is being generated, like edit.
+  - `turn {conversation, brain, content?}` with empty content just invokes the brain, and a brain with its reminder on always has something to answer. The `start` event's `brainName` says who is writing.
+  - Image brains can be created and edited now, but `turn`, `message.add` and regenerate refuse them (`not_supported`) until T05.
 
 **Frontend scope (T02 built the base: `SettingsPanel`, `BrainEditor`, `TemplatesEditor`, `PayloadDialog`, per-brain `Composer` buttons, `BrainBadge`):** A conversation settings drawer: title, text and image model pickers from `models.list`, reasoning effort, a templates editor, a setup-messages editor (add, reorder, edit, delete), and a brains editor (name, color, kind, system prompt, reasoning on/off + effort, reminder checkbox + text, default, delete only when unused). The composer gets a big Send to the default brain plus a button per other brain. Messages get colored author badges. An "Exact payload" modal per brain renders `prompt.preview`.
 
@@ -134,6 +144,8 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 **Frontend scope:** An image message card showing the prompt (streams in live, collapsible), then a loader, then the image (click to enlarge), or an error with Retry. Editing the prompt keeps the old image dimmed with a spinner until the new one arrives. The image model and size live in the settings drawer. The safe-mode toggle (default on) lives on each image brain.
 - **From T03 frontend:** `MessageItem`'s `BrainBody` is where an image card goes, and `MessageEditor` already edits the active version's `content` (the prompt, for an image message). A steered regenerate of an image message streams into the message's slot through `LiveReply` with `slot`; add `tool_args` (the prompt) and the image events to `useChat`'s one reducer (`apply`, which ignores them today). Edit/delete of image messages are refused by the server until T05 (`not_supported`); the browser shows that message inline.
+
+- **From T04 engineer:** image brains can already be created (`brain.add --kind image`, with `DEFAULT_TOOL` text and `safeMode: true`) and edited (`--tool.*`, `--safe-mode`), and `prompt.preview --brain` shows their forced tool call. `turn`, `message.add --as <image brain>` and `message.regenerate` refuse them with `not_supported`: lift those. Call `gen.forBrain(plan.brain.id)` right after planning in any new generating path, or `assertBrainIdle` keeps every brain "busy" (undeletable) for the whole generation.
 
 **Deferred in:**
 - Mock: add a trigger (e.g. `MOCK_BLURRED` in the prompt, with `safe_mode` on) that answers `x-venice-is-blurred: true`, so the safe-mode UX can be tested for free. The headers already exist, always `false` (T01 QA-7).

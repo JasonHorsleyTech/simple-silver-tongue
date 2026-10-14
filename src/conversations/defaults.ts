@@ -1,10 +1,11 @@
 import { DEFAULT_IMAGE_MODEL, DEFAULT_TEXT_MODEL } from "../config.ts";
 import { newId, nowIso } from "../lib/ids.ts";
-import { SCHEMA_VERSION, type Brain, type Conversation, type Templates } from "./types.ts";
+import { SCHEMA_VERSION, type Brain, type Conversation, type SetupMessage, type Templates } from "./types.ts";
+import { DEFAULT_SETUP_LABEL, DEFAULT_TOOL, REMINDER_EXAMPLE, setupPrefill } from "./wording.ts";
 
 /**
- * Starting values for new conversations and brains. Every string here reaches a model, so each one is
- * stored in the conversation document, shown by prompt.preview and editable by the user.
+ * Starting values for new conversations, brains and setup messages. Every string here reaches a model, so
+ * each one is stored in the conversation document, shown by prompt.preview and editable by the user.
  */
 export const DEFAULT_TEMPLATES: Templates = {
   player: "<!-- from: the user -->\n{{content}}",
@@ -17,21 +18,44 @@ export const DEFAULT_TEMPLATES: Templates = {
 
 export const DEFAULT_BRAIN_NAME = "Assistant";
 
+// The pre-fills (reminder, tool text, setup) are in wording.ts, which has no dependencies, so the web imports them too.
+export { DEFAULT_SETUP_LABEL, DEFAULT_TOOL, REMINDER_EXAMPLE, setupPrefill };
+
 /** Brain badge colors, handed out in order. */
 export const BRAIN_COLORS = ["#60a5fa", "#f59e0b", "#34d399", "#f472b6", "#a78bfa", "#f87171", "#22d3ee", "#a3e635"];
 
-export function newBrain(opts: { name: string; systemPrompt: string; color?: string; isDefault: boolean }): Brain {
-  return {
+/** The first badge color no brain uses yet; once all are taken, they repeat. */
+export function nextColor(conv: Pick<Conversation, "brains">): string {
+  const used = new Set(conv.brains.map((b) => b.color.toLowerCase()));
+  return BRAIN_COLORS.find((c) => !used.has(c)) ?? BRAIN_COLORS[conv.brains.length % BRAIN_COLORS.length]!;
+}
+
+export function newBrain(opts: { name: string; systemPrompt: string; color?: string; isDefault: boolean; kind?: Brain["kind"] }): Brain {
+  const brain: Brain = {
     id: newId("b"),
     name: opts.name,
     color: opts.color ?? BRAIN_COLORS[0]!,
-    kind: "text",
+    kind: opts.kind ?? "text",
     // Off by default: with reasoning on, the provider adds a small hidden instruction (T02 QA-1). On is an opt-in.
     reasoning: { enabled: false, effort: "low" },
     systemPrompt: opts.systemPrompt,
-    // T04 pre-fills an editable example for non-default brains, which have it on by default.
-    finalReminder: { enabled: !opts.isDefault, content: "" },
+    finalReminder: { enabled: !opts.isDefault, content: REMINDER_EXAMPLE },
   };
+  if (brain.kind === "image") makeImageBrain(brain);
+  return brain;
+}
+
+/** What a brain needs to be an image brain: tool text and safe mode (on by default). Existing values are kept. */
+export function makeImageBrain(brain: Brain): void {
+  brain.kind = "image";
+  brain.safeMode ??= true;
+  brain.tool ??= { ...DEFAULT_TOOL };
+}
+
+/** A new setup message, pre-filled with an HTML comment that names it: "<!-- This is the World Bible. -->". */
+export function newSetup(opts: { label?: string; content?: string }): SetupMessage {
+  const label = opts.label ?? DEFAULT_SETUP_LABEL;
+  return { id: newId("s"), label, content: opts.content ?? setupPrefill(label) };
 }
 
 export function newConversation(opts: { title: string; systemPrompt: string; textModel?: string }): Conversation {

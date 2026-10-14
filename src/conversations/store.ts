@@ -109,7 +109,14 @@ async function serialize<T>(key: string, job: () => Promise<T>): Promise<T> {
  * re-attach to it: a reloaded browser tab, or a second terminal (T02 frontend). Consecutive text deltas are
  * merged, so a late follower gets the reply so far in a few events and then the rest live.
  */
-type Generation = { stop: AbortController; startedAt: string; live: Live; settled: Promise<void> };
+type Generation = {
+  stop: AbortController;
+  startedAt: string;
+  live: Live;
+  settled: Promise<void>;
+  /** The brain writing the reply, once the generation has planned it (forBrain). Unknown until then. */
+  brainId?: string;
+};
 type Follower = { queue: StreamEvent[]; wake?: () => void };
 type Live = {
   log: StreamEvent[];
@@ -140,6 +147,11 @@ export type GenerationHandle = {
   keepUpstream(): void;
   /** Pass the generation's events through, recording them for followers (generation.follow). */
   relay(events: AsyncIterable<StreamEvent>): AsyncGenerator<StreamEvent, void, undefined>;
+  /**
+   * Say which brain is writing, right after planning (T04). Until then a brain delete or kind change is refused
+   * for every brain (assertBrainIdle), since the generation may be about to answer as any of them.
+   */
+  forBrain(brainId: string): void;
   release(): void;
 };
 
@@ -192,6 +204,9 @@ export function beginGeneration(vault: Vault, id: string): GenerationHandle {
         end(toErrorBody(err)); // followers get the same error the caller does
         throw err;
       }
+    },
+    forBrain(brainId) {
+      gen.brainId = brainId;
     },
     release() {
       end({ status: 500, body: { code: "internal", message: "The reply ended unexpectedly. Check what was saved." } });
@@ -247,6 +262,19 @@ export function assertLedgerIdle(vault: Vault, id: string): void {
       `Conversation ${id} is busy: a reply is being generated from the messages as they are now. Wait for it to finish, or stop it, then change the messages.`,
     );
   }
+}
+
+/**
+ * A brain can't be deleted, or change kind, while it is writing a reply: the reply isn't in the ledger yet,
+ * so the ledger check alone would let it through, and the save would then add a message by a brain that is
+ * gone (or of the wrong kind). Before the generation has said which brain it is (forBrain), every brain counts
+ * as busy. Call it inside mutateConversation, like assertLedgerIdle (design.md, "The lock and the read must agree").
+ */
+export function assertBrainIdle(vault: Vault, id: string, brain: { id: string; name: string }, doing: string): void {
+  const gen = generations.get(keyOf(vault, id));
+  if (!gen || (gen.brainId !== undefined && gen.brainId !== brain.id)) return;
+  const who = gen.brainId === brain.id ? `${brain.name} is writing a reply right now` : "a reply is just starting";
+  throw conflict(`Can't ${doing} ${brain.name}: ${who}. Wait for it to finish, or stop it, then try again.`);
 }
 
 /**

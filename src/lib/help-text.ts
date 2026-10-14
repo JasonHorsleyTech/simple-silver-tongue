@@ -52,14 +52,21 @@ export function renderCommandHelp(c: CommandInfo): string {
   const props = Object.entries(c.args.properties ?? {});
   const required = new Set(c.args.required ?? []);
   out.push("", props.length ? "Arguments:" : "Arguments: none");
-  const rows = props.map(([key, s]) => {
+  const row = (flag: string, s: JsonSchema, isRequired: boolean, fallback = "") => {
     const flags: string[] = [];
-    if (required.has(key)) flags.push("required");
+    if (isRequired) flags.push("required");
     if (s.default !== undefined) flags.push(`default ${JSON.stringify(s.default)}`);
     if (s.secret) flags.push("prompted (hidden) when omitted");
-    const desc = [s.description, flags.length ? `(${flags.join(", ")})` : ""].filter(Boolean).join(" ");
-    return [`--${kebab(key)}${argLabel(s)}`, desc];
-  });
+    const desc = [s.description ?? fallback, flags.length ? `(${flags.join(", ")})` : ""].filter(Boolean).join(" ");
+    return [`${flag}${argLabel(s)}`, desc];
+  };
+  const rows: string[][] = [];
+  for (const [key, s] of props) {
+    // An object arg also lists its fields, each settable on its own (--final-reminder.content "...").
+    const fields = Object.entries((s.properties ? s : s.anyOf?.find((a) => a.properties))?.properties ?? {});
+    rows.push(row(`--${kebab(key)}`, s, required.has(key), fields.length ? "Any of these fields, as JSON, or one flag each:" : ""));
+    for (const [sub, f] of fields) rows.push(row(`  --${kebab(key)}.${kebab(sub)}`, f, false));
+  }
   const w = Math.max(0, ...rows.map((r) => r[0]!.length));
   for (const [flag, desc] of rows) out.push(`  ${flag!.padEnd(w)}  ${desc}`);
   out.push(

@@ -46,6 +46,7 @@ const regenerateTarget = messageId.optional().describe("The message to regenerat
 export const promptPreview = command({
   name: "prompt.preview",
   description: `Show the exact request body a brain would be sent, built by the same code path as turn and message.regenerate.
+--brain picks the brain (default: the default brain), so you can see the ledger from each one's point of view.
 With --content, it shows what turn --content would send (your message included). With --regenerate (plus
 --message and --steer), it shows what message.regenerate would send instead. Nothing is saved or sent.
 --json prints the body byte for byte as it would go to Venice (minus the auth header), plus notes on text the
@@ -60,6 +61,7 @@ provider adds that we can't show (reasoning on), and the reason the send would b
   }),
   examples: [
     "./ss prompt.preview --conversation c_k3j9x0q2ma",
+    './ss prompt.preview --conversation c_k3j9x0q2ma --brain "Dice Master"',
     './ss prompt.preview --conversation c_k3j9x0q2ma --content "Next message" --json',
     './ss prompt.preview --conversation c_k3j9x0q2ma --regenerate --steer "Make it iambic pentameter."',
   ],
@@ -90,18 +92,21 @@ const turnArgs = z.object({ conversation: conversationId, content, brain: brainR
 
 export const turn = streamCommand({
   name: "turn",
-  description: `Send a message and stream the brain's reply. Both are saved to the conversation.
-Your message is saved once Venice accepts the request. If the reply then fails, your message stays and no
-reply is saved: run turn again without --content to retry. One reply at a time per conversation (409 if busy).
-Without --content the brain answers the ledger as it stands, which is refused when the brain's own reply is
-already the last message (there is nothing new to answer). The reply prints to stdout as it streams;
-reasoning and status lines go to stderr. Another terminal or a reloaded browser can watch it with
-generation.follow.`,
+  description: `Send a message and stream a brain's reply. Both are saved to the conversation.
+--brain picks who answers (a name or an id; default: the conversation's default brain). Any brain can take any
+turn: it sees the whole ledger, its own replies as assistant and everyone else's framed (prompt.preview --brain
+shows exactly what it gets). Without --content the brain just responds to the ledger as it stands; that is
+refused only when its request would end with its own reply (a brain with a final reminder always has one to
+answer). Your message is saved once Venice accepts the request. If the reply then fails, your message stays
+and no reply is saved: run turn again without --content to retry. One reply at a time per conversation (409
+if busy). The reply prints to stdout as it streams; reasoning and status lines go to stderr. Another terminal
+or a reloaded browser can watch it with generation.follow.`,
   args: turnArgs,
   examples: [
     './ss turn --conversation c_k3j9x0q2ma --content "Hello there"',
     "./ss turn --conversation c_k3j9x0q2ma --content @message.md > reply.md",
     "./ss turn --conversation c_k3j9x0q2ma   # no message: the brain just responds",
+    './ss turn --conversation c_k3j9x0q2ma --brain "Dice Master" --content "I swing at the goblin."',
   ],
   async *handler(args, ctx) {
     const gen = beginGeneration(ctx.requireSession().vault, args.conversation); // 409 before any event, so it's a real HTTP status
@@ -118,6 +123,7 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
   const conv = await gen.load(); // through the write queue, so no edit lands between the lock and this read (T03 QA-1)
   const model = await lookupModel(ctx.deps.venice, "text", conv.settings.textModel);
   const plan = planTurn(conv, { brain: args.brain, content: args.content }, model);
+  gen.forBrain(plan.brain.id); // from here on, only this brain is busy (brain.delete, kind changes)
   if (plan.refusal) throw new CommandError(400, "nothing_to_answer", plan.refusal);
   if (plan.brain.kind !== "text") {
     throw new CommandError(400, "not_supported", `"${plan.brain.name}" is an image brain; image replies arrive in T05.`);
@@ -178,6 +184,7 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
   const conv = await gen.load(); // through the write queue (T03 QA-1): a delete that got in first is seen here
   const model = await lookupModel(ctx.deps.venice, "text", conv.settings.textModel);
   const plan = planRegenerate(conv, { message: args.message, steer: args.steer }, model);
+  gen.forBrain(plan.brain.id);
   if (plan.refusal) throw new CommandError(400, "nothing_to_answer", plan.refusal);
   if (plan.brain.kind !== "text") {
     throw new CommandError(400, "not_supported", `"${plan.brain.name}" is an image brain; regenerating images arrives in T05.`);

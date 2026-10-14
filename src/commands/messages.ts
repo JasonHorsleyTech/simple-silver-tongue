@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { formatMessage, type MessageView } from "../conversations/format.ts";
-import { activeVersion } from "../conversations/prompt.ts";
+import { activeVersion, resolveBrain } from "../conversations/prompt.ts";
 import { assertLedgerIdle, loadConversation, mutateConversation } from "../conversations/store.ts";
-import { addSpend } from "../conversations/turn.ts";
-import type { Conversation, LedgerMessage } from "../conversations/types.ts";
+import { addSpend, newMessage } from "../conversations/turn.ts";
+import type { Author, Conversation, LedgerMessage } from "../conversations/types.ts";
 import { CommandError, notFound } from "../lib/errors.ts";
 import { nowIso } from "../lib/ids.ts";
 import { command } from "../registry.ts";
+import { PLAYER } from "./brains.ts";
 import { conversationId } from "./conversations.ts";
 
 /**
@@ -32,6 +33,52 @@ export function viewOf(conv: Conversation, m: LedgerMessage): MessageView {
 
 const target = { conversation: conversationId, message: messageId };
 
+const messageText = (blank: string, describe: string) =>
+  z
+    .string()
+    .refine((s) => s.trim() !== "", blank)
+    .describe(describe);
+
+export const messageAdd = command({
+  name: "message.add",
+  description: `Add a message you wrote to the end of the ledger, without asking any brain to reply.
+--as player adds it as your own message. --as <brain> puts the words in that brain's mouth, e.g. the Game
+Master's opening scene: that brain sees them as its own past reply (assistant), every other brain sees them
+framed with its name, exactly as if it had written them. Then send a turn, to any brain, to carry on.
+Refused while a reply is being generated (it would land after your message, answering what came before it).`,
+  args: z.object({
+    conversation: conversationId,
+    as: z.string().min(1).describe(`Who says it: "${PLAYER}" (you), or a brain's name or id`),
+    content: messageText("The message can't be empty", "The message (Markdown; @file.md or - for stdin)"),
+  }),
+  examples: [
+    './ss message.add --conversation c_k3j9x0q2ma --as "Game Master" --content @opening-scene.md',
+    './ss message.add --conversation c_k3j9x0q2ma --as player --content "I look around the tavern."',
+  ],
+  handler: async (args, ctx): Promise<MessageView> => {
+    const { vault } = ctx.requireSession();
+    const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
+      assertLedgerIdle(vault, c.id);
+      let author: Author = { type: "player" };
+      if (args.as.trim().toLowerCase() !== PLAYER) {
+        const brain = resolveBrain(c, args.as);
+        if (brain.kind !== "text") {
+          throw new CommandError(400, "not_supported", `"${brain.name}" is an image brain; adding its messages (an image prompt, which starts an image) arrives in T05.`);
+        }
+        author = { type: "brain", brainId: brain.id };
+      }
+      const m = newMessage(author, "text", { content: args.content, source: "authored", createdAt: nowIso() });
+      c.messages.push(m);
+      return m;
+    });
+    return viewOf(conv, result);
+  },
+  format: (r: MessageView) => {
+    const who = r.message.author.type === "player" ? "your message" : `in ${r.author}'s mouth`;
+    return `Added ${r.message.id} (${who}). Every brain sees it from the next request.`;
+  },
+});
+
 export const messageGet = command({
   name: "message.get",
   description: `Show one message with every version: its text, and the steer that produced it, if any.
@@ -53,10 +100,7 @@ what was always there; prompt.preview shows it. To edit another version, select 
 is being generated. Image messages (their prompt) can be edited from T05.`,
   args: z.object({
     ...target,
-    content: z
-      .string()
-      .refine((s) => s.trim() !== "", "The new text can't be empty. To remove a message, delete it")
-      .describe("The new text (Markdown; @file.md or - for stdin)"),
+    content: messageText("The new text can't be empty. To remove a message, delete it", "The new text (Markdown; @file.md or - for stdin)"),
   }),
   examples: [
     './ss message.edit --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --content "I order the plum wine."',
@@ -136,4 +180,4 @@ Refused while a reply is being generated.`,
   },
 });
 
-export default [messageGet, messageEdit, messageDelete, messageSelectVersion];
+export default [messageAdd, messageGet, messageEdit, messageDelete, messageSelectVersion];

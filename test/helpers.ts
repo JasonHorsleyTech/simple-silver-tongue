@@ -6,7 +6,7 @@ import { createAdaptorServer } from "@hono/node-server";
 import { run } from "../src/cli/main.ts";
 import { commands as allCommands } from "../src/commands/index.ts";
 import { loadConfig } from "../src/config.ts";
-import { startMockVenice, type MockVenice } from "../src/dev/mock-venice.ts";
+import { startMockVenice, type MockOptions, type MockVenice } from "../src/dev/mock-venice.ts";
 import { nowIso } from "../src/lib/ids.ts";
 import type { AnyCommand } from "../src/registry.ts";
 import { createApp } from "../src/server/app.ts";
@@ -16,9 +16,9 @@ import { createVeniceClient } from "../src/venice/client.ts";
 export type CliResult = { code: number; stdout: string; stderr: string };
 
 /** An in-process server (temp data dir) against an in-process mock Venice, plus an in-process CLI. */
-export async function startTestServer(opts: { commands?: AnyCommand[] } = {}) {
+export async function startTestServer(opts: { commands?: AnyCommand[]; mock?: MockOptions } = {}) {
   const tmp = await mkdtemp(join(tmpdir(), "ss-test-"));
-  const mock: MockVenice = await startMockVenice({ delayMs: 0, slowDelayMs: 20, imageDelayMs: 0 });
+  const mock: MockVenice = await startMockVenice({ delayMs: 0, slowDelayMs: 20, imageDelayMs: 0, ...opts.mock });
   const config = {
     ...loadConfig({ SS_MODE: "mock" }),
     dataDir: join(tmp, "data"),

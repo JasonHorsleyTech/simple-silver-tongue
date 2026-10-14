@@ -57,16 +57,20 @@ export function formatConversation(c: Conversation): string {
   const out = [
     `${c.title} (${c.id}) · ${c.settings.textModel} · ${c.messages.length} messages · ${usd(totalCost(c))}`,
     `Brains: ${c.brains
-      .map((b) => `${b.name}${b.id === c.defaultBrainId ? " (default)" : ""} [${b.id}, ${b.kind}, reasoning ${b.reasoning.enabled ? b.reasoning.effort : "off"}]`)
+      .map((b) => {
+        const reminder = b.finalReminder.enabled && b.finalReminder.content.trim() ? ", reminder" : "";
+        return `${b.name}${b.id === c.defaultBrainId ? " (default)" : ""} [${b.id}, ${b.kind}, reasoning ${b.reasoning.enabled ? b.reasoning.effort : "off"}${reminder}]`;
+      })
       .join(", ")}`,
   ];
-  if (c.setup.length) out.push(`Setup messages: ${c.setup.map((s) => s.label || s.id).join(", ")}`);
+  if (c.setup.length) out.push(`Setup messages: ${c.setup.map((s) => `${s.label} (${s.id})`).join(", ")} (setup.list shows them)`);
   if (!c.messages.length) out.push("", `(no messages yet: ./ss turn --conversation ${c.id} --content "...")`);
   for (const m of c.messages) {
     const v = activeVersion(m);
     const who = m.author.type === "player" ? "you" : (brainName.get(m.author.brainId) ?? m.author.brainId);
     const bits = [who, m.id];
     if (m.versions.length > 1) bits.push(`version ${m.activeVersion + 1}/${m.versions.length} (message.get shows all)`);
+    if (m.author.type === "brain" && v.source === "authored") bits.push("written by you");
     out.push("", `── ${[...bits, ...versionBits(v, m.kind)].join(" · ")} ──`, v.content);
   }
   return out.join("\n");
