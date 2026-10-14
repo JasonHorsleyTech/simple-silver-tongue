@@ -1,7 +1,6 @@
 import { ImagePlus, Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { memo, useEffect, useState } from "react";
 import type { Brain, LedgerMessage, MessageVersion } from "../../api/types.ts";
-import { Markdown } from "../../components/Markdown.tsx";
 import { cx } from "../../lib/cx.ts";
 import { activeVersion, clockTime, fullTime } from "../../lib/format.ts";
 import { ImageBody, type Aspect } from "./ImageCard.tsx";
@@ -9,6 +8,7 @@ import { LiveReply } from "./LiveReply.tsx";
 import { MessageEditor } from "./MessageEditor.tsx";
 import { BrainMessageFrame, PlayerBubble, SteerNote } from "./MessageFrame.tsx";
 import { CopyAction, DeleteConfirm, IconAction, MessageFooter, VersionMeta, VersionPager } from "./MessageFooter.tsx";
+import { MessageText } from "./MessageText.tsx";
 import { Reasoning } from "./Reasoning.tsx";
 import { SteerBox } from "./SteerBox.tsx";
 import { IMAGE_BUSY, imagePending, type LiveReply as Live, type MessageActions } from "./useChat.ts";
@@ -27,6 +27,7 @@ type Mode = "view" | "edit" | "delete" | "steer";
  *   last reply    Regenerate…, with an optional steer; the new version streams into this same slot (`live`)
  *   image message the picture and its prompt (ImageCard); edit changes the prompt and paints it again, and
  *                 "Paint again" makes another image of a finished one, as a new version (both are kept)
+ * A text message's hidden notes (T08) show folded (MessageText); the editor and Copy have the raw text.
  * Actions show on hover or keyboard focus, and stay shown on the last message. During a reply they explain
  * why they can't run instead of failing with the server's 409, and so do those that would replace or remove
  * an image still being made (its prompt edit, its retry, the message's delete).
@@ -163,7 +164,7 @@ export const MessageItem = memo(function MessageItem({
               </MessageFooter>
             }
           >
-            <Markdown text={v.content} />
+            <MessageText key={message.activeVersion} text={v.content} />
           </PlayerBubble>
         )}
         {hintLine}
@@ -283,7 +284,8 @@ export const MessageItem = memo(function MessageItem({
         ) : mode === "edit" ? (
           editor()
         ) : (
-          <BrainBody version={v} />
+          // Keyed by version: another version's notes start folded.
+          <BrainBody key={message.activeVersion} version={v} />
         )}
       </BrainMessageFrame>
       {hintLine}
@@ -311,11 +313,12 @@ export const MessageItem = memo(function MessageItem({
   );
 });
 
+/** A brain's text: Markdown, with its hidden notes folded. A reply that is all note is just its fold, not "No reply text". */
 function BrainBody({ version: v }: { version: MessageVersion }) {
   if (!v.content.trim()) return <EmptyReply version={v} />;
   return (
     <>
-      <Markdown text={v.content} />
+      <MessageText text={v.content} />
       {v.finishReason === "length" && <CutOffNote />}
     </>
   );

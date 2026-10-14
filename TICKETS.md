@@ -254,7 +254,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T08: Hidden notes · `frontend`
+## T08: Hidden notes · `done`
 
 Jason, 2026-10-14: brains need a way to write text that every brain reads but the player only sees on purpose. The T10 Character Creator answers with nothing else: a full character sheet, secrets included, that the GM and the Character Actor work from and the player must not read by accident. Any brain may keep notes this way (a GM's plans, what a clue really means), and so may the player.
 
@@ -297,6 +297,10 @@ Why a fence: models write fences reliably, Markdown parses it without HTML, and 
   - **Show the label when a note is opened (QA-5).** The fold never shows `block.label`, but an opened note should show it as a small caption above the rendered `block.body`, as `--reveal` shows the opening line in the terminal.
   - **Reasoning folds in the terminal now (QA-3).** The browser already collapses it, so nothing changes there. Keep it collapsed by default, mid-stream too: a brain that reads a sheet reasons about its secrets.
   - **For T10:** a brain's reasoning no longer prints in the terminal unless `--reveal`, so a reasoning-on Character Actor doesn't spill a sheet onto the screen. Whether to turn reasoning on is still T10's call, and the T07 trap still applies: Venice stops the reasoning at `<!-- from:` too. When a note needs code, the safe advice to put in prompts is still "use `~~~hidden`".
+
+- **From T08 frontend** (report: `reports/T08-frontend.md`):
+  - Built: every text message renders through `MessageText` (`messageParts` = `splitHidden` minus blank gaps; `web/src/lib/hiddenParts.ts`), each note a `HiddenNote` bar (`Hidden · 14 lines`, dashed and faintly hatched, "Show"); opened in place with its label as a caption and its body as Markdown, rendered only while open; a sticky header to fold a long note. Streaming: the bar counts up ("so far"), a partial opening fence is held back so it never flashes, notes open only once the reply is saved. All-note replies are the badge plus the bar. Notes in a list or quote keep the marker or the quote bar. Opening a note at the bottom of the scrollback no longer scrolls its top away (`web/src/lib/scrollPin.ts`). Backstop in `Markdown`'s code block renderer. No new commands.
+  - **For T10:** the Character Creator's sheet will show as its badge and a bar; nothing more is needed in the browser. A preset that keeps notes needs nothing from the web either.
 
 **Deferred in:** *(none yet)*
 

@@ -4,8 +4,10 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import { isHiddenInfo } from "../api/types.ts";
 import { cx } from "../lib/cx.ts";
 import { copyText } from "../lib/clipboard.ts";
+import { HiddenNote } from "./HiddenNote.tsx";
 
 /**
  * The scrollback's Markdown: GFM (tables, task lists, strikethrough, footnotes), single newlines kept as line
@@ -15,6 +17,10 @@ import { copyText } from "../lib/clipboard.ts";
  * Raw HTML is never rendered as HTML, and never silently dropped either: it shows as literal, faint text.
  * Models here see framing like `<!-- from: the user -->` and sometimes echo it back, and in this app nothing
  * a model wrote or will read should be invisible. Styles live in index.css under `.md`.
+ *
+ * Hidden notes (T08) are cut out before text gets here (features/chat/MessageText.tsx). As a backstop, a code
+ * block whose language is `hidden` folds here too: the shared rule hides everything Markdown would parse as one,
+ * so this should never fire, but a word of a note must never show if it does.
  */
 export const Markdown = memo(function Markdown({ text, className }: { text: string; className?: string }) {
   return (
@@ -51,7 +57,14 @@ function remarkVisibleHtml() {
 const REMARK = [remarkGfm, remarkBreaks, remarkVisibleHtml];
 const REHYPE = [[rehypeHighlight, { detect: false }]] as ComponentProps<typeof ReactMarkdown>["rehypePlugins"];
 
-type HastNode = { type: string; value?: string; tagName?: string; properties?: Record<string, unknown>; children?: HastNode[] };
+type HastNode = {
+  type: string;
+  value?: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNode[];
+  data?: unknown;
+};
 
 const textOf = (n: HastNode | undefined): string =>
   !n ? "" : n.type === "text" ? (n.value ?? "") : (n.children ?? []).map(textOf).join("");
@@ -61,7 +74,16 @@ const COMPONENTS: Components = {
     const code = (node as HastNode | undefined)?.children?.find((c) => c.tagName === "code");
     const classes = (code?.properties?.className as string[] | undefined) ?? [];
     const lang = classes.find((c) => c.startsWith("language-"))?.slice("language-".length) ?? "";
-    return <CodeBlock lang={lang} raw={textOf(code).replace(/\n$/, "")}>{children}</CodeBlock>;
+    const raw = textOf(code).replace(/\n$/, "");
+    if (isHiddenInfo(lang)) {
+      const label = (code?.data as { meta?: string } | undefined)?.meta?.trim();
+      return (
+        <HiddenNote lines={raw === "" ? 0 : raw.split("\n").length} label={label}>
+          <Markdown text={raw} />
+        </HiddenNote>
+      );
+    }
+    return <CodeBlock lang={lang} raw={raw}>{children}</CodeBlock>;
   },
   table({ children }) {
     return (

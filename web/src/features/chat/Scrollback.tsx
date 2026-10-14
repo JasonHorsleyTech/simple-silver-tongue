@@ -1,11 +1,12 @@
 import { ArrowDown, ArrowUp, ImageIcon, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Conversation } from "../../api/types.ts";
-import { Markdown } from "../../components/Markdown.tsx";
+import { ScrollPin, type ScrollPinApi } from "../../lib/scrollPin.ts";
 import { expectedAspect, GalleryContext, type GalleryItem } from "./ImageCard.tsx";
 import { LiveReply } from "./LiveReply.tsx";
 import { MessageItem } from "./MessageItem.tsx";
 import { PlayerBubble } from "./MessageFrame.tsx";
+import { MessageText } from "./MessageText.tsx";
 import type { Chat } from "./useChat.ts";
 
 /** Within this many pixels of the bottom counts as "at the bottom": new text keeps it pinned there. */
@@ -90,6 +91,35 @@ export function Scrollback({
     el.scrollTo({ top: el.scrollTop + r.top - b.top - Math.max(16, (el.clientHeight - r.height) / 2), behavior: "smooth" });
   }, [landed]);
 
+  // T08: a hidden note opening in place keeps its top where it is, instead of the pin scrolling it away, and
+  // shows as much of itself as fits.
+  const pin = useMemo<ScrollPinApi>(
+    () => ({
+      opening(target) {
+        stuck.current = false;
+        requestAnimationFrame(() => {
+          const el = box.current;
+          if (!el) return;
+          const b = el.getBoundingClientRect();
+          const r = target.getBoundingClientRect();
+          const by = Math.min(r.bottom - b.bottom + 16, r.top - b.top - 16);
+          if (by > 0) el.scrollTo({ top: el.scrollTop + by, behavior: "smooth" });
+          const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_PX;
+          stuck.current = atBottom;
+          setAway(!atBottom);
+        });
+      },
+      folded(target) {
+        const el = box.current;
+        if (!el) return;
+        const b = el.getBoundingClientRect();
+        const r = target.getBoundingClientRect();
+        if (r.top < b.top) el.scrollTo({ top: el.scrollTop + r.top - b.top - 16 });
+      },
+    }),
+    [],
+  );
+
   const toBottom = useCallback((smooth = false) => {
     const el = box.current;
     if (!el) return;
@@ -148,42 +178,44 @@ export function Scrollback({
             empty
           ) : (
             <GalleryContext value={gallery}>
-              <ol className="space-y-7">
-                {conv.messages.map((m) => (
-                  <li key={m.id} id={m.id}>
-                    <MessageItem
-                      message={m}
-                      brain={m.author.type === "brain" ? brains.get(m.author.brainId) : undefined}
-                      isLast={m === last && !atBottom && pendingPlayer === null}
-                      canRegenerate={m === last && canRegenerate}
-                      live={m.id === inSlot ? live! : undefined}
-                      busy={chat.busy}
-                      actions={chat.actions}
-                      aspect={aspect}
-                      onPreviewRegenerate={onPreviewRegenerate}
-                      onDismissLive={chat.dismissLive}
-                    />
-                  </li>
-                ))}
-                {pendingPlayer !== null && (
-                  <li>
-                    <PlayerBubble pending>
-                      <Markdown text={pendingPlayer} />
-                    </PlayerBubble>
-                  </li>
-                )}
-                {atBottom && (
-                  <li>
-                    <LiveReply
-                      live={atBottom}
-                      brain={atBottom.brainId ? brains.get(atBottom.brainId) : undefined}
-                      aspect={aspect}
-                      onRetry={onRetry}
-                      onDismiss={chat.dismissLive}
-                    />
-                  </li>
-                )}
-              </ol>
+              <ScrollPin value={pin}>
+                <ol className="space-y-7">
+                  {conv.messages.map((m) => (
+                    <li key={m.id} id={m.id}>
+                      <MessageItem
+                        message={m}
+                        brain={m.author.type === "brain" ? brains.get(m.author.brainId) : undefined}
+                        isLast={m === last && !atBottom && pendingPlayer === null}
+                        canRegenerate={m === last && canRegenerate}
+                        live={m.id === inSlot ? live! : undefined}
+                        busy={chat.busy}
+                        actions={chat.actions}
+                        aspect={aspect}
+                        onPreviewRegenerate={onPreviewRegenerate}
+                        onDismissLive={chat.dismissLive}
+                      />
+                    </li>
+                  ))}
+                  {pendingPlayer !== null && (
+                    <li>
+                      <PlayerBubble pending>
+                        <MessageText text={pendingPlayer} />
+                      </PlayerBubble>
+                    </li>
+                  )}
+                  {atBottom && (
+                    <li>
+                      <LiveReply
+                        live={atBottom}
+                        brain={atBottom.brainId ? brains.get(atBottom.brainId) : undefined}
+                        aspect={aspect}
+                        onRetry={onRetry}
+                        onDismiss={chat.dismissLive}
+                      />
+                    </li>
+                  )}
+                </ol>
+              </ScrollPin>
             </GalleryContext>
           )}
         </div>

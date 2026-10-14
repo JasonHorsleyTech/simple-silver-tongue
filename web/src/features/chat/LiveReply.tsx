@@ -1,16 +1,17 @@
 import { RotateCw, X } from "lucide-react";
 import type { Brain } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
-import { Markdown } from "../../components/Markdown.tsx";
 import { LiveImage, type Aspect } from "./ImageCard.tsx";
 import { BrainMessageFrame, SteerNote } from "./MessageFrame.tsx";
+import { MessageText } from "./MessageText.tsx";
 import { Reasoning } from "./Reasoning.tsx";
 import type { LiveReply as Live } from "./useChat.ts";
 
 /**
  * The reply being generated, in the same frame a saved brain message uses, so nothing jumps when it is saved.
- * Waiting: three dots. Reasoning: a collapsed "Thinking…". Writing: Markdown, token by token, with a caret.
- * Failed: the partial text (not saved), the server's error, Retry and Dismiss.
+ * Waiting: three dots. Reasoning: a collapsed "Thinking…". Writing: Markdown, token by token, with a caret;
+ * a hidden note (T08) is its fold, counting up, never its words ("Hidden · 3 lines so far"), and it can be
+ * opened once the reply is saved. Failed: the partial text (not saved), the server's error, Retry and Dismiss.
  *
  * A regenerate renders in the regenerated message's own slot (`slot`): its header says which version is
  * being written and with what steer, and a failure leaves the message's saved versions as they were.
@@ -64,7 +65,7 @@ export function LiveReply({
           <LiveImage prompt={live.content} aspect={aspect} color={brain?.color} failed={failed} />
         ) : live.content ? (
           <div className={failed ? "opacity-55" : "ss-caret"}>
-            <Markdown text={live.content} />
+            <MessageText text={live.content} writing={!failed} empty={<TypingDots />} />
           </div>
         ) : !failed && live.phase !== "reasoning" ? (
           <TypingDots />

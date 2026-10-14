@@ -70,7 +70,7 @@
   .md > :last-child {
     margin-bottom: 0;
   }
-  .md :where(p, ul, ol, blockquote, .md-code, .md-table, hr, .footnotes) {
+  .md :where(p, ul, ol, blockquote, .md-code, .md-table, hr, .footnotes, [data-hidden-note]) {
     margin-block: 0.8em;
   }
   .md :where(h1, h2, h3, h4, h5, h6) {
@@ -355,11 +355,13 @@
     opacity: 0;
   }
 }
-.ss-caret .md > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
-.ss-caret .md > :is(ul, ol):last-child > li:last-child:not(:has(> :is(ul, ol, p)))::after,
-.ss-caret .md > :is(ul, ol):last-child > li:last-child > p:last-child::after,
-.ss-caret .md > :is(ul, ol):last-child > li:last-child > :is(ul, ol):last-child > li:last-child:not(:has(> :is(ul, ol, p)))::after,
-.ss-caret .md > blockquote:last-child > p:last-child::after {
+/* A reply is Markdown parts and hidden notes (MessageText, `.md-flow`): the caret goes only at the end of the last
+   part, and not at all while the last part is a note being written (its fold counts up instead). */
+.ss-caret > .md-flow > .md:last-child > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
+.ss-caret > .md-flow > .md:last-child > :is(ul, ol):last-child > li:last-child:not(:has(> :is(ul, ol, p)))::after,
+.ss-caret > .md-flow > .md:last-child > :is(ul, ol):last-child > li:last-child > p:last-child::after,
+.ss-caret > .md-flow > .md:last-child > :is(ul, ol):last-child > li:last-child > :is(ul, ol):last-child > li:last-child:not(:has(> :is(ul, ol, p)))::after,
+.ss-caret > .md-flow > .md:last-child > blockquote:last-child > p:last-child::after {
   content: "";
   display: inline-block;
   width: 0.5em;
@@ -369,6 +371,14 @@
   border-radius: 2px;
   background: var(--color-silver);
   animation: ss-blink 1s steps(1) infinite;
+}
+
+/*
+ * A hidden note's fold (components/HiddenNote.tsx): faint diagonal hatching, the look of something set aside,
+ * that says nothing about what is under it.
+ */
+.ss-hatch {
+  background-image: repeating-linear-gradient(-45deg, rgb(255 255 255 / 0.028) 0 1px, transparent 1px 7px);
 }
 
 /* An image prompt still streaming in (features/chat/ImageCard.tsx): the same caret, inline in plain text. */

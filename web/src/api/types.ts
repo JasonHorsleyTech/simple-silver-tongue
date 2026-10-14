@@ -45,11 +45,13 @@ export {
  * T08: the one rule for hidden notes (```hidden blocks), shared with the CLI so the two can't disagree about
  * what is folded: `splitHidden(text)` cuts a message into visible text and notes (render each text part as
  * Markdown and each note as a fold, so a note's words never reach the Markdown renderer, even mid-stream),
- * `hiddenSummary(block, {writing})` is the fold's words, `isAllHidden(text)` spots a reply with nothing else, and
- * `isHiddenInfo(lang)` recognises a note's fence word. See design.md, "Hidden notes".
+ * `hiddenSummary(block, {writing})` is the fold's words, `isAllHidden(text)` spots a reply with nothing else,
+ * `isHiddenInfo(lang)` recognises a note's fence word, and `couldOpenHidden(partialLine)` says whether a streaming
+ * reply's unfinished last line could still become a note's opening fence. See design.md, "Hidden notes".
  */
 export {
   HIDDEN_TITLE,
+  couldOpenHidden,
   hiddenSummary,
   isAllHidden,
   isHiddenInfo,
