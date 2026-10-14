@@ -21,6 +21,15 @@ import { MOCK_MODELS } from "./mock-models.ts";
  *   MOCK_SLOW             → much slower stream / image (handy for 409 and stop tests)
  *   MOCK_MIDSTREAM_ERROR  → the connection drops halfway through the stream
  *   MOCK_MARKDOWN         → the echo line, then a long Markdown reply (code, a table, quotes, lists; mock-markdown.ts)
+ *   MOCK_TWO_TOOL_CALLS   → a forced tool call comes as two parallel calls (index 0 and 1), as a model might
+ *   MOCK_NO_TOOL_CALL     → a forced tool call is ignored: the reply is text
+ *   MOCK_IMAGE_ERROR      → (image) HTTP error; the chat call that wrote the prompt is unaffected
+ *   MOCK_IMAGE_FLAKY      → (image) fails the first time this exact prompt is asked for, works after (for retry)
+ *   MOCK_IMAGE_SLOW       → (image) takes 2 s (imageSlowMs); the prompt streams at normal speed
+ *   MOCK_BLURRED          → (image) with safe_mode on, answers x-venice-is-blurred: true (and a grey image)
+ *   MOCK_VIOLATION        → (image) answers x-venice-is-content-violation: true
+ * The image prompt a mock tool call writes quotes the last message's first 60 characters, so an image trigger
+ * in your message reaches the image request (for a brain without a final reminder, whose last message is yours).
  * max_tokens is honored (counted in words, reasoning first): the reply is cut with finish_reason "length".
  *
  * Rules enforced like a strict Venice: a Bearer token is required, and chat requests must send
@@ -34,6 +43,8 @@ export type MockOptions = {
   /** Per-chunk delay when the last message says MOCK_SLOW (default 250 ms). */
   slowDelayMs?: number;
   imageDelayMs?: number;
+  /** How long an image takes when its prompt says MOCK_SLOW or MOCK_IMAGE_SLOW (default 2000 ms). */
+  imageSlowMs?: number;
   balanceUsd?: number;
   log?: boolean;
 };
@@ -51,8 +62,10 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
   const delayMs = opts.delayMs ?? 15;
   const slowDelayMs = opts.slowDelayMs ?? 250;
   const imageDelayMs = opts.imageDelayMs ?? 200;
+  const imageSlowMs = opts.imageSlowMs ?? 2000;
   const state = { balanceUsd: opts.balanceUsd ?? 10, requests: [] as MockRequest[] };
   let seq = 0;
+  const flaky = new Set<string>(); // MOCK_IMAGE_FLAKY prompts that have failed once
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://mock");
@@ -147,6 +160,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
         return json(res, 400, { error: `mock: tool_choice names a tool that is not in tools: ${toolName}` });
       }
     }
+    if (toolName && lastText.includes("MOCK_NO_TOOL_CALL")) toolName = null; // a model that ignores tool_choice
     const echo = `MOCK reply to brain "${brain}"; saw ${messages.length} messages; last: "${headTail(lastText)}"`;
     const fullContent = toolName ? "" : lastText.includes("MOCK_MARKDOWN") ? `${echo}\n\n${MOCK_MARKDOWN}` : echo;
     // max_tokens counts words here (one word ≈ one token), reasoning first and then content, as live: a small
@@ -162,13 +176,24 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     }
     const reasoning = reasoningWords.join("");
     const content = contentWords.join("");
-    const toolArgs = toolName
+    const fullArgs = toolName
       ? JSON.stringify({ prompt: `MOCK image prompt after ${messages.length} messages; last: "${excerpt(lastText, 60)}"` })
       : "";
+    // Tool arguments stream in 12-character pieces; max_tokens counts the pieces, so a small budget cuts the
+    // JSON mid-prompt with finish_reason "length", as a real cut would.
+    let argPieces: string[] = fullArgs.match(/.{1,12}/g) ?? [];
+    const cutArgs = toolName !== null && reasoningWords.length + argPieces.length > budget;
+    if (cutArgs) {
+      reasoningWords = reasoningWords.slice(0, budget);
+      argPieces = argPieces.slice(0, Math.max(0, budget - reasoningWords.length));
+    }
+    const toolArgs = argPieces.join("");
+    const twoCalls = toolName !== null && lastText.includes("MOCK_TWO_TOOL_CALLS");
+    const secondArgs = twoCalls ? JSON.stringify({ prompt: "MOCK second, parallel image prompt" }) : "";
 
     const promptTokens = Math.ceil(messages.reduce((a, m) => a + contentText(m).length, 0) / 4) + 1;
     const reasoningTokens = Math.ceil(reasoning.length / 4);
-    const completionTokens = Math.ceil((content.length + toolArgs.length) / 4) + reasoningTokens;
+    const completionTokens = Math.ceil((content.length + toolArgs.length + secondArgs.length) / 4) + reasoningTokens;
     const pricing = model.model_spec.pricing;
     const cost = (promptTokens * pricing.input.usd + completionTokens * pricing.output.usd) / 1e6;
     state.balanceUsd -= cost;
@@ -183,7 +208,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     const id = `chatcmpl-mock-${n}`;
     const created = Math.floor(Date.now() / 1000);
     const callId = `call_mock_${n}`;
-    const finish = toolName ? "tool_calls" : cut ? "length" : "stop";
+    const finish = cut || cutArgs ? "length" : toolName ? "tool_calls" : "stop";
 
     if (!body.stream) {
       const message: Record<string, unknown> = { role: "assistant", content: toolName ? null : content };
@@ -208,7 +233,14 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     for (const w of reasoningWords) deltas.push(chunk({ reasoning_content: w }));
     if (toolName) {
       deltas.push(chunk({ tool_calls: [{ index: 0, id: callId, type: "function", function: { name: toolName, arguments: "" } }] }));
-      for (const piece of toolArgs.match(/.{1,12}/g) ?? []) deltas.push(chunk({ tool_calls: [{ index: 0, function: { arguments: piece } }] }));
+      const first = argPieces;
+      const second = secondArgs.match(/.{1,12}/g) ?? [];
+      if (twoCalls) deltas.push(chunk({ tool_calls: [{ index: 1, id: `${callId}_b`, type: "function", function: { name: toolName, arguments: "" } }] }));
+      // Parallel calls' fragments interleave, as they can live: only `index` tells them apart.
+      for (let k = 0; k < Math.max(first.length, second.length); k++) {
+        if (first[k]) deltas.push(chunk({ tool_calls: [{ index: 0, function: { arguments: first[k] } }] }));
+        if (second[k]) deltas.push(chunk({ tool_calls: [{ index: 1, function: { arguments: second[k] } }] }));
+      }
     }
     const tail = cut ? contentWords.pop() : undefined;
     for (const w of contentWords) deltas.push(chunk({ content: w }));
@@ -229,7 +261,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     res.end("data: [DONE]\n\n");
   }
 
-  type ImageBody = { model?: string; prompt?: string; width?: number; height?: number; resolution?: string; return_binary?: boolean };
+  type ImageBody = { model?: string; prompt?: string; width?: number; height?: number; resolution?: string; return_binary?: boolean; safe_mode?: boolean };
 
   async function image(res: ServerResponse, body: ImageBody, n: number) {
     const model = MOCK_MODELS.find((m) => m.id === body?.model && m.type === "image");
@@ -238,8 +270,12 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     if (!prompt.trim()) return json(res, 400, { error: "prompt is required" });
     const limit = model.model_spec.constraints?.promptCharacterLimit;
     if (limit && prompt.length > limit) return json(res, 400, { error: `prompt exceeds ${limit} characters` });
-    if (prompt.includes("MOCK_ERROR")) return json(res, 400, { error: "mock: forced image error (MOCK_ERROR)" });
-    await sleep(prompt.includes("MOCK_SLOW") ? 2000 : imageDelayMs);
+    if (prompt.includes("MOCK_ERROR") || prompt.includes("MOCK_IMAGE_ERROR")) return json(res, 400, { error: "mock: forced image error (MOCK_IMAGE_ERROR)" });
+    if (prompt.includes("MOCK_IMAGE_FLAKY") && !flaky.has(prompt)) {
+      flaky.add(prompt);
+      return json(res, 503, { error: "mock: the image service is busy, try again (MOCK_IMAGE_FLAKY)" });
+    }
+    await sleep(prompt.includes("MOCK_SLOW") || prompt.includes("MOCK_IMAGE_SLOW") ? imageSlowMs : imageDelayMs);
 
     const p = model.model_spec.pricing;
     const res0 = body.resolution ?? model.model_spec.constraints?.defaultResolution;
@@ -248,9 +284,16 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
 
     const w = clamp(body.width ?? 64, 8, 256);
     const h = clamp(body.height ?? 64, 8, 256);
-    const bytes = solidPng(w, h, colorFor(prompt));
+    // Venice's safe_mode defaults to on. A blurred image comes back grey here, so it looks different too.
+    const blurred = prompt.includes("MOCK_BLURRED") && body.safe_mode !== false;
+    const bytes = solidPng(w, h, blurred ? [128, 128, 128] : colorFor(prompt));
+    const headers = {
+      ...IMAGE_HEADERS,
+      "x-venice-is-blurred": String(blurred),
+      "x-venice-is-content-violation": String(prompt.includes("MOCK_VIOLATION")),
+    };
     if (body.return_binary) {
-      res.writeHead(200, { "Content-Type": "image/png", "Content-Length": bytes.length, ...IMAGE_HEADERS });
+      res.writeHead(200, { "Content-Type": "image/png", "Content-Length": bytes.length, ...headers });
       return void res.end(bytes);
     }
     return json(res, 200, {
@@ -258,7 +301,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
       images: [bytes.toString("base64")],
       request: body,
       timing: { inferenceDuration: imageDelayMs, inferencePreprocessingTime: 0, inferenceQueueTime: 0, total: imageDelayMs },
-    }, IMAGE_HEADERS);
+    }, headers);
   }
 
   await new Promise<void>((resolve, reject) => {
@@ -278,7 +321,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
   };
 }
 
-// Live /image/generate responses carry these (T05's safe-mode UX reads them). The mock never blurs.
+// Live /image/generate responses carry these (T05's safe-mode UX reads them). MOCK_BLURRED / MOCK_VIOLATION set them.
 const IMAGE_HEADERS = { "x-venice-is-blurred": "false", "x-venice-is-content-violation": "false" };
 
 function json(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {

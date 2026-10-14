@@ -130,7 +130,8 @@ Works mid-conversation: from its first request it sees everything said so far (i
 everyone else's framed with the templates). Talk to it with turn --brain <name>.
 Its final reminder is on and pre-filled with an editable example, sent as the last message of its requests;
 change it with --final-reminder.content, or turn it off with --no-final-reminder.enabled.
-An image brain (--kind image) gets editable tool text and safe mode on; its replies arrive in T05.`,
+An image brain (--kind image) answers with a forced generate_image call: its reply is an image prompt, which is
+painted with the conversation's image model. It gets editable tool text, and safe mode on (Venice blurs adult content).`,
   args: z.object({
     conversation: conversationId,
     name: name.describe("The brain's name, unique in the conversation (other brains see it in the framing)"),

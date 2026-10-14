@@ -132,7 +132,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T05: Image brains (CP4) · `todo`
+## T05: Image brains (CP4) · `qa`
 
 **Engineer scope**
 - `kind: "image"` brains with a per-brain `safeMode` (default on) and editable tool text (`tool.description`, `tool.promptParamDescription`, `tool.resultContent`). The request carries `tools` and a forced `tool_choice`, with the tool args streamed.
@@ -156,9 +156,19 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
   `useChat` keeps `retry` (the error's `details.retry`) on a failed live reply, and `chat.retry()` replays it; T05's image errors can use the same path.
 - **From T04 engineer:** image brains can already be created (`brain.add --kind image`, with `DEFAULT_TOOL` text and `safeMode: true`) and edited (`--tool.*`, `--safe-mode`), and `prompt.preview --brain` shows their forced tool call. `turn`, `message.add --as <image brain>` and `message.regenerate` refuse them with `not_supported`: lift those. Call `gen.forBrain(plan.brain.id)` right after planning in any new generating path, or `assertBrainIdle` keeps every brain "busy" (undeletable) for the whole generation.
 
+- **From T05 engineer** (the commands are in; `web/src/api/types.ts` already has the new event shapes, `image.retry`, `ImageMessageView` and `Preview.image`):
+  - **Events.** An image turn or regenerate streams `start` (with `kind: "image"`), then `prompt` deltas (the prompt as words, decoded server-side: render them as the prompt streaming in; there is no `tool_args`), then `image_pending {messageId, imageId, model, message}` (the prompt is saved: upsert `message`, show the loader), then `image_done {image, message}` or `image_error {error, image, message, retry}`, then `done {message, spentUsd}`. An image error still ends with `done`: the message is saved, only its image failed. `start.imageOnly: true` marks a generation with no text at all (`image.retry`, or the image a `message.edit` / `message.add` started), so there is no prompt to stream.
+  - **The record** is `MessageVersion.image: ImageRecord` (`src/conversations/types.ts`): `status` pending/done/error, `error`, `mime`, `blurred`, `contentViolation`, `costUsd`, `safeMode`, `model`, and `previous`: while a replacement is pending (or failed), the last finished image, which is what to show dimmed under the spinner, or beside the error. Show `<img src={api.binaryUrl("image.get", {id})}>` for `image.id` when done, else for `previous.id` if there is one. A blurred image says safe mode blurred it, with a way to turn safe mode off and retry.
+  - **Editing the prompt** is `message.edit` (it answers at once with `painting: {imageId, model}`, image pending, `previous` set), then follow the image with `generation.follow`, which ends with `done`. `message.add --as <image brain>` works the same way: turn on the image brain's "Write as…" entry. Turn on the image brain's composer chip: `turn` works.
+  - **Retry** for a failed image is `image.retry {conversation, message}` (stream). `image_error.retry` carries that exact request, so `useChat`'s existing retry path can replay it. A broken prompt stream (`no_prompt` or `venice_error`) carries `details.retry` as before (a `turn` or `message.regenerate`).
+  - **A message stuck pending can't happen**: a pending image no generation owns (the server died) is read back as an error ("wasn't finished… Retry it"), or as done if its file reached disk. Treat `pending` as "being made right now"; a reload mid-image re-attaches with `generation.follow` as for text.
+  - **Stop** during the prompt keeps the prompt with an error image ("Stopped before the image was made"); during the image it waits for it and returns `imageFinished: true` with the message: say the image was already being made and billed, so it was kept.
+  - **Settings.** `conversation.update {settings: {image: {width, height, aspectRatio, resolution, format, hideWatermark, negativePrompt}}}` (`null` unsets; `ConversationUpdate` in types.ts has it). The server refuses a size the current model can't take (400 with the reason): z-image-turbo is width × height in multiples of 8; Nano Banana is a listed resolution and aspect ratio. Use the model's `constraints` from `models.list` to offer the right controls. `prompt.preview` for an image brain has `image: {path, params, notes}`: show it in the payload view under the chat body ("then POST /image/generate with the prompt from the call"), with its notes.
+  - The "T05" wording to remove is listed under **From T04 frontend** above.
+
 **Deferred in:**
-- Mock: add a trigger (e.g. `MOCK_BLURRED` in the prompt, with `safe_mode` on) that answers `x-venice-is-blurred: true`, so the safe-mode UX can be tested for free. The headers already exist, always `false` (T01 QA-7).
-- `relayReply` (`src/conversations/turn.ts`) appends every tool call's argument fragments to one string and streams them all as `tool_args`, ignoring `index`, so two parallel calls give invalid JSON such as `{"prompt":"one"}{"prompt":"two"}`. Decide what a second call means (keep index 0 only, or one image per call), then collect per `index`. Send `parallel_tool_calls: false` only once a live call shows Venice honours it (T02 QA-7).
+- ~~Mock: add a trigger (e.g. `MOCK_BLURRED` in the prompt, with `safe_mode` on) that answers `x-venice-is-blurred: true`~~ Done in T05 engineer: `MOCK_BLURRED`, plus `MOCK_VIOLATION`, `MOCK_IMAGE_ERROR`, `MOCK_IMAGE_FLAKY`, `MOCK_IMAGE_SLOW` (design.md, "Mock Venice").
+- ~~`relayReply` glues parallel tool calls' fragments into invalid JSON (T02 QA-7)~~ Done in T05 engineer: fragments are kept per `index`, only the first call is used (a second is named in the `done` note), and `parallel_tool_calls` is still not sent. The mock's `MOCK_TWO_TOOL_CALLS` interleaves two calls.
 
 ---
 

@@ -2,7 +2,7 @@ import { table } from "../lib/text.ts";
 import { usd } from "../venice/models.ts";
 import { activeVersion } from "./prompt.ts";
 import { totalCost } from "./turn.ts";
-import type { ChatRequest, Conversation, LedgerMessage, MessageVersion } from "./types.ts";
+import type { ChatRequest, Conversation, ImageRecord, ImageRequest, LedgerMessage, MessageVersion } from "./types.ts";
 
 /** Plain-text CLI renderings. Content is printed in full and verbatim: these are the user's own words. */
 
@@ -79,7 +79,7 @@ export function formatConversation(c: Conversation): string {
 /** What a version's header says about it, beyond who wrote it. The steer is shown, never sent again. */
 function versionBits(v: MessageVersion, kind: LedgerMessage["kind"] = "text"): string[] {
   const bits: string[] = [];
-  if (kind === "image") bits.push("image prompt");
+  if (kind === "image") bits.push("image prompt", ...(v.image ? [imageLine(v.image)] : ["no image"]));
   if (v.steer !== undefined) bits.push(`steer "${v.steer}"${v.steeredFrom !== undefined ? ` on version ${v.steeredFrom + 1}` : ""}`);
   if (v.edited) bits.push("edited");
   if (v.costUsd) bits.push(usd(v.costUsd));
@@ -87,6 +87,15 @@ function versionBits(v: MessageVersion, kind: LedgerMessage["kind"] = "text"): s
   if (v.stopped) bits.push("stopped");
   if (v.reasoning) bits.push(`reasoning ${v.reasoning.length} chars (--json)`);
   return bits;
+}
+
+/** An image's state in one line: "image img_… done (webp)", "image img_… pending", "image failed: why". */
+export function imageLine(img: ImageRecord): string {
+  const shown = img.previous ? `; ${img.previous.id} still shown` : "";
+  if (img.status === "pending") return `image ${img.id} being made with ${img.model}${shown}`;
+  if (img.status === "error") return `image ${img.id} failed: ${img.error ?? "unknown error"}${shown}`;
+  const bits = [img.mime?.replace("image/", "") ?? "", img.costUsd !== undefined ? usd(img.costUsd) : "", img.blurred ? "blurred by safe mode" : "", img.contentViolation ? "content policy flag" : ""].filter(Boolean);
+  return `image ${img.id} done${bits.length ? ` (${bits.join(", ")})` : ""}`;
 }
 
 /** One message as message.get, message.edit and message.select-version return it. */
@@ -112,6 +121,12 @@ export type Preview = {
   refusal?: string;
   /** Set for prompt.preview --regenerate: which message gets the new version, and how it is asked for. */
   regenerate?: { messageId: string; newVersion: number; steer?: string; steeredFrom?: number };
+  /**
+   * Image brains (T05): the /image/generate request their prompt goes into. `params` is the exact body except
+   * `prompt`, which is the prompt the generate_image call writes, word for word. `notes` say which image settings
+   * this model can't take and so are left out.
+   */
+  image?: { path: "/image/generate"; params: Omit<ImageRequest, "prompt">; notes: string[] };
 };
 
 /** The exact body: every non-message field as JSON, then each message's content verbatim. */
@@ -137,6 +152,10 @@ export function formatPreview(p: Preview): string {
     if (m.content !== "" || m.role !== "assistant") out.push(m.content);
     if (m.role === "assistant" && m.tool_calls) out.push(`tool_calls: ${JSON.stringify(m.tool_calls)}`);
   });
+  if (p.image) {
+    out.push("", `Then POST ${p.image.path}, with "prompt" set to the prompt from its tool call, word for word:`, JSON.stringify(p.image.params));
+    out.push(...p.image.notes.map((n) => `Note: ${n}`));
+  }
   out.push("", "(--json prints the body exactly as it is sent.)");
   if (p.refusal) out.push(`Note: ${r ? "message.regenerate" : "turn"} would not send this as it stands. ${p.refusal}`);
   return out.join("\n");

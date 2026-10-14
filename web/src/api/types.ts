@@ -12,6 +12,8 @@ import type {
   ChatMessage,
   ChatRequest,
   Conversation,
+  ImageRecord,
+  ImageRequest,
   LedgerMessage,
   MessageVersion,
   RetryRequest,
@@ -20,7 +22,7 @@ import type {
 } from "../../../src/conversations/types.ts";
 import type { ModelInfo } from "../../../src/venice/models.ts";
 
-export type { Brain, BrainTool, ChatMessage, ChatRequest, Conversation, LedgerMessage, MessageVersion, ModelInfo, RetryRequest, SetupMessage, Templates };
+export type { Brain, BrainTool, ChatMessage, ChatRequest, Conversation, ImageRecord, ImageRequest, LedgerMessage, MessageVersion, ModelInfo, RetryRequest, SetupMessage, Templates };
 
 /**
  * The server's own words and values, shown as they are: what a stop does and doesn't save, the reasoning
@@ -69,18 +71,38 @@ export type Preview = {
   refusal?: string;
   /** prompt.preview with regenerate: which message gets the new version, and the steer it is asked with. */
   regenerate?: { messageId: string; newVersion: number; steer?: string; steeredFrom?: number };
+  /** Image brains (T05): the /image/generate body their prompt goes into, minus `prompt` itself, and what was left out. */
+  image?: { path: "/image/generate"; params: Omit<ImageRequest, "prompt">; notes: string[] };
 };
 
 /** message.get, .edit and .select-version: the message, with every version, and who wrote it. */
 export type MessageView = { conversationId: string; author: string; message: LedgerMessage };
 
+/** message.edit and message.add: for an image message (T05), `painting` names the image being made for it now. */
+export type ImageMessageView = MessageView & { painting?: { imageId: string; model: string } };
+
 /** generation.stop. `message` is what the stopped reply saved (null when no text had arrived; `error` says so). */
-export type StopOutcome = { stopped: boolean; message: LedgerMessage | null; error?: { code: string; message: string }; note?: string };
+export type StopOutcome = { stopped: boolean; message: LedgerMessage | null; error?: { code: string; message: string }; note?: string; imageFinished?: true };
 
 export type ConversationUpdate = {
   id: string;
   title?: string;
-  settings?: Partial<{ textModel: string; maxTokens: number | null; temperature: number | null; imageModel: string }>;
+  settings?: Partial<{
+    textModel: string;
+    maxTokens: number | null;
+    temperature: number | null;
+    imageModel: string;
+    /** T05: how image brains' images are made. null unsets a field. A size the model can't take is a 400. */
+    image: Partial<{
+      width: number | null;
+      height: number | null;
+      aspectRatio: string | null;
+      resolution: string | null;
+      format: "webp" | "png" | "jpeg";
+      hideWatermark: boolean;
+      negativePrompt: string | null;
+    }>;
+  }>;
   templates?: Partial<Templates>;
 };
 
@@ -133,13 +155,13 @@ export type Commands = {
   "setup.move": { args: { conversation: string; setup: string; position: number }; result: SetupListing };
   "setup.delete": { args: { conversation: string; setup: string }; result: SetupListing };
   /** Words in a brain's mouth (or yours, as "player"), appended without generating anything. 409 while a reply is being generated. */
-  "message.add": { args: { conversation: string; as: string; content: string }; result: MessageView };
+  "message.add": { args: { conversation: string; as: string; content: string }; result: ImageMessageView };
   "prompt.preview": {
     args: { conversation: string; brain?: string; content?: string; regenerate?: boolean; message?: string; steer?: string };
     result: Preview;
   };
   /** Any message, any depth: the active version's text, in place. 409 while a reply is being generated. */
-  "message.edit": { args: { conversation: string; message: string; content: string }; result: MessageView };
+  "message.edit": { args: { conversation: string; message: string; content: string }; result: ImageMessageView };
   /** Any message, with all its versions. Its cost stays in spentUsd. 409 while a reply is being generated. */
   "message.delete": { args: { conversation: string; message: string }; result: { conversationId: string; deleted: string; messageCount: number } };
   /** `version` is 1-based (what the pager shows); the document's activeVersion is 0-based. 409 while generating. */
@@ -154,6 +176,8 @@ export type StreamCommands = {
   "generation.follow": { args: { conversation: string } };
   /** A new, active version of the last message (a brain's). With a steer, the brain rewrites its current version. */
   "message.regenerate": { args: { conversation: string; message?: string; steer?: string } };
+  /** T05: paint an image message's active prompt again (a failed, interrupted or blurred image). */
+  "image.retry": { args: { conversation: string; message: string } };
 };
 
 /**
@@ -170,13 +194,26 @@ export type StreamEvent =
    * replayed by generation.follow), `regenerate` is true, messageId is the message getting a new version,
    * and `steer` is the direction it was given, if any.
    */
-  | { type: "start"; brainId: string; brainName: string; messageId: string; regenerate?: true; steer?: string }
+  | {
+      type: "start";
+      brainId: string;
+      brainName: string;
+      messageId: string;
+      regenerate?: true;
+      steer?: string;
+      /** T05: "image" for an image brain. `imageOnly`: no text streams (image.retry, or an edit or add of a prompt). */
+      kind?: "text" | "image";
+      imageOnly?: true;
+    }
   | { type: "reasoning"; delta: string }
   | { type: "delta"; delta: string }
-  | { type: "tool_args"; delta: string }
-  | { type: "image_pending"; messageId: string; imageId: string }
-  | { type: "image_done"; messageId: string; imageId: string }
-  | { type: "image_error"; messageId: string; error: string }
+  /** T05: an image brain's prompt as it streams, decoded from its generate_image call (words, not JSON). */
+  | { type: "prompt"; delta: string }
+  /** The prompt is saved (message.image is pending): show a loader. */
+  | { type: "image_pending"; messageId: string; imageId: string; model: string; message: LedgerMessage }
+  | { type: "image_done"; messageId: string; imageId: string; image: ImageRecord; message: LedgerMessage }
+  /** The message is saved; its image isn't. `retry` is the image.retry request. The stream still ends with done. */
+  | { type: "image_error"; messageId: string; imageId: string; error: string; image: ImageRecord; message: LedgerMessage; retry: RetryRequest }
   /**
    * The saved brain message. Null only from generation.follow when nothing was running. `spentUsd` is the
    * conversation's running total once this reply's cost was added (a stopped reply's cost comes later).

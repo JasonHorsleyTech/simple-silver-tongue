@@ -1,11 +1,14 @@
 import { z } from "zod";
-import { formatMessage, type MessageView } from "../conversations/format.ts";
+import { formatMessage, imageLine, type MessageView } from "../conversations/format.ts";
+import { imageIdsOf } from "../conversations/images.ts";
 import { activeVersion, resolveBrain } from "../conversations/prompt.ts";
+import { addImageMessage, editImagePrompt, type Started } from "../conversations/repaint.ts";
 import { assertLedgerIdle, loadConversation, mutateConversation } from "../conversations/store.ts";
 import { addSpend, newMessage } from "../conversations/turn.ts";
 import type { Author, Conversation, LedgerMessage } from "../conversations/types.ts";
-import { CommandError, notFound } from "../lib/errors.ts";
+import { CommandError, conflict, notFound } from "../lib/errors.ts";
 import { nowIso } from "../lib/ids.ts";
+import { removeImageFiles } from "../images/files.ts";
 import { command } from "../registry.ts";
 import { authorRef, PLAYER } from "./brains.ts";
 import { conversationId } from "./conversations.ts";
@@ -31,6 +34,19 @@ export function viewOf(conv: Conversation, m: LedgerMessage): MessageView {
   return { conversationId: conv.id, author, message: m };
 }
 
+/** message.edit and message.add: the message, plus the image being made for it now, if they started one (T05). */
+export type ImageMessageView = MessageView & { painting?: { imageId: string; model: string } };
+
+const startedView = (s: Started): ImageMessageView => ({ ...viewOf(s.conv, s.message), ...(s.painting ? { painting: s.painting } : {}) });
+
+/** The CLI's words for an edit or add of an image message. */
+function paintingLine(r: ImageMessageView): string {
+  const v = activeVersion(r.message);
+  if (!r.painting) return v.image ? ` It keeps its ${imageLine(v.image)}.` : "";
+  const keeps = v.image?.previous ? ` ${v.image.previous.id} stays until it is ready.` : "";
+  return ` Making its image ${r.painting.imageId} with ${r.painting.model}.${keeps} Watch it: ./ss generation.follow --conversation ${r.conversationId}`;
+}
+
 const target = { conversation: conversationId, message: messageId };
 
 const messageText = (blank: string, describe: string) =>
@@ -45,6 +61,8 @@ export const messageAdd = command({
 --as player adds it as your own message. --as <brain> puts the words in that brain's mouth, e.g. the Game
 Master's opening scene: that brain sees them as its own past reply (assistant), every other brain sees them
 framed with its name, exactly as if it had written them. Then send a turn, to any brain, to carry on.
+--as <image brain> makes the content its image prompt, and its image is made from it: this answers at once,
+and the image is painted after (generation.follow watches it; conversation.get shows its state).
 Refused while a reply is being generated (it would land after your message, answering what came before it).`,
   args: z.object({
     conversation: conversationId,
@@ -55,16 +73,19 @@ Refused while a reply is being generated (it would land after your message, answ
     './ss message.add --conversation c_k3j9x0q2ma --as "Game Master" --content @opening-scene.md',
     './ss message.add --conversation c_k3j9x0q2ma --as player --content "I look around the tavern."',
   ],
-  handler: async (args, ctx): Promise<MessageView> => {
+  handler: async (args, ctx): Promise<ImageMessageView> => {
     const { vault } = ctx.requireSession();
+    const player = args.as.trim().toLowerCase() === PLAYER;
+    if (!player && resolveBrain(await loadConversation(vault, args.conversation), args.as).kind === "image") {
+      // A prompt in an image brain's mouth: saved, then painted, holding the lock (repaint.ts).
+      return startedView(await addImageMessage(vault, ctx.deps.venice, args.conversation, args.as, args.content));
+    }
     const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
       assertLedgerIdle(vault, c.id);
       let author: Author = { type: "player" };
-      if (args.as.trim().toLowerCase() !== PLAYER) {
+      if (!player) {
         const brain = resolveBrain(c, args.as);
-        if (brain.kind !== "text") {
-          throw new CommandError(400, "not_supported", `"${brain.name}" is an image brain; adding its messages (an image prompt, which starts an image) arrives in T05.`);
-        }
+        if (brain.kind !== "text") throw conflict(`${brain.name} became an image brain while you were adding this. Try again.`);
         author = { type: "brain", brainId: brain.id };
       }
       const m = newMessage(author, "text", { content: args.content, source: "authored", createdAt: nowIso() });
@@ -73,9 +94,9 @@ Refused while a reply is being generated (it would land after your message, answ
     });
     return viewOf(conv, result);
   },
-  format: (r: MessageView) => {
-    const who = r.message.author.type === "player" ? "your message" : `in ${r.author}'s mouth`;
-    return `Added ${r.message.id} (${who}). Every brain sees it from the next request.`;
+  format: (r: ImageMessageView) => {
+    const who = r.message.author.type === "player" ? "your message" : r.message.kind === "image" ? `an image prompt in ${r.author}'s mouth` : `in ${r.author}'s mouth`;
+    return `Added ${r.message.id} (${who}). Every brain sees it from the next request.${r.message.kind === "image" ? paintingLine(r) : ""}`;
   },
 });
 
@@ -97,7 +118,9 @@ export const messageEdit = command({
   description: `Replace a message's text: any message, yours or a brain's, at any depth.
 It edits the active version in place (marked edited). From the next request on, every brain sees the new text as
 what was always there; prompt.preview shows it. To edit another version, select it first. Refused while a reply
-is being generated. Image messages (their prompt) can be edited from T05.`,
+is being generated. For an image message the text is its prompt, and a new image is made from the new prompt:
+the edit answers at once, the old image stays until the new one is ready, and then the new one replaces it
+(generation.follow watches it). If the new one fails, the old one is still there, and image.retry tries again.`,
   args: z.object({
     ...target,
     content: messageText("The new text can't be empty. To remove a message, delete it", "The new text (Markdown; @file.md or - for stdin)"),
@@ -106,12 +129,15 @@ is being generated. Image messages (their prompt) can be edited from T05.`,
     './ss message.edit --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --content "I order the plum wine."',
     "./ss message.edit --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --content @fixed.md",
   ],
-  handler: async (args, ctx): Promise<MessageView> => {
+  handler: async (args, ctx): Promise<ImageMessageView> => {
     const { vault } = ctx.requireSession();
+    // A message's kind never changes, so this read can decide which path it takes.
+    if (findMessage(await loadConversation(vault, args.conversation), args.message).kind === "image") {
+      return startedView(await editImagePrompt(vault, ctx.deps.venice, args.conversation, args.message, args.content));
+    }
     const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
       assertLedgerIdle(vault, c.id);
       const m = findMessage(c, args.message);
-      if (m.kind !== "text") throw new CommandError(400, "not_supported", `${m.id} is an image message; editing its prompt arrives with image brains (T05).`);
       const v = activeVersion(m);
       if (v.content !== args.content) {
         v.content = args.content;
@@ -122,28 +148,33 @@ is being generated. Image messages (their prompt) can be edited from T05.`,
     });
     return viewOf(conv, result);
   },
-  format: (r: MessageView) => `Edited ${r.message.id} (${r.author}, version ${r.message.activeVersion + 1}/${r.message.versions.length}). Every brain sees the new text from the next request.`,
+  format: (r: ImageMessageView) =>
+    `Edited ${r.message.id} (${r.author}, version ${r.message.activeVersion + 1}/${r.message.versions.length}). Every brain sees the new ${r.message.kind === "image" ? "prompt" : "text"} from the next request.${r.message.kind === "image" ? paintingLine(r) : ""}`,
 });
 
 export const messageDelete = command({
   name: "message.delete",
   description: `Delete a message, with all its versions: any message, yours or a brain's, at any depth.
 From the next request on, it is as if it was never there. What it cost stays in the conversation's total.
-Refused while a reply is being generated.`,
+An image message's image files (every version's) are deleted with it. Refused while a reply is being generated.`,
   args: z.object(target),
   examples: ["./ss message.delete --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a"],
   handler: async (args, ctx) => {
     const { vault } = ctx.requireSession();
-    const { conv } = await mutateConversation(vault, args.conversation, (c) => {
+    const { conv, result: gone } = await mutateConversation(vault, args.conversation, (c) => {
       assertLedgerIdle(vault, c.id);
       const m = findMessage(c, args.message);
-      if (m.versions.some((v) => v.image)) throw new CommandError(400, "not_supported", `${m.id} has images; deleting those arrives with image brains (T05).`);
       addSpend(c); // pin the running total first: the money is spent, even when the message goes (T03 QA-2)
       c.messages.splice(c.messages.indexOf(m), 1);
+      return m;
     });
-    return { conversationId: conv.id, deleted: args.message, messageCount: conv.messages.length };
+    // After the save: a failed removal leaves an unreferenced file, never a message whose image is missing.
+    const images = imageIdsOf([gone]);
+    await removeImageFiles(vault, images);
+    return { conversationId: conv.id, deleted: args.message, messageCount: conv.messages.length, ...(images.length ? { imagesDeleted: images } : {}) };
   },
-  format: (r: { deleted: string; messageCount: number }) => `Deleted ${r.deleted}. ${r.messageCount} message${r.messageCount === 1 ? "" : "s"} left.`,
+  format: (r: { deleted: string; messageCount: number; imagesDeleted?: string[] }) =>
+    `Deleted ${r.deleted}${r.imagesDeleted ? ` and its image${r.imagesDeleted.length === 1 ? "" : "s"} (${r.imagesDeleted.join(", ")})` : ""}. ${r.messageCount} message${r.messageCount === 1 ? "" : "s"} left.`,
 });
 
 export const messageSelectVersion = command({

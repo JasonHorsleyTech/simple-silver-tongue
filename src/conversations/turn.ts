@@ -5,6 +5,7 @@ import type { ChatEvent } from "../venice/chat.ts";
 import type { VeniceClient } from "../venice/client.ts";
 import type { ModelInfo } from "../venice/models.ts";
 import { buildRequest, nothingToAnswer, REASONING_NOTE, reasoningOn, resolveBrain, type ModelCaps } from "./prompt.ts";
+import { partialPrompt, type ToolCallParts } from "./tool-call.ts";
 import type { Brain, ChatRequest, Conversation, LedgerMessage, MessageVersion, Usage } from "./types.ts";
 
 /**
@@ -130,7 +131,10 @@ export async function lookupModel(venice: VeniceClient, type: "text" | "image", 
 export type Reply = {
   content: string;
   reasoning: string;
-  toolArgs: string;
+  /** Tool calls by `index`, in the order they started (an image brain makes one; see tool-call.ts). */
+  toolCalls: ToolCallParts[];
+  /** The first tool call's prompt as far as it has been decoded: what the `prompt` events have streamed. */
+  prompt: string;
   finishReason?: string;
   usage?: Usage;
   costUsd?: number;
@@ -151,13 +155,13 @@ export function untilAborted(signal: AbortSignal): Promise<typeof STOP> {
 }
 
 /**
- * Relay a chat stream as NDJSON events (reasoning, delta, tool_args) while collecting the whole reply,
+ * Relay a chat stream as NDJSON events (reasoning, delta, prompt) while collecting the whole reply,
  * which is the generator's return value: `const reply = yield* relayReply(events, stop)`. A stop
  * (generation.stop) is not an error here: the relay ends at once and the reply so far comes back with
  * `stopped: true`, plus the unread `rest` of the stream. The Venice request itself is left running.
  */
 export async function* relayReply(events: AsyncIterable<ChatEvent>, stop?: AbortSignal): AsyncGenerator<StreamEvent, Reply> {
-  const reply: Reply = { content: "", reasoning: "", toolArgs: "" };
+  const reply: Reply = { content: "", reasoning: "", toolCalls: [], prompt: "" };
   const it = events[Symbol.asyncIterator]();
   const stopped = stop && untilAborted(stop);
   const halt = (pending?: Promise<IteratorResult<ChatEvent>>) => {
@@ -194,10 +198,22 @@ function* handle(ev: ChatEvent, reply: Reply): Generator<StreamEvent, void> {
       reply.content += ev.delta;
       yield { type: "delta", delta: ev.delta };
       break;
-    case "tool_call":
-      reply.toolArgs += ev.argsDelta;
-      if (ev.argsDelta) yield { type: "tool_args", delta: ev.argsDelta };
+    case "tool_call": {
+      // Fragments are kept apart by index, so parallel calls can't be glued into one invalid JSON (T02 QA-7).
+      let call = reply.toolCalls.find((c) => c.index === ev.index);
+      if (!call) reply.toolCalls.push((call = { index: ev.index, args: "" }));
+      if (ev.id) call.id = ev.id;
+      if (ev.name) call.name = ev.name;
+      call.args += ev.argsDelta;
+      if (call !== reply.toolCalls[0] || !ev.argsDelta) break;
+      // The first call's prompt, decoded as it arrives: the client sees the words, not JSON fragments.
+      const text = partialPrompt(call.args)?.text ?? "";
+      if (text.length > reply.prompt.length && text.startsWith(reply.prompt)) {
+        yield { type: "prompt", delta: text.slice(reply.prompt.length) };
+        reply.prompt = text;
+      }
       break;
+    }
     case "finish":
       reply.finishReason = ev.reason;
       break;

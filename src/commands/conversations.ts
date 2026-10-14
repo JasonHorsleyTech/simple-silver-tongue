@@ -9,9 +9,12 @@ import {
   loadConversation,
   mutateConversation,
 } from "../conversations/store.ts";
+import { imageIdsOf } from "../conversations/images.ts";
 import { lookupModel } from "../conversations/turn.ts";
 import { templateProblem } from "../conversations/prompt.ts";
-import type { Conversation, Templates } from "../conversations/types.ts";
+import type { Conversation, ImageSettings, Templates } from "../conversations/types.ts";
+import { removeImageFiles } from "../images/files.ts";
+import { imageSettingsProblem } from "../images/request.ts";
 import { badRequest } from "../lib/errors.ts";
 import { command } from "../registry.ts";
 
@@ -91,10 +94,26 @@ const templates = z
   })
   .partial();
 
+/** The image settings image brains' requests are built from (src/images/request.ts). null unsets one. */
+const imageSettings = z
+  .object({
+    width: z.number().int().min(64).max(4096).nullable().describe("Image width in pixels, for models sized by width × height (z-image-turbo: multiples of 8). null: the model's default"),
+    height: z.number().int().min(64).max(4096).nullable().describe("Image height in pixels, as width"),
+    aspectRatio: z.string().regex(/^\d+:\d+$/, "Aspect ratios look like 16:9").nullable().describe("For models sized by resolution and aspect ratio (Nano Banana), one they list. null: the model's default"),
+    resolution: z.string().min(1).nullable().describe("For models with a resolution list (1K, 2K, 4K), one they list. null: the model's default"),
+    format: z.enum(["webp", "png", "jpeg"]).describe("The format to ask for (default webp). The stored type is what Venice really sends"),
+    hideWatermark: z.boolean().describe("Ask Venice to leave its watermark off (default off)"),
+    negativePrompt: z.string().nullable().describe("What the image should not show, sent as negative_prompt with every image. null or blank: not sent"),
+  })
+  .partial();
+
 export const conversationUpdate = command({
   name: "conversation.update",
   description: `Change a conversation's title, settings or framing templates. Only the fields you pass change.
 Unset maxTokens or temperature with null: --settings '{"maxTokens": null}'.
+Image brains' images use the image model and --settings.image.* (size, format, watermark, negative prompt). Only
+what the model takes is sent: prompt.preview --brain <image brain> shows the exact image request and says what
+was left out. A size the current model can't take is refused.
 Templates are sent to the models, so they are yours to edit; prompt.preview shows the effect. Each one must keep
 its placeholder ({{content}}, {{prompt}} or {{instruction}}), where the text goes.`,
   args: z.object({
@@ -106,6 +125,7 @@ its placeholder ({{content}}, {{prompt}} or {{instruction}}), where the text goe
         maxTokens: z.number().int().positive().nullable().describe("max_tokens for replies (null: no limit)"),
         temperature: z.number().min(0).max(2).nullable().describe("Sampling temperature (null: the model's default)"),
         imageModel: z.string().min(1).describe("Venice image model id (used by image brains)"),
+        image: imageSettings.describe("How image brains' images are made"),
       })
       .partial()
       .optional(),
@@ -115,6 +135,7 @@ its placeholder ({{content}}, {{prompt}} or {{instruction}}), where the text goe
     "./ss conversation.update --id c_k3j9x0q2ma --title 'Gilded Goat'",
     "./ss conversation.update --id c_k3j9x0q2ma --settings.text-model venice-uncensored-1-2 --settings.max-tokens 400",
     "./ss conversation.update --id c_k3j9x0q2ma --templates.player '{{content}}'",
+    "./ss conversation.update --id c_k3j9x0q2ma --settings.image.width 1024 --settings.image.height 768 --settings.image.format png",
   ],
   handler: async (args, ctx): Promise<Conversation> => {
     const { vault } = ctx.requireSession();
@@ -123,7 +144,11 @@ its placeholder ({{content}}, {{prompt}} or {{instruction}}), where the text goe
       throw badRequest("Nothing to change. Pass --title, --settings.<field> or --templates.<name>.");
     }
     if (s.textModel) await lookupModel(ctx.deps.venice, "text", s.textModel);
-    if (s.imageModel) await lookupModel(ctx.deps.venice, "image", s.imageModel);
+    const imageModel = s.imageModel ? await lookupModel(ctx.deps.venice, "image", s.imageModel) : null;
+    const img = s.image ?? {};
+    const sizing = (["width", "height", "aspectRatio", "resolution"] as const).some((k) => img[k] !== undefined && img[k] !== null);
+    // A size is checked against the model it will be sent to (the new one, if this call changes it).
+    const sizeModel = sizing ? (imageModel ?? (await lookupModel(ctx.deps.venice, "image", (await loadConversation(vault, args.id)).settings.imageModel))) : null;
     const { conv } = await mutateConversation(vault, args.id, (c) => {
       if (args.title !== undefined) c.title = args.title;
       if (s.textModel) c.settings.textModel = s.textModel;
@@ -132,22 +157,35 @@ its placeholder ({{content}}, {{prompt}} or {{instruction}}), where the text goe
         if (s[key] === null) delete c.settings[key];
         else if (s[key] !== undefined) c.settings[key] = s[key];
       }
+      const next: ImageSettings = { ...c.settings.image };
+      for (const [k, v] of Object.entries(img) as [keyof ImageSettings, unknown][]) {
+        if (v === null) delete next[k];
+        else if (v !== undefined) Object.assign(next, { [k]: v });
+      }
+      const changing = (Object.keys(img) as (keyof ImageSettings)[]).filter((k) => img[k] !== null && img[k] !== undefined);
+      const problem = sizeModel && imageSettingsProblem(next, sizeModel, changing);
+      if (problem) throw badRequest(problem);
+      c.settings.image = next;
       Object.assign(c.templates, args.templates ?? {});
     });
     return conv;
   },
   format: (c: Conversation) => {
     const st = c.settings;
-    return `Updated ${c.id} "${c.title}" · ${st.textModel} · max_tokens ${st.maxTokens ?? "-"} · temperature ${st.temperature ?? "-"}`;
+    const im = st.image;
+    const size = im.width || im.height ? `${im.width ?? "-"}×${im.height ?? "-"}` : im.resolution || im.aspectRatio ? [im.resolution, im.aspectRatio].filter(Boolean).join(" ") : "default size";
+    return `Updated ${c.id} "${c.title}" · ${st.textModel} · max_tokens ${st.maxTokens ?? "-"} · temperature ${st.temperature ?? "-"} · images ${st.imageModel}, ${size}, ${im.format}${im.hideWatermark ? ", no watermark" : ""}${im.negativePrompt?.trim() ? ", negative prompt" : ""}`;
   },
 });
 
 export const conversationDelete = command({
   name: "conversation.delete",
-  description: "Delete a conversation for good. Refused (409) while a reply is being generated.",
+  description: "Delete a conversation for good, with its images. Refused (409) while a reply or an image is being generated.",
   args: z.object({ id: conversationId }),
   handler: async (args, ctx) => {
-    await deleteConversationFile(ctx.requireSession().vault, args.id);
+    const { vault } = ctx.requireSession();
+    const conv = await deleteConversationFile(vault, args.id);
+    await removeImageFiles(vault, imageIdsOf(conv.messages)); // after the document: never a message without its image
     return { deleted: args.id };
   },
   format: (r: { deleted: string }) => `Deleted ${r.deleted}.`,

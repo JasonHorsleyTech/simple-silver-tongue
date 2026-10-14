@@ -95,10 +95,43 @@ export type LedgerMessage = {
   updatedAt: string;
 };
 
+/**
+ * One image of an image message's version (T05). The file is images/<id>.<ext> in the user's folder (ciphertext
+ * for encrypted users), written before the status says done. Pending means a generation is painting it right
+ * now: a pending image that no running job owns (the server stopped mid-image) is settled on the next read,
+ * as done if its file made it to disk, or as an error to retry (settleStaleImages, images.ts).
+ */
+export type ImageRecord = {
+  id: string; // img_...
+  status: "pending" | "done" | "error";
+  /** The image model it was (or is being) made with. */
+  model: string;
+  /** What was sent as safe_mode: the brain's toggle at the time. */
+  safeMode: boolean;
+  /** status error: what went wrong, in words for the user. */
+  error?: string;
+  /** done: the type sniffed from the bytes (image/webp, image/png, ...), whatever format was asked for. */
+  mime?: string;
+  /** done: Venice says it blurred the image (safe mode on, adult content). */
+  blurred?: true;
+  /** done: Venice says the prompt broke its content policy. */
+  contentViolation?: true;
+  /** The model's list price for this image, added to spentUsd once Venice has made it. */
+  costUsd?: number;
+  createdAt: string;
+  finishedAt?: string;
+  /**
+   * While a new image for an edited or retried prompt is pending, or has failed: the last finished image,
+   * still shown in its place. Deleted (file included) once the new one is done.
+   */
+  previous?: ImageRecord;
+};
+
 export type MessageVersion = {
   /** Text: Markdown. Image: the exact image prompt. */
   content: string;
-  image?: { id: string; status: "pending" | "done" | "error"; error?: string; model: string };
+  /** Image messages: this version's image. */
+  image?: ImageRecord;
   /** Display only, never sent (hard rule 4). */
   steer?: string;
   /** With a steer: the index of the version the steer revised (the one that was active). Display only. */
@@ -171,4 +204,24 @@ export type ChatRequest = {
  */
 export type RetryRequest =
   | { command: "turn"; args: { conversation: string; brain: string } }
-  | { command: "message.regenerate"; args: { conversation: string; message: string; steer?: string } };
+  | { command: "message.regenerate"; args: { conversation: string; message: string; steer?: string } }
+  /** A failed image (T05): paint the active version's prompt again. Rides on image_error events as `retry`. */
+  | { command: "image.retry"; args: { conversation: string; message: string } };
+
+/**
+ * The exact /image/generate body (T05), minus the auth header. buildImageRequest (src/images/request.ts) makes
+ * it from the conversation's image settings, the model's constraints and the brain's safe mode; the prompt is
+ * the image message's content, word for word.
+ */
+export type ImageRequest = {
+  model: string;
+  prompt: string;
+  safe_mode: boolean;
+  format: ImageSettings["format"];
+  hide_watermark: boolean;
+  width?: number;
+  height?: number;
+  aspect_ratio?: string;
+  resolution?: string;
+  negative_prompt?: string;
+};

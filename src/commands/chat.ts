@@ -9,6 +9,9 @@ import {
   type GenerationHandle,
   type StopOutcome,
 } from "../conversations/store.ts";
+import { beginPainting, endPainting, newImageRecord } from "../conversations/images.ts";
+import { imageNote, paint, painterFor, type Painter } from "../conversations/paint.ts";
+import { promptOf } from "../conversations/tool-call.ts";
 import {
   addSpend,
   generatedVersion,
@@ -20,7 +23,7 @@ import {
   untilAborted,
   type Reply,
 } from "../conversations/turn.ts";
-import type { ChatRequest, Conversation, LedgerMessage, RetryRequest, Usage } from "../conversations/types.ts";
+import type { Brain, ChatRequest, Conversation, LedgerMessage, MessageVersion, RetryRequest, Usage } from "../conversations/types.ts";
 import { STOP_BILL_NOTE } from "../conversations/wording.ts";
 import { badRequest, CommandError } from "../lib/errors.ts";
 import { newId } from "../lib/ids.ts";
@@ -50,7 +53,9 @@ export const promptPreview = command({
 With --content, it shows what turn --content would send (your message included). With --regenerate (plus
 --message and --steer), it shows what message.regenerate would send instead. Nothing is saved or sent.
 --json prints the body byte for byte as it would go to Venice (minus the auth header), plus notes on text the
-provider adds that we can't show (reasoning on), and the reason the send would be refused, if it would.`,
+provider adds that we can't show (reasoning on), and the reason the send would be refused, if it would.
+For an image brain it also shows the /image/generate request its prompt goes into: every field but the prompt,
+which is the one its generate_image call writes, word for word.`,
   args: z.object({
     conversation: conversationId,
     brain: brainRef.optional(),
@@ -79,6 +84,11 @@ provider adds that we can't show (reasoning on), and the reason the send would b
       : planTurn(conv, { brain: args.brain, content: args.content }, model);
     const preview: Preview = { conversationId: conv.id, brainId: plan.brain.id, brainName: plan.brain.name, body: plan.body, notes: plan.notes };
     if (plan.refusal) preview.refusal = plan.refusal;
+    if (plan.brain.kind === "image") {
+      const { body, notes } = (await painterFor(ctx.deps.venice, conv, plan.brain)).plan("");
+      const { prompt: _prompt, ...params } = body;
+      preview.image = { path: "/image/generate", params, notes };
+    }
     if ("message" in plan) {
       preview.regenerate = { messageId: plan.message.id, newVersion: plan.message.versions.length + 1 };
       if (plan.steer !== undefined) Object.assign(preview.regenerate, { steer: plan.steer, steeredFrom: plan.steeredFrom });
@@ -125,9 +135,8 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
   const plan = planTurn(conv, { brain: args.brain, content: args.content }, model);
   gen.forBrain(plan.brain.id); // from here on, only this brain is busy (brain.delete, kind changes)
   if (plan.refusal) throw new CommandError(400, "nothing_to_answer", plan.refusal);
-  if (plan.brain.kind !== "text") {
-    throw new CommandError(400, "not_supported", `"${plan.brain.name}" is an image brain; image replies arrive in T05.`);
-  }
+  // An image brain's image model is checked now, before its prompt is asked for (and paid for).
+  const painter = plan.brain.kind === "image" ? await painterFor(ctx.deps.venice, conv, plan.brain) : null;
   // Up-front refusals (no balance, bad model) throw here, before anything is saved.
   const upstream = await openUpstream(ctx, conv.id, plan.body, gen, "Stopped before the reply started. Nothing was saved.");
 
@@ -137,14 +146,23 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
     yield { type: "message", message: player };
   }
   const messageId = newId("m");
-  yield { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId };
+  yield { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId, kind: plan.brain.kind };
 
-  const reply = yield* collectReply(vault, conv.id, upstream, gen, {
+  const say: Say = {
     kept: plan.player ? "Your message is saved; the reply isn't." : "No reply was saved.",
     // Name the brain: with several, a bare "turn" goes to the default brain, which may be another one (T04 QA-1).
     retry: `To retry, send again to ${plan.brain.name} with no new message: turn --brain ${plan.brain.id} without --content, or Retry in the browser.`,
     again: { command: "turn", args: { conversation: conv.id, brain: plan.brain.id } },
-  });
+  };
+  const reply = yield* collectReply(vault, conv.id, upstream, gen, say);
+  if (painter) {
+    const author = { type: "brain" as const, brainId: plan.brain.id };
+    return yield* paintReply(ctx, conv.id, reply, { painter, brain: plan.brain, textModel: plan.body.model, say, head: plan.brain.name }, (c, version) => {
+      const message = newMessage(author, "image", version, messageId);
+      c.messages.push(message);
+      return message;
+    });
+  }
   const message = newMessage({ type: "brain", brainId: plan.brain.id }, "text", generatedVersion(reply, plan.body.model), messageId);
   const spentUsd = await saveReply(vault, conv.id, reply, (c) => {
     c.messages.push(message);
@@ -188,38 +206,112 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
   const plan = planRegenerate(conv, { message: args.message, steer: args.steer }, model);
   gen.forBrain(plan.brain.id);
   if (plan.refusal) throw new CommandError(400, "nothing_to_answer", plan.refusal);
-  if (plan.brain.kind !== "text") {
-    throw new CommandError(400, "not_supported", `"${plan.brain.name}" is an image brain; regenerating images arrives in T05.`);
-  }
+  const painter = plan.brain.kind === "image" ? await painterFor(ctx.deps.venice, conv, plan.brain) : null;
   const id = plan.message.id;
   const keeps = `${id} keeps its current version.`;
   const upstream = await openUpstream(ctx, conv.id, plan.body, gen, `Stopped before the new version started. ${keeps}`);
 
-  const start: StreamEvent = { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId: id, regenerate: true };
+  const start: StreamEvent = { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId: id, regenerate: true, kind: plan.brain.kind };
   if (plan.steer !== undefined) start.steer = plan.steer;
   yield start;
-  const reply = yield* collectReply(vault, conv.id, upstream, gen, {
+  const say: Say = {
     kept: `No new version was saved; ${keeps}`,
     retry: "To retry, regenerate again.",
     again: { command: "message.regenerate", args: { conversation: conv.id, message: id, ...(plan.steer !== undefined ? { steer: plan.steer } : {}) } },
-  });
+  };
+  const reply = yield* collectReply(vault, conv.id, upstream, gen, say);
 
-  const version = generatedVersion(reply, plan.body.model);
-  if (plan.steer !== undefined) Object.assign(version, { steer: plan.steer, steeredFrom: plan.steeredFrom });
-  let message!: LedgerMessage;
-  const spentUsd = await saveReply(vault, conv.id, reply, (c) => {
-    // Ledger edits are refused while this runs, and the plan read the ledger after the lock, so the message
-    // is still there; but say so if it isn't.
+  const n = plan.message.versions.length + 1;
+  const head = `${plan.brain.name} · version ${n}/${n}${plan.steer !== undefined ? " · steered" : ""}`;
+  // Ledger edits are refused while this runs, and the plan read the ledger after the lock, so the message
+  // is still there; but say so if it isn't.
+  const addVersion = (c: Conversation, version: MessageVersion): LedgerMessage => {
+    if (plan.steer !== undefined) Object.assign(version, { steer: plan.steer, steeredFrom: plan.steeredFrom });
     const m = c.messages.find((x) => x.id === id);
     if (!m) throw new CommandError(409, "conflict", `${id} was deleted while its new version was being written, so the new version wasn't saved.`);
     m.versions.push(version);
     m.activeVersion = m.versions.length - 1;
     m.updatedAt = version.createdAt;
-    message = m;
-    return { messageId: id, version: m.activeVersion };
+    return m;
+  };
+  if (painter) return yield* paintReply(ctx, conv.id, reply, { painter, brain: plan.brain, textModel: plan.body.model, say, head }, addVersion);
+
+  const version = generatedVersion(reply, plan.body.model);
+  let message!: LedgerMessage;
+  const spentUsd = await saveReply(vault, conv.id, reply, (c) => {
+    message = addVersion(c, version);
+    return { messageId: id, version: message.activeVersion };
   });
-  const n = message.versions.length;
-  yield { type: "done", message, note: replyNote(`${plan.brain.name} · version ${n}/${n}${plan.steer !== undefined ? " · steered" : ""}`, reply), spentUsd };
+  yield { type: "done", message, note: replyNote(head, reply), spentUsd };
+}
+
+/** What a broken reply's error says was kept and how to retry, plus the retry request itself (details.retry). */
+type Say = { kept: string; retry: string; again: RetryRequest };
+
+/** Why a prompt that did arrive wasn't painted: it isn't all there. The image's error, to edit or retry from. */
+const UNFINISHED = {
+  stopped: "Stopped before the image was made, so none was requested. Retry to paint this prompt as it is, or edit it first.",
+  length: "The prompt was cut off by max_tokens, so no image was requested. Edit the prompt (or raise max_tokens and regenerate), then retry.",
+  open: "The prompt never finished arriving (its closing quote is missing), so no image was requested. Edit the prompt or retry it as it is.",
+};
+
+/**
+ * An image brain's reply: save its prompt as the image message (put adds it to the ledger: a new message for a
+ * turn, a new version for a regenerate), then paint it. The stream ends after the image is settled, and its
+ * done carries the message with the image in it. A prompt that only partly arrived (a stop, max_tokens) is
+ * saved, since it was shown and paid for, but not painted: its image is an error to edit or retry from. A reply
+ * with no prompt at all saves nothing and fails like a broken reply, with the same retry.
+ */
+async function* paintReply(
+  ctx: Ctx,
+  convId: string,
+  reply: Reply,
+  opts: { painter: Painter; brain: Brain; textModel: string; say: Say; head: string },
+  put: (c: Conversation, version: MessageVersion) => LedgerMessage,
+): AsyncGenerator<StreamEvent, void> {
+  const { vault } = ctx.requireSession();
+  const { painter, brain, say } = opts;
+  const call = promptOf(reply.toolCalls);
+  const prompt = call.prompt.trim() ? call.prompt : "";
+  if (!prompt) {
+    if (reply.rest) {
+      drainStopped(vault, convId, reply.rest, null);
+      throw stopped(`Stopped before any of the prompt arrived. ${say.kept}`);
+    }
+    await mutateConversation(vault, convId, (c) => addSpend(c, reply.costUsd)); // billed all the same
+    const tool = brain.tool?.name ?? "generate_image";
+    const why = call.calls
+      ? `${brain.name} called ${tool} without a prompt, so there was nothing to paint.`
+      : `${brain.name} answered without calling ${tool}${reply.content.trim() ? " (it wrote text instead)" : ""}, so there was no prompt to paint.`;
+    throw new CommandError(502, "no_prompt", `${why} ${say.kept} ${say.retry}`, { retry: say.again });
+  }
+  const unfinished = reply.stopped ? UNFINISHED.stopped : call.complete ? null : reply.finishReason === "length" ? UNFINISHED.length : UNFINISHED.open;
+
+  const version = generatedVersion(reply, opts.textModel);
+  version.content = prompt;
+  const image = newImageRecord({ model: painter.model.id, safeMode: painter.safeMode });
+  if (unfinished) Object.assign(image, { status: "error", error: unfinished, finishedAt: image.createdAt });
+  version.image = image;
+  let message!: LedgerMessage;
+  const spentUsd = await saveReply(vault, convId, reply, (c) => {
+    message = put(c, version);
+    if (!unfinished) beginPainting(vault, image.id); // owned before the pending record reaches disk
+    return { messageId: message.id, version: message.versions.indexOf(version) };
+  }).catch((err) => {
+    endPainting(vault, image.id);
+    throw err;
+  });
+  let extra = call.calls > 1 ? ` · it made ${call.calls} ${brain.tool?.name ?? "tool"} calls; only the first was used` : "";
+  if (reply.content.trim()) extra += ` · it also wrote ${reply.content.trim().length} characters of text beside the call, not kept`;
+  if (unfinished) {
+    const retry: RetryRequest = { command: "image.retry", args: { conversation: convId, message: message.id } };
+    yield { type: "image_error", messageId: message.id, imageId: image.id, error: unfinished, image, message, retry };
+    yield { type: "done", message, note: `${replyNote(opts.head, reply)} · ${imageNote(image)}${extra}`, spentUsd };
+    return;
+  }
+  yield { type: "image_pending", messageId: message.id, imageId: image.id, model: image.model, message };
+  const painted = yield* paint(vault, ctx.deps.venice, convId, { messageId: message.id, image, prompt }, painter);
+  yield { type: "done", message: painted.message, note: `${replyNote(opts.head, reply)} · ${imageNote(painted.image)}${extra}`, spentUsd: painted.spentUsd };
 }
 
 /**
@@ -254,7 +346,7 @@ async function* collectReply(
   convId: string,
   upstream: AsyncIterable<ChatEvent>,
   gen: GenerationHandle,
-  say: { kept: string; retry: string; again: RetryRequest },
+  say: Say,
 ): AsyncGenerator<StreamEvent, Reply> {
   let reply: Reply;
   try {
@@ -267,7 +359,7 @@ async function* collectReply(
     }
     throw err;
   }
-  if (reply.stopped && !reply.content.trim()) {
+  if (reply.stopped && !reply.content.trim() && !reply.prompt.trim()) {
     drainStopped(vault, convId, reply.rest!, null);
     throw stopped(`Stopped before any reply text arrived. ${say.kept}`);
   }
@@ -350,6 +442,9 @@ export const generationStop = command({
 What had arrived is kept, marked "stopped": a turn's partial reply is saved as the brain's message, and a
 regenerate's as a new, active version, so you can edit it, regenerate it or delete it. If no reply text had
 arrived yet, nothing is saved: a turn keeps only your message, a regenerate keeps the current version.
+An image brain's prompt that is cut short is kept without an image (retry or edit it). Once the prompt is done
+and its image is with Venice, a stop can't help: the image is being made and billed, so it is waited for, kept
+and returned (imageFinished).
 Stopping saves waiting, not money: Venice still writes and bills the whole reply. So the server keeps reading
 it quietly in the background, discards the text, and adds the real cost to the stopped version and to the
 conversation's total once Venice reports it. It returns once the stopped reply is saved.`,
@@ -366,7 +461,9 @@ conversation's total once Venice reports it. It returns once the stopped reply i
     if (!r.stopped) return "Nothing is being generated for this conversation.";
     const m = r.message;
     // Without a message, the stopped generation's own error says what it left behind ("Stopped before ...").
-    const head = m
+    const head = r.imageFinished
+      ? `Too late to stop the image: Venice was already making it (and billing it), so it was finished and kept${m ? ` in ${m.id}` : ""}.`
+      : m
       ? `Stopped. What had arrived is saved: ${m.id}, version ${m.activeVersion + 1}/${m.versions.length}.`
       : r.error?.code === "stopped"
         ? r.error.message
@@ -380,7 +477,7 @@ function replyNote(head: string, reply: Reply): string {
   const note = [head];
   if (reply.usage) note.push(`${reply.usage.promptTokens} in / ${reply.usage.completionTokens} out`);
   if (reply.costUsd !== undefined) note.push(usd(reply.costUsd));
-  const empty = !reply.content.trim();
+  const empty = !reply.content.trim() && !reply.prompt.trim();
   if (reply.stopped) {
     note.push("stopped: what had arrived is saved (Venice still bills the whole reply; its cost is added once Venice reports it)");
   } else if (reply.finishReason === "length") {

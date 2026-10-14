@@ -153,8 +153,6 @@ describe("multiple brains, setup messages and hand-written lines: CLI → server
     assert.equal(painter.tool?.name, "generate_image");
     const body = await preview(c, "--brain", "Painter");
     assert.deepEqual(body.tool_choice, { type: "function", function: { name: "generate_image" } });
-    await fails(["turn", "--conversation", c, "--brain", "Painter"], /image brain; image replies arrive in T05/);
-    await fails(["message.add", "--conversation", c, "--as", "Painter", "--content", "a tavern"], /image brain/);
     const asText = (await json(["brain.update", "--conversation", c, "--brain", "Painter", "--kind", "text"])) as Brain;
     assert.equal(asText.kind, "text");
     await fails(["brain.update", "--conversation", c, "--brain", "Painter", "--safe-mode"], /for image brains/);

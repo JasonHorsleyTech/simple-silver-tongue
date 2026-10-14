@@ -3,6 +3,7 @@ import { nowIso } from "../lib/ids.ts";
 import type { StreamEvent } from "../registry.ts";
 import { listFiles, readJson, removeFile, writeJson, type Vault } from "../storage/vault.ts";
 import type { UnreadableConversation } from "./format.ts";
+import { settleStaleImages } from "./images.ts";
 import type { Conversation, LedgerMessage } from "./types.ts";
 
 /**
@@ -19,6 +20,7 @@ const keyOf = (vault: Vault, id: string) => `${vault.dir}\0${id}`;
 export async function loadConversation(vault: Vault, id: string): Promise<Conversation> {
   const conv = await readJson<Conversation>(vault, fileOf(id));
   if (!conv) throw notFound(`No conversation ${id}. List yours with ./ss conversation.list.`);
+  await settleStaleImages(vault, conv); // a pending image no job owns is settled here, never left pending (T05)
   return conv;
 }
 
@@ -75,11 +77,13 @@ export async function mutateConversation<T>(
   });
 }
 
-export async function deleteConversationFile(vault: Vault, id: string): Promise<void> {
-  await serialize(keyOf(vault, id), async () => {
+/** Delete the document and return what it was, so the caller can remove its image files too. */
+export async function deleteConversationFile(vault: Vault, id: string): Promise<Conversation> {
+  return serialize(keyOf(vault, id), async () => {
     if (generations.has(keyOf(vault, id))) throw busy(id); // checked inside the queue, like assertLedgerIdle
-    await loadConversation(vault, id); // 404 if it isn't there
+    const conv = await loadConversation(vault, id); // 404 if it isn't there
     await removeFile(vault, fileOf(id));
+    return conv;
   });
 }
 
@@ -129,9 +133,9 @@ type Live = {
 const generations = new Map<string, Generation>();
 
 const busy = (id: string) =>
-  conflict(`Conversation ${id} is busy: a reply is still being generated. Wait for it to finish, then try again.`);
+  conflict(`Conversation ${id} is busy: a reply or an image is still being generated. Wait for it to finish, then try again.`);
 
-const MERGEABLE = new Set(["reasoning", "delta", "tool_args"]);
+const MERGEABLE = new Set(["reasoning", "delta", "prompt"]);
 
 export type GenerationHandle = {
   /**
@@ -281,7 +285,14 @@ export function assertBrainIdle(vault: Vault, id: string, brain: { id: string; n
  * What generation.stop reports: whether anything was running, what the stopped generation saved, and a note
  * on the bill (a stop saves waiting, not money), so the CLI and the browser say the same thing.
  */
-export type StopOutcome = { stopped: boolean; message: LedgerMessage | null; error?: ErrorBody; note?: string };
+export type StopOutcome = {
+  stopped: boolean;
+  message: LedgerMessage | null;
+  error?: ErrorBody;
+  note?: string;
+  /** T05: the stop came while an image was being made. Venice was already making (and billing) it, so it was finished and kept. */
+  imageFinished?: true;
+};
 
 /**
  * Stop the running generation (generation.stop) and wait until it has settled, so its partial reply is
@@ -291,12 +302,16 @@ export type StopOutcome = { stopped: boolean; message: LedgerMessage | null; err
 export async function stopGeneration(vault: Vault, id: string, waitMs = 10_000): Promise<StopOutcome | null> {
   const gen = generations.get(keyOf(vault, id));
   if (!gen) return null;
+  const painting = gen.live.log.some((ev) => ev.type === "image_pending"); // past the prompt: the image is with Venice
   gen.stop.abort(new CommandError(499, "stopped", "Stopped."));
   let timer: ReturnType<typeof setTimeout> | undefined;
   await Promise.race([gen.settled, new Promise<void>((resolve) => (timer = setTimeout(resolve, waitMs)))]);
   clearTimeout(timer);
-  const last = gen.live.log.at(-1);
-  const outcome: StopOutcome = { stopped: true, message: last?.type === "done" ? ((last.message as LedgerMessage | undefined) ?? null) : null };
+  // The newest saved message the generation reported: its done, or (an image still being painted, which a stop
+  // doesn't cut short, since Venice is already making and billing it) the message its image_pending carried.
+  const last = gen.live.log.findLast((ev) => ev.type === "done" || ev.type.startsWith("image_"));
+  const outcome: StopOutcome = { stopped: true, message: (last?.message as LedgerMessage | null | undefined) ?? null };
   if (gen.live.failure) outcome.error = gen.live.failure.body;
+  if (painting) outcome.imageFinished = true;
   return outcome;
 }

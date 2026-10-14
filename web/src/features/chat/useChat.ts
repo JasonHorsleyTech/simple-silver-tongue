@@ -231,7 +231,7 @@ export function useChat(id: string): Chat {
           void refreshConversations();
           break;
         default:
-          break; // tool_args and image events arrive with image brains (T05)
+          break; // prompt and image events: image brains (T05), not shown yet
       }
     },
     [upsertMessage, saveReply, flush, schedule],

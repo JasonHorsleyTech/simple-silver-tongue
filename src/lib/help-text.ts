@@ -61,12 +61,14 @@ export function renderCommandHelp(c: CommandInfo): string {
     return [`${flag}${argLabel(s)}`, desc];
   };
   const rows: string[][] = [];
-  for (const [key, s] of props) {
-    // An object arg also lists its fields, each settable on its own (--final-reminder.content "...").
+  // An object arg also lists its fields, each settable on its own (--final-reminder.content "..."), nested
+  // objects included (--settings.image.width).
+  const add = (path: string, s: JsonSchema, isRequired: boolean, depth: number) => {
     const fields = Object.entries((s.properties ? s : s.anyOf?.find((a) => a.properties))?.properties ?? {});
-    rows.push(row(`--${kebab(key)}`, s, required.has(key), fields.length ? "Any of these fields, as JSON, or one flag each:" : ""));
-    for (const [sub, f] of fields) rows.push(row(`  --${kebab(key)}.${kebab(sub)}`, f, false));
-  }
+    rows.push(row(`${"  ".repeat(depth)}--${path}`, s, isRequired, fields.length ? "Any of these fields, as JSON, or one flag each:" : ""));
+    for (const [sub, f] of fields) add(`${path}.${kebab(sub)}`, f, false, depth + 1);
+  };
+  for (const [key, s] of props) add(kebab(key), s, required.has(key), 0);
   const w = Math.max(0, ...rows.map((r) => r[0]!.length));
   for (const [flag, desc] of rows) out.push(`  ${flag!.padEnd(w)}  ${desc}`);
   out.push(

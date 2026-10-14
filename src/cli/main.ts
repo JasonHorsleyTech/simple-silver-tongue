@@ -191,7 +191,8 @@ async function printStream(res: Response, json: boolean, io: Io, dim: (s: string
     }
     const ev = JSON.parse(line) as { type: string; [k: string]: any };
     if (ev.type === "done" || ev.type === "error") ended = true;
-    if (ev.type === "error") code = EXIT.failed;
+    // An image_error means the message is saved but its image isn't (T05): exit 1 so a script notices.
+    if (ev.type === "error" || ev.type === "image_error") code = EXIT.failed;
     if (json) return;
     if (inReasoning && ev.type !== "reasoning") {
       io.stderr.write("\n");
@@ -199,7 +200,7 @@ async function printStream(res: Response, json: boolean, io: Io, dim: (s: string
     }
     switch (ev.type) {
       case "delta":
-      case "tool_args":
+      case "prompt":
         io.stdout.write(String(ev.delta ?? ""));
         break;
       case "reasoning":
@@ -213,13 +214,16 @@ async function printStream(res: Response, json: boolean, io: Io, dim: (s: string
         io.stderr.write(dim(`[${ev.brainName ?? ev.brainId ?? "start"}]\n`));
         break;
       case "image_pending":
-        io.stderr.write(dim(`\n(generating image ${ev.imageId ?? ""}...)\n`));
+        io.stderr.write(dim(`\n(making image ${ev.imageId ?? ""} with ${ev.model ?? "the image model"}...)\n`));
         break;
-      case "image_done":
-        io.stderr.write(dim(`(image ready: ${ev.imageId ?? ""})\n`));
+      case "image_done": {
+        const ext = String(ev.image?.mime ?? "image/png").replace("image/", "").replace("jpeg", "jpg");
+        const flags = [ev.image?.blurred ? "blurred by safe mode" : "", ev.image?.contentViolation ? "flagged by Venice's content policy" : ""].filter(Boolean);
+        io.stderr.write(dim(`(image ready${flags.length ? `, ${flags.join(", ")}` : ""}: ./ss image.get --id ${ev.imageId} --out ${ev.imageId}.${ext})\n`));
         break;
+      }
       case "image_error":
-        io.stderr.write(`\nimage error: ${ev.error?.message ?? ev.error}\n`);
+        io.stderr.write(`\nimage error: ${ev.error?.message ?? ev.error}\nRetry it: ./ss image.retry --conversation ${ev.retry?.args?.conversation ?? "<conversation>"} --message ${ev.messageId}\n`);
         break;
       case "done":
         io.stdout.write("\n");
