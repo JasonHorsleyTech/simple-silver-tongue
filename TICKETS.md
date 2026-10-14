@@ -180,7 +180,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T06: Multi-user encryption hardening (CP5) · `qa`
+## T06: Multi-user encryption hardening (CP5) · `triage`
 
 **Engineer scope**
 - An audit: for an encrypted user, every file under `data/users/<u>/` except `user.json` is ciphertext, conversations and images alike. No plaintext anywhere else: logs, temp files, `.run/`, error messages.
