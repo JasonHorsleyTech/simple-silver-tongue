@@ -1,11 +1,17 @@
 /**
- * Sentences that both clients show word for word. Dependency-free, so the web app imports the values
- * themselves (as it imports types.ts's types) and can't drift from what the CLI prints.
+ * Sentences (and a palette) that both clients show as they are. Dependency-free, so the web app imports the
+ * values themselves (as it imports types.ts's types) and can't drift from what the CLI prints.
  */
 
 /** The same words wherever a stop is offered or reported (T03 QA-2: measured live, a stopped reply is billed in full). */
 export const STOP_BILL_NOTE =
   "Stopping saves waiting, not money: Venice still writes and bills the whole reply, so its cost is added to the conversation once Venice reports it.";
+
+/** The payload view's and the brain editor's words for reasoning (design.md, "Reasoning on adds provider-side text"). */
+export const REASONING_NOTE = "Reasoning on: the provider adds a small hidden instruction we can't see or edit.";
+
+/** Brain badge colors, handed out in order to new brains (nextColor); the browser's color picker offers the same ones. */
+export const BRAIN_COLORS = ["#60a5fa", "#f59e0b", "#34d399", "#f472b6", "#a78bfa", "#f87171", "#22d3ee", "#a3e635"] as const;
 
 /**
  * The editable example every brain's final reminder starts with (T04). It is on for brains added beside the

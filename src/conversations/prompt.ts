@@ -232,8 +232,8 @@ export function assertAnswerable(body: Pick<ChatRequest, "messages">): void {
   if (why) throw new CommandError(400, "nothing_to_answer", why);
 }
 
-/** The payload view's words for reasoning (design.md, "Reasoning on adds provider-side text"). */
-export const REASONING_NOTE = "Reasoning on: the provider adds a small hidden instruction we can't see or edit.";
+/** The payload view's words for reasoning; in wording.ts so the browser's brain editor shows the same sentence. */
+export { REASONING_NOTE } from "./wording.ts";
 
 /** Whether this brain's request turns reasoning on: its toggle is on and the model can reason. */
 export function reasoningOn(brain: Brain, model: ModelCaps): boolean {

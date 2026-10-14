@@ -6,13 +6,27 @@
  * The conversation document and model types are the server's own (type-only imports of dependency-free
  * files), so the UI can't drift from what is on disk. Command args are still written out here by hand.
  */
-import type { Brain, ChatMessage, ChatRequest, Conversation, LedgerMessage, MessageVersion, RetryRequest, Templates } from "../../../src/conversations/types.ts";
+import type {
+  Brain,
+  BrainTool,
+  ChatMessage,
+  ChatRequest,
+  Conversation,
+  LedgerMessage,
+  MessageVersion,
+  RetryRequest,
+  SetupMessage,
+  Templates,
+} from "../../../src/conversations/types.ts";
 import type { ModelInfo } from "../../../src/venice/models.ts";
 
-export type { Brain, ChatMessage, ChatRequest, Conversation, LedgerMessage, MessageVersion, ModelInfo, RetryRequest, Templates };
+export type { Brain, BrainTool, ChatMessage, ChatRequest, Conversation, LedgerMessage, MessageVersion, ModelInfo, RetryRequest, SetupMessage, Templates };
 
-/** The server's own sentence for what a stop does and doesn't save (shown next to Stop, and with its result). */
-export { STOP_BILL_NOTE } from "../../../src/conversations/wording.ts";
+/**
+ * The server's own words and values, shown as they are: what a stop does and doesn't save, the reasoning
+ * warning, the badge palette new brains get their colors from, and the setup message pre-fill's default label.
+ */
+export { BRAIN_COLORS, DEFAULT_SETUP_LABEL, REASONING_NOTE, STOP_BILL_NOTE } from "../../../src/conversations/wording.ts";
 
 export type User = { username: string; encrypted: boolean };
 export type Who = User | { username: null };
@@ -70,15 +84,23 @@ export type ConversationUpdate = {
   templates?: Partial<Templates>;
 };
 
-export type BrainUpdate = {
-  conversation: string;
-  brain?: string;
+/** The fields brain.update and brain.add take. Safe mode and tool text are refused on a text brain (400). */
+export type BrainFields = {
   name?: string;
   color?: string;
   systemPrompt?: string;
+  /** Locked once the brain has messages (409 kind_locked). */
+  kind?: Brain["kind"];
   reasoning?: Partial<Brain["reasoning"]>;
   finalReminder?: Partial<Brain["finalReminder"]>;
+  safeMode?: boolean;
+  tool?: Partial<BrainTool>;
 };
+
+export type BrainUpdate = BrainFields & { conversation: string; brain?: string };
+
+/** Every setup command answers with the whole ordered list: replace conv.setup with it. */
+export type SetupListing = { conversationId: string; setup: SetupMessage[]; changed?: string; deleted?: string };
 
 /** For commands that take no arguments: they can then be called as api.call("auth.whoami"). */
 export type NoArgs = Record<string, never>;
@@ -100,6 +122,18 @@ export type Commands = {
   "conversation.update": { args: ConversationUpdate; result: Conversation };
   "conversation.delete": { args: { id: string }; result: { deleted: string } };
   "brain.update": { args: BrainUpdate; result: Brain };
+  /** Without color: the first unused badge color. Without finalReminder: on, pre-filled with REMINDER_EXAMPLE. */
+  "brain.add": { args: BrainFields & { conversation: string; name: string; systemPrompt: string }; result: Brain };
+  /** Only a brain that has never spoken, isn't the default and isn't writing (409 brain_in_use / default_brain / conflict). */
+  "brain.delete": { args: { conversation: string; brain: string }; result: { conversationId: string; deleted: string; name: string; brains: string[] } };
+  "brain.set-default": { args: { conversation: string; brain: string }; result: Brain };
+  /** Without content: pre-filled "<!-- This is the <label>. -->" (label default "World Bible"). Positions are 1-based. */
+  "setup.add": { args: { conversation: string; label?: string; content?: string; position?: number }; result: SetupListing };
+  "setup.update": { args: { conversation: string; setup: string; label?: string; content?: string }; result: SetupListing };
+  "setup.move": { args: { conversation: string; setup: string; position: number }; result: SetupListing };
+  "setup.delete": { args: { conversation: string; setup: string }; result: SetupListing };
+  /** Words in a brain's mouth (or yours, as "player"), appended without generating anything. 409 while a reply is being generated. */
+  "message.add": { args: { conversation: string; as: string; content: string }; result: MessageView };
   "prompt.preview": {
     args: { conversation: string; brain?: string; content?: string; regenerate?: boolean; message?: string; steer?: string };
     result: Preview;

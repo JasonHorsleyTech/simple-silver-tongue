@@ -1,4 +1,4 @@
-import { CornerDownRight } from "lucide-react";
+import { CornerDownRight, PenLine } from "lucide-react";
 import type { ReactNode } from "react";
 import { cx } from "../../lib/cx.ts";
 import { clockTime, fullTime } from "../../lib/format.ts";
@@ -23,12 +23,15 @@ export function PlayerBubble({ children, footer, pending }: { children: ReactNod
 
 /**
  * A brain's message: badge on top (with the time, or what is being written, and the steer behind the version
- * shown), then the body at full column width. Live replies use the same frame, so nothing jumps when one is saved.
+ * shown), then the body beside a thin rail in the brain's color, so who is speaking stays clear deep inside a
+ * long reply and at a glance down a long campaign. Live replies use the same frame, so nothing jumps when one
+ * is saved.
  */
 export function BrainMessageFrame({
   name,
   color,
   time,
+  authored,
   status,
   origin,
   reasoning,
@@ -38,6 +41,8 @@ export function BrainMessageFrame({
   name: string;
   color: string;
   time?: string;
+  /** Words you put in this brain's mouth (message.add), not generated. */
+  authored?: boolean;
   /** In place of the time: "writing version 4…". */
   status?: ReactNode;
   /** Where the version shown came from (SteerNote). */
@@ -56,11 +61,24 @@ export function BrainMessageFrame({
               {clockTime(time)}
             </time>
           ))}
+        {authored && (
+          <span
+            title={`You wrote this in ${name}'s mouth. ${name} sees it as its own reply; the other brains see it framed with its name.`}
+            className="flex shrink-0 cursor-help items-center gap-1 text-[11.5px] text-faint"
+          >
+            <span aria-hidden className="text-line-strong">
+              ·
+            </span>
+            <PenLine aria-hidden className="size-3" /> written by you
+          </span>
+        )}
         {origin}
       </div>
-      {reasoning}
-      {children}
-      {footer}
+      <div className="ml-[10px] border-l-2 pl-[17px]" style={{ borderColor: `color-mix(in oklab, ${color} 32%, transparent)` }}>
+        {reasoning}
+        {children}
+      </div>
+      {footer && <div className="ml-[10px] pl-[13px]">{footer}</div>}
     </div>
   );
 }

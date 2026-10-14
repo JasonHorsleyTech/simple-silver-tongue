@@ -1,15 +1,16 @@
-import { X } from "lucide-react";
+import { PenLine, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Notice } from "../../components/Notice.tsx";
 import { Spinner } from "../../components/Spinner.tsx";
 import { Link } from "../../lib/router.tsx";
 import { readLocal, writeLocal } from "../../lib/storage.ts";
 import { useMediaQuery } from "../../lib/useMediaQuery.ts";
+import type { Brain, Conversation } from "../../api/types.ts";
 import { PayloadDialog, type PayloadRequest } from "../payload/PayloadDialog.tsx";
-import { SettingsPanel } from "../settings/SettingsPanel.tsx";
+import { SETTINGS_TABS, SettingsPanel, type SettingsTab } from "../settings/SettingsPanel.tsx";
 import { BrainBadge } from "./BrainBadge.tsx";
 import { ChatHeader } from "./ChatHeader.tsx";
-import { Composer } from "./Composer.tsx";
+import { AS_PLAYER, Composer } from "./Composer.tsx";
 import { Scrollback } from "./Scrollback.tsx";
 import { useChat } from "./useChat.ts";
 
@@ -20,6 +21,12 @@ import { useChat } from "./useChat.ts";
 const drafts = new Map<string, string>();
 
 const SETTINGS_OPEN_KEY = "ss.settingsOpen";
+const SETTINGS_TAB_KEY = "ss.settingsTab";
+
+function savedTab(): SettingsTab {
+  const t = readLocal(SETTINGS_TAB_KEY);
+  return SETTINGS_TABS.some((x) => x.id === t) ? (t as SettingsTab) : "brains";
+}
 
 /** /c/<id>: header, scrollback and composer, with the settings beside it (docked when wide, a drawer when not). */
 export function ChatView({ id }: { id: string }) {
@@ -27,7 +34,12 @@ export function ChatView({ id }: { id: string }) {
   const { conv, loadError } = chat;
   const [draft, setDraftState] = useState(() => drafts.get(id) ?? "");
   const [settingsOpen, setSettingsOpen] = useState(() => readLocal(SETTINGS_OPEN_KEY) === "1");
-  const [payload, setPayload] = useState<{ kind: "turn" } | Extract<PayloadRequest, { kind: "regenerate" }> | null>(null);
+  const [tab, setTabState] = useState<SettingsTab>(savedTab);
+  /** Bumped to open a tab's add form from outside it (the empty conversation's "Add a brain"). */
+  const [addNonce, setAddNonce] = useState({ brain: 0, setup: 0 });
+  /** The composer adds words as this brain (or you) instead of sending. */
+  const [writeAs, setWriteAs] = useState<string | null>(null);
+  const [payload, setPayload] = useState<{ kind: "turn"; brainId: string | null } | Extract<PayloadRequest, { kind: "regenerate" }> | null>(null);
   const previewRegenerate = useCallback((messageId: string, steer: string) => setPayload({ kind: "regenerate", messageId, steer }), []);
   const docked = useMediaQuery("(min-width: 1180px)");
 
@@ -48,6 +60,25 @@ export function ChatView({ id }: { id: string }) {
     });
   }, []);
 
+  const setTab = useCallback((t: SettingsTab) => {
+    setTabState(t);
+    writeLocal(SETTINGS_TAB_KEY, t);
+  }, []);
+
+  const openSettings = useCallback(
+    (t: SettingsTab, add?: "brain" | "setup") => {
+      toggleSettings(true);
+      setTab(t);
+      if (add) setAddNonce((n) => ({ ...n, [add]: n[add] + 1 }));
+    },
+    [toggleSettings, setTab],
+  );
+
+  // Another conversation: back to sending.
+  useEffect(() => {
+    setWriteAs(null);
+  }, [id]);
+
   // Escape closes the drawer (not the docked panel, which is part of the layout).
   useEffect(() => {
     if (!settingsOpen || docked) return;
@@ -61,6 +92,17 @@ export function ChatView({ id }: { id: string }) {
     setDraft("");
     const back = await chat.send(text, brainId);
     if (back !== null && !drafts.get(id)) setDraft(back); // not saved: give it back, unless you've typed on
+  }
+
+  /** The composer's text, added as `writeAs` (message.add): back to sending once it is in. */
+  async function addAs(): Promise<string | null> {
+    if (!writeAs) return null;
+    const problem = await chat.add(writeAs, draft);
+    if (!problem) {
+      setDraft("");
+      setWriteAs(null);
+    }
+    return problem;
   }
 
   if (loadError) {
@@ -100,10 +142,17 @@ export function ChatView({ id }: { id: string }) {
   const panel = (
     <SettingsPanel
       conv={conv}
+      tab={tab}
+      onTab={setTab}
       busy={chat.busy}
+      writingBrainId={chat.busy ? (live?.brainId ?? null) : null}
+      addBrainNonce={addNonce.brain}
+      addSetupNonce={addNonce.setup}
       onClose={() => toggleSettings(false)}
       onConversation={chat.replaceConversation}
       onBrain={chat.replaceBrain}
+      onPatch={chat.patch}
+      onPayload={(brainId) => setPayload({ kind: "turn", brainId })}
     />
   );
 
@@ -113,16 +162,23 @@ export function ChatView({ id }: { id: string }) {
         <ChatHeader
           conv={conv}
           onRenamed={chat.replaceConversation}
-          onOpenPayload={() => setPayload({ kind: "turn" })}
+          onOpenPayload={() => setPayload({ kind: "turn", brainId: null })}
           settingsOpen={settingsOpen}
           onToggleSettings={() => toggleSettings()}
         />
         <Scrollback
           conv={conv}
           chat={chat}
-          onRetry={() => void chat.send("")}
+          onRetry={() => void chat.retry()}
           onPreviewRegenerate={previewRegenerate}
-          empty={<EmptyConversation name={brain.name} color={brain.color} systemPrompt={brain.systemPrompt} onEdit={() => toggleSettings(true)} />}
+          empty={
+            <EmptyConversation
+              conv={conv}
+              brain={brain}
+              onSettings={openSettings}
+              onWriteOpening={() => setWriteAs(brain.kind === "text" ? brain.id : (conv.brains.find((b) => b.kind === "text")?.id ?? AS_PLAYER))}
+            />
+          }
         />
         {notice && (
           <div className="mx-auto w-full max-w-3xl px-4 pb-2 sm:px-6">
@@ -146,6 +202,9 @@ export function ChatView({ id }: { id: string }) {
             if (chat.notice) chat.dismissNotice();
           }}
           onSend={(b) => void send(b)}
+          onAdd={addAs}
+          writeAs={writeAs}
+          onWriteAs={setWriteAs}
           brains={conv.brains}
           defaultBrainId={conv.defaultBrainId}
           busy={chat.busy}
@@ -173,8 +232,10 @@ export function ChatView({ id }: { id: string }) {
       {payload && (
         <PayloadDialog
           conversationId={conv.id}
-          brain={payload.kind === "regenerate" ? brainOf(payload.messageId) : brain}
-          request={payload.kind === "regenerate" ? payload : { kind: "turn", draft }}
+          brains={conv.brains}
+          brainId={payload.kind === "regenerate" ? brainOf(payload.messageId).id : (payload.brainId ?? brain.id)}
+          // In "write as" mode the composer's text isn't a message to anyone, so it isn't in the preview.
+          request={payload.kind === "regenerate" ? payload : { kind: "turn", draft: writeAs ? "" : draft }}
           onClose={() => setPayload(null)}
         />
       )}
@@ -182,16 +243,77 @@ export function ChatView({ id }: { id: string }) {
   );
 }
 
-/** A fresh conversation: show who is listening and what they were told, so nothing about it is hidden. */
-function EmptyConversation({ name, color, systemPrompt, onEdit }: { name: string; color: string; systemPrompt: string; onEdit(): void }) {
+/**
+ * A fresh conversation: who is listening and what the default brain was told, so nothing about it is hidden,
+ * then the three things a campaign is set up with: the brains, the setup messages, and an opening in a brain's
+ * own words. Each opens where it is done. A plain chat can ignore all of it and just type.
+ */
+function EmptyConversation({
+  conv,
+  brain,
+  onSettings,
+  onWriteOpening,
+}: {
+  conv: Conversation;
+  brain: Brain;
+  onSettings(tab: SettingsTab, add?: "brain" | "setup"): void;
+  onWriteOpening(): void;
+}) {
+  const row = "flex items-center gap-3 px-4 py-3";
+  const link = "shrink-0 rounded-md px-2 py-1 text-[12.5px] text-muted transition-colors hover:bg-hover hover:text-fg";
   return (
-    <div className="mx-auto mt-[12vh] max-w-xl text-center">
-      <BrainBadge name={name} color={color} />
-      <p className="mt-4 text-[13px] text-faint">System prompt</p>
-      <blockquote className="mx-auto mt-2 line-clamp-6 max-w-lg text-[14.5px] leading-6 whitespace-pre-wrap text-muted">{systemPrompt}</blockquote>
-      <button type="button" onClick={onEdit} className="mt-3 text-[12.5px] text-faint underline decoration-line-strong underline-offset-4 hover:text-muted">
-        Edit in settings
-      </button>
+    <div className="mx-auto mt-[9vh] max-w-xl">
+      <div className="text-center">
+        <BrainBadge name={brain.name} color={brain.color} />
+        <p className="mt-4 text-[13px] text-faint">{conv.brains.length > 1 ? `${brain.name}'s system prompt (the default brain)` : "System prompt"}</p>
+        <blockquote className="mx-auto mt-2 line-clamp-5 max-w-lg text-[14.5px] leading-6 whitespace-pre-wrap text-muted">{brain.systemPrompt}</blockquote>
+        <button
+          type="button"
+          onClick={() => onSettings("brains")}
+          className="mt-3 text-[12.5px] text-faint underline decoration-line-strong underline-offset-4 hover:text-muted"
+        >
+          Edit in settings
+        </button>
+      </div>
+
+      <div className="mt-9 divide-y divide-line rounded-xl border border-line bg-panel/60 text-[13px]">
+        <div className={row}>
+          <span className="w-24 shrink-0 text-faint">Brains</span>
+          <span className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+            {conv.brains.map((b) => (
+              <BrainBadge key={b.id} name={b.name} color={b.color} />
+            ))}
+          </span>
+          <button type="button" className={link} onClick={() => onSettings("brains", "brain")}>
+            <Plus aria-hidden className="mr-1 inline size-3.5 align-[-2px]" />
+            Add a brain
+          </button>
+        </div>
+        <div className={row}>
+          <span className="w-24 shrink-0 text-faint">Setup</span>
+          <span className="min-w-0 flex-1 truncate text-muted">
+            {conv.setup.length ? conv.setup.map((s) => s.label).join(" · ") : <span className="text-faint">Nothing every brain reads first, yet</span>}
+          </span>
+          <button type="button" className={link} onClick={() => onSettings("setup", conv.setup.length ? undefined : "setup")}>
+            {conv.setup.length ? (
+              "Edit"
+            ) : (
+              <>
+                <Plus aria-hidden className="mr-1 inline size-3.5 align-[-2px]" />
+                Add a World Bible
+              </>
+            )}
+          </button>
+        </div>
+        <div className={row}>
+          <span className="w-24 shrink-0 text-faint">Opening</span>
+          <span className="min-w-0 flex-1 text-faint">Write the first scene yourself, or just send a message below.</span>
+          <button type="button" className={link} onClick={onWriteOpening}>
+            <PenLine aria-hidden className="mr-1 inline size-3.5 align-[-2px]" />
+            Write as {brain.kind === "text" ? brain.name : "…"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

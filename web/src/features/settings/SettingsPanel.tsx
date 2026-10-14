@@ -1,141 +1,127 @@
-import { Trash2, X } from "lucide-react";
-import { useState, type ReactNode } from "react";
-import { api } from "../../api/client.ts";
-import { errorMessage } from "../../api/errors.ts";
+import { X } from "lucide-react";
 import type { Brain, Conversation } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
-import { navigate } from "../../lib/router.tsx";
-import { refreshConversations } from "../conversations/store.ts";
-import { BrainEditor } from "./BrainEditor.tsx";
-import { useTextModels } from "./models.ts";
+import { cx } from "../../lib/cx.ts";
+import { BrainsTab } from "./BrainsTab.tsx";
+import { ConversationTab } from "./ConversationTab.tsx";
+import { useModels } from "./models.ts";
+import { SetupTab } from "./SetupTab.tsx";
 import { TemplatesEditor } from "./TemplatesEditor.tsx";
 
+export type SettingsTab = "brains" | "setup" | "templates" | "conversation";
+
+export const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
+  { id: "brains", label: "Brains" },
+  { id: "setup", label: "Setup" },
+  { id: "templates", label: "Templates" },
+  { id: "conversation", label: "Conversation" },
+];
+
 /**
- * The conversation's settings: every text that reaches a model is editable here (hard requirement 1).
- * Sections, top to bottom: brains (T02: the one default brain), framing templates, then the conversation
- * itself. T04 grows it: model pickers and max tokens under Conversation, a setup-messages section, and the
- * brains section becomes a list with add, reorder and delete.
+ * The conversation's settings, in four tabs so a campaign's worth of configuration never reads as one wall of
+ * forms: Brains (who is at the table), Setup (what every brain is told first), Templates (how they see each
+ * other) and Conversation (title, models, limits, delete). Every text that reaches a model is editable here
+ * (hard requirement 1); each brain's braces show its exact payload. Docked beside the chat when wide, a drawer
+ * when narrow; play carries on beside it.
  */
 export function SettingsPanel({
   conv,
+  tab,
+  onTab,
+  busy,
+  writingBrainId,
+  addBrainNonce,
+  addSetupNonce,
   onClose,
   onConversation,
   onBrain,
-  busy,
+  onPatch,
+  onPayload,
 }: {
   conv: Conversation;
+  tab: SettingsTab;
+  onTab(t: SettingsTab): void;
+  busy: boolean;
+  writingBrainId: string | null;
+  addBrainNonce: number;
+  addSetupNonce: number;
   onClose(): void;
   onConversation(c: Conversation): void;
   onBrain(b: Brain): void;
-  busy: boolean;
+  onPatch(fn: (c: Conversation) => Conversation): void;
+  onPayload(brainId: string): void;
 }) {
-  const { models, error: modelsError } = useTextModels();
-  const model = models ? (models.find((m) => m.id === conv.settings.textModel) ?? null) : undefined;
+  const textModels = useModels("text");
+  const imageModels = useModels("image");
+  const model = textModels.models ? (textModels.models.find((m) => m.id === conv.settings.textModel) ?? null) : undefined;
+  const count = (t: SettingsTab) => (t === "brains" ? conv.brains.length : t === "setup" ? conv.setup.length : null);
 
   return (
     <div className="flex h-full flex-col bg-panel">
-      <div className="flex h-14 shrink-0 items-center gap-2 border-b border-line pr-3 pl-5">
-        <h2 className="flex-1 text-[14px] font-semibold tracking-tight text-silver-hi">Settings</h2>
-        <Button variant="ghost" size="icon" aria-label="Close settings" onClick={onClose}>
+      <div className="flex h-14 shrink-0 items-stretch gap-1 border-b border-line pr-2 pl-3">
+        <div role="tablist" aria-label="Settings" className="flex min-w-0 flex-1 items-stretch">
+          {SETTINGS_TABS.map((t) => {
+            const n = count(t.id);
+            const on = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                id={`st-${t.id}`}
+                role="tab"
+                type="button"
+                aria-selected={on}
+                aria-controls="settings-body"
+                onClick={() => onTab(t.id)}
+                className={cx(
+                  "relative inline-flex items-center gap-1.5 px-2.5 text-[13px] transition-colors",
+                  on ? "font-medium text-silver-hi" : "text-faint hover:text-muted",
+                )}
+              >
+                {t.label}
+                {n !== null && <span className={cx("text-[11.5px] tabular-nums", on ? "text-muted" : "text-faint/80")}>{n}</span>}
+                {on && <span aria-hidden className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-silver" />}
+              </button>
+            );
+          })}
+        </div>
+        <Button variant="ghost" size="icon" aria-label="Close settings" className="self-center" onClick={onClose}>
           <X aria-hidden className="size-4" />
         </Button>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <p className="border-b border-line px-5 py-3 text-[12.5px] leading-5 text-faint">
-          Everything here is sent to the model word for word. <span className="text-muted">Payload</span> in the header shows the exact request.
-        </p>
-
-        <Section title={conv.brains.length === 1 ? "Brain" : "Brains"}>
-          {modelsError && <Notice tone="error" className="mb-4">Couldn't load the model list. {modelsError}</Notice>}
-          <div className="space-y-10">
-            {conv.brains.map((b) => (
-              <BrainEditor key={b.id} conversationId={conv.id} brain={b} isDefault={b.id === conv.defaultBrainId} model={model} onSaved={onBrain} />
-            ))}
+      <div key={tab} id="settings-body" role="tabpanel" aria-labelledby={`st-${tab}`} className="min-h-0 flex-1 overflow-y-auto">
+        {tab === "brains" && (
+          <>
+            {textModels.error && (
+              <Notice tone="error" className="mx-5 mt-4">
+                Couldn't load the model list. {textModels.error}
+              </Notice>
+            )}
+            <BrainsTab
+              conv={conv}
+              model={model}
+              writingBrainId={writingBrainId}
+              addNonce={addBrainNonce}
+              onBrain={onBrain}
+              onPatch={onPatch}
+              onPayload={onPayload}
+            />
+          </>
+        )}
+        {tab === "setup" && <SetupTab conv={conv} addNonce={addSetupNonce} onSetup={(setup) => onPatch((c) => ({ ...c, setup }))} />}
+        {tab === "templates" && (
+          <div className="px-5 pt-4 pb-8">
+            <p className="mb-5 text-[12.5px] leading-5 text-faint">
+              How each brain sees the others: your messages, other brains' lines and pictures, and a steer. Plain text, sent as written; the payload view shows
+              the effect.
+            </p>
+            <TemplatesEditor conv={conv} onSaved={onConversation} />
           </div>
-        </Section>
-
-        <Section title="Framing templates">
-          <TemplatesEditor conv={conv} onSaved={onConversation} />
-        </Section>
-
-        <Section title="Conversation">
-          <dl className="space-y-1 text-[13px]">
-            <div className="flex gap-2">
-              <dt className="w-16 shrink-0 text-faint">Model</dt>
-              <dd className="min-w-0">
-                <span className="font-mono text-[12.5px] text-fg">{conv.settings.textModel}</span>
-                {model && <span className="block text-[12px] text-faint">{`${model.price} · ${model.privacy}`}</span>}
-              </dd>
-            </div>
-            <div className="flex gap-2">
-              <dt className="w-16 shrink-0 text-faint">Id</dt>
-              <dd className="font-mono text-[12.5px] text-muted select-all">{conv.id}</dd>
-            </div>
-          </dl>
-          <DeleteConversation conv={conv} busy={busy} />
-        </Section>
+        )}
+        {tab === "conversation" && (
+          <ConversationTab conv={conv} textModels={textModels} imageModels={imageModels} busy={busy} onConversation={onConversation} />
+        )}
       </div>
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="border-b border-line px-5 pt-5 pb-6 last:border-b-0">
-      <h3 className="mb-4 text-[11px] font-semibold tracking-[0.08em] text-faint uppercase">{title}</h3>
-      {children}
-    </section>
-  );
-}
-
-function DeleteConversation({ conv, busy }: { conv: Conversation; busy: boolean }) {
-  const [confirming, setConfirming] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function remove() {
-    setPending(true);
-    setError(null);
-    try {
-      await api.call("conversation.delete", { id: conv.id });
-      await refreshConversations();
-      navigate("/");
-    } catch (err) {
-      setError(errorMessage(err));
-      setPending(false);
-    }
-  }
-
-  return (
-    <div className="mt-6">
-      {error && <Notice tone="error" className="mb-3">{error}</Notice>}
-      {confirming ? (
-        <div ref={(el) => el?.scrollIntoView({ block: "nearest", behavior: "smooth" })} className="rounded-lg border border-red-400/25 bg-red-400/[0.06] p-3">
-          <p className="text-[13px] text-red-100">
-            Delete “{conv.title}” and its {conv.messages.length} message{conv.messages.length === 1 ? "" : "s"} for good?
-          </p>
-          <div className="mt-2.5 flex gap-2">
-            <Button size="sm" variant="danger" loading={pending} onClick={() => void remove()}>
-              Delete
-            </Button>
-            <Button size="sm" variant="ghost" disabled={pending} onClick={() => setConfirming(false)}>
-              Cancel
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <Button
-          size="sm"
-          variant="ghost"
-          className="-ml-2 text-red-200/80 hover:bg-red-400/10 hover:text-red-100"
-          disabled={busy}
-          title={busy ? "Wait for the reply to finish" : undefined}
-          onClick={() => setConfirming(true)}
-        >
-          <Trash2 aria-hidden className="size-3.5" /> Delete conversation
-        </Button>
-      )}
     </div>
   );
 }

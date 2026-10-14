@@ -5,10 +5,20 @@ import { commands as allCommands } from "../src/commands/index.ts";
 import { conflict } from "../src/lib/errors.ts";
 import { command, streamCommand } from "../src/registry.ts";
 import { createClient } from "../web/src/api/client.ts";
-import { ApiError, errorMessage } from "../web/src/api/errors.ts";
+import { ApiError, errorMessage, retryOf } from "../web/src/api/errors.ts";
 import { readNdjson } from "../web/src/api/ndjson.ts";
 import { STOP_BILL_NOTE as SERVER_STOP_NOTE } from "../src/commands/chat.ts";
-import { STOP_BILL_NOTE, type Commands, type NoArgs, type StreamCommands, type StreamYield } from "../web/src/api/types.ts";
+import { BRAIN_COLORS as SERVER_COLORS } from "../src/conversations/defaults.ts";
+import { REASONING_NOTE as SERVER_REASONING_NOTE } from "../src/conversations/prompt.ts";
+import {
+  BRAIN_COLORS,
+  REASONING_NOTE,
+  STOP_BILL_NOTE,
+  type Commands,
+  type NoArgs,
+  type StreamCommands,
+  type StreamYield,
+} from "../web/src/api/types.ts";
 import { startTestServer } from "./helpers.ts";
 
 // The web app's API client is plain TS with no DOM dependency, so it runs here against the real server.
@@ -209,6 +219,57 @@ describe("web API client against the real server", () => {
     const gone = await api.call("message.delete", { conversation: conv.id, message: id });
     assert.equal(gone.messageCount, 1);
     assert.equal(STOP_BILL_NOTE, SERVER_STOP_NOTE, "the browser shows the server's own sentence");
+  });
+
+  test("T04: the web client's brain, setup, message.add, per-brain turn and retry shapes are what the server accepts", async () => {
+    const api = client();
+    await api.call("auth.login", { username: "web-plain", password: "" });
+    const conv = await api.call("conversation.create", { title: "T04 web", systemPrompt: "You are the GM." });
+    const gm = await api.call("brain.update", { conversation: conv.id, brain: conv.defaultBrainId, name: "Game Master" });
+
+    // Setup messages: every command answers with the whole ordered list.
+    const added = await api.call("setup.add", { conversation: conv.id });
+    assert.equal(added.setup[0]!.content, "<!-- This is the World Bible. -->");
+    const rules = await api.call("setup.add", { conversation: conv.id, label: "House rules" });
+    const moved = await api.call("setup.move", { conversation: conv.id, setup: rules.changed!, position: 1 });
+    assert.deepEqual(moved.setup.map((x) => x.label), ["House rules", "World Bible"]);
+    const updated = await api.call("setup.update", { conversation: conv.id, setup: added.changed!, content: "The Gilded Goat." });
+    assert.equal(updated.setup[1]!.content, "The Gilded Goat.");
+    assert.deepEqual((await api.call("setup.delete", { conversation: conv.id, setup: rules.changed! })).setup.map((x) => x.label), ["World Bible"]);
+
+    // Brains: a new one gets an unused palette color and its reminder on; an image brain takes tool text and safe mode.
+    const dice = await api.call("brain.add", { conversation: conv.id, name: "Dice Master", systemPrompt: "You roll dice." });
+    assert.equal(dice.color, BRAIN_COLORS[1]);
+    assert.equal(dice.finalReminder.enabled, true);
+    const painter = await api.call("brain.add", { conversation: conv.id, name: "Scene Painter", systemPrompt: "You paint.", kind: "image" });
+    const painted = await api.call("brain.update", { conversation: conv.id, brain: painter.id, safeMode: false, tool: { description: "Paint it." } });
+    assert.equal(painted.safeMode, false);
+    assert.equal(painted.tool!.description, "Paint it.");
+
+    // Words in the GM's mouth, then an empty turn to another brain: it just responds.
+    const opener = await api.call("message.add", { conversation: conv.id, as: gm.id, content: "Rain hammers the shutters." });
+    assert.deepEqual(opener.message.author, { type: "brain", brainId: gm.id });
+    assert.equal(opener.message.versions[0]!.source, "authored");
+    const events = await collectStream(api.stream("turn", { conversation: conv.id, brain: dice.id }));
+    const start = events.find((e) => e.type === "start");
+    assert.ok(start?.type === "start" && start.brainId === dice.id && start.brainName === "Dice Master");
+    const preview = await api.call("prompt.preview", { conversation: conv.id, brain: dice.id });
+    assert.equal(preview.body.messages[2]!.content, "<!-- from: Game Master -->\nRain hammers the shutters.");
+
+    // Default and delete: the Dice Master has spoken, so it stays; the unused painter can go once it isn't the default.
+    assert.equal((await api.call("brain.set-default", { conversation: conv.id, brain: painter.id })).id, painter.id);
+    await api.call("brain.set-default", { conversation: conv.id, brain: gm.id });
+    await assert.rejects(api.call("brain.delete", { conversation: conv.id, brain: dice.id }), (e: unknown) => e instanceof ApiError && e.code === "brain_in_use");
+    assert.deepEqual((await api.call("brain.delete", { conversation: conv.id, brain: painter.id })).brains, ["Game Master", "Dice Master"]);
+
+    // A broken reply names its own retry: the same brain, never the default one by accident (T04 QA-1).
+    await api.call("brain.update", { conversation: conv.id, brain: dice.id, finalReminder: { enabled: false } });
+    const broken = await collectStream(api.stream("turn", { conversation: conv.id, brain: dice.id, content: "MOCK_MIDSTREAM_ERROR roll" })).catch((e: unknown) => e);
+    assert.deepEqual(retryOf(broken), { command: "turn", args: { conversation: conv.id, brain: dice.id } });
+    assert.equal(retryOf(new ApiError(409, "conflict", "busy")), null);
+
+    assert.equal(REASONING_NOTE, SERVER_REASONING_NOTE, "the brain editor shows the server's own sentence");
+    assert.deepEqual(BRAIN_COLORS, SERVER_COLORS, "the color picker offers the server's palette");
   });
 
   test("an unreachable server is a network ApiError", async () => {

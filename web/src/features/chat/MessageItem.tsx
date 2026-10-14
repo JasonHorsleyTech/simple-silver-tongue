@@ -170,6 +170,7 @@ export const MessageItem = memo(function MessageItem({
         name={brain?.name ?? "Unknown brain"}
         color={brain?.color ?? "#9aa3b0"}
         time={v.createdAt}
+        authored={v.source === "authored"}
         origin={count > 1 ? <SteerNote steer={v.steer} fromVersion={v.steeredFrom !== undefined ? v.steeredFrom + 1 : null} reroll={message.activeVersion > 0 && v.steer === undefined} /> : null}
         reasoning={v.reasoning ? <Reasoning text={v.reasoning} tokens={v.usage?.reasoningTokens} /> : null}
         footer={

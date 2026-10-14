@@ -1,7 +1,7 @@
 import { DEFAULT_IMAGE_MODEL, DEFAULT_TEXT_MODEL } from "../config.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { SCHEMA_VERSION, type Brain, type Conversation, type SetupMessage, type Templates } from "./types.ts";
-import { DEFAULT_SETUP_LABEL, DEFAULT_TOOL, REMINDER_EXAMPLE, setupPrefill } from "./wording.ts";
+import { BRAIN_COLORS, DEFAULT_SETUP_LABEL, DEFAULT_TOOL, REMINDER_EXAMPLE, setupPrefill } from "./wording.ts";
 
 /**
  * Starting values for new conversations, brains and setup messages. Every string here reaches a model, so
@@ -19,10 +19,8 @@ export const DEFAULT_TEMPLATES: Templates = {
 export const DEFAULT_BRAIN_NAME = "Assistant";
 
 // The pre-fills (reminder, tool text, setup) are in wording.ts, which has no dependencies, so the web imports them too.
-export { DEFAULT_SETUP_LABEL, DEFAULT_TOOL, REMINDER_EXAMPLE, setupPrefill };
-
-/** Brain badge colors, handed out in order. */
-export const BRAIN_COLORS = ["#60a5fa", "#f59e0b", "#34d399", "#f472b6", "#a78bfa", "#f87171", "#22d3ee", "#a3e635"];
+// So is the badge palette, which the browser's color picker offers.
+export { BRAIN_COLORS, DEFAULT_SETUP_LABEL, DEFAULT_TOOL, REMINDER_EXAMPLE, setupPrefill };
 
 /** The first badge color no brain uses yet; once all are taken, they repeat. */
 export function nextColor(conv: Pick<Conversation, "brains">): string {

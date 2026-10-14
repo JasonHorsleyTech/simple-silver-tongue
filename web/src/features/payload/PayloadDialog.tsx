@@ -17,9 +17,26 @@ export type PayloadRequest = { kind: "turn"; draft: string } | { kind: "regenera
 /**
  * "Exact payload": prompt.preview for one brain, which is built by the same code path that turn and
  * message.regenerate send with. For Send it includes the unsent composer text; for Regenerate, the steer as
- * typed so far. Two views: each message verbatim, or the raw JSON body. T04 opens it per brain (`brain`).
+ * typed so far. Two views: each message verbatim, or the raw JSON body.
+ *
+ * For Send, a row of brain badges switches whose point of view it is, so "what does the Dice Master see of
+ * the GM's last line?" is one click: its own lines are `assistant`, everyone else's are framed `user` messages.
  */
-export function PayloadDialog({ conversationId, brain, request, onClose }: { conversationId: string; brain: Brain; request: PayloadRequest; onClose(): void }) {
+export function PayloadDialog({
+  conversationId,
+  brains,
+  brainId: initialBrainId,
+  request,
+  onClose,
+}: {
+  conversationId: string;
+  brains: Brain[];
+  brainId: string;
+  request: PayloadRequest;
+  onClose(): void;
+}) {
+  const [brainId, setBrainId] = useState(initialBrainId);
+  const brain = brains.find((b) => b.id === brainId) ?? brains[0]!;
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -58,7 +75,7 @@ export function PayloadDialog({ conversationId, brain, request, onClose }: { con
       onClose={onClose}
       title={
         <span className="inline-flex items-center gap-2">
-          {regen ? "Regenerate payload" : "Exact payload"} <BrainBadge name={brain.name} color={brain.color} />
+          {regen ? "Regenerate payload" : "Exact payload"} {(regen || brains.length === 1) && <BrainBadge name={brain.name} color={brain.color} />}
         </span>
       }
       subtitle={
@@ -72,8 +89,12 @@ export function PayloadDialog({ conversationId, brain, request, onClose }: { con
           </>
         ) : (
           <>
-            <code className="font-mono text-[11.5px] text-muted">POST /chat/completions</code>, exactly as the next Send would make it, minus the API
-            key. {withDraft ? "Your unsent message is included as the last message." : "With the composer empty, Send asks the brain to answer the ledger as it stands."}
+            <code className="font-mono text-[11.5px] text-muted">POST /chat/completions</code>, exactly as the next Send to {brain.name} would make it, minus
+            the API key.{" "}
+            {withDraft
+              ? "Your unsent message is included, framed, as the last ledger message."
+              : `With the composer empty, ${brain.name} just answers the ledger as it stands.`}
+            {!regen && brains.length > 1 && <BrainSwitcher brains={brains} value={brain.id} onChange={setBrainId} />}
           </>
         )
       }
@@ -123,7 +144,7 @@ export function PayloadDialog({ conversationId, brain, request, onClose }: { con
       ) : error ? (
         <Notice tone="error">{error}</Notice>
       ) : preview && body ? (
-        <div className="space-y-4">
+        <div className={cx("space-y-4 transition-opacity", loading && "opacity-60")} aria-busy={loading || undefined}>
           {preview.notes.map((n) => (
             <Notice key={n} tone="warn">
               {n}
@@ -142,8 +163,8 @@ export function PayloadDialog({ conversationId, brain, request, onClose }: { con
             <>
               <section>
                 <h3 className="mb-1.5 text-[11px] font-semibold tracking-[0.08em] text-faint uppercase">Parameters</h3>
-                <pre className="overflow-x-auto rounded-lg border border-line bg-canvas px-4 py-3 font-mono text-[12px] leading-[1.6] text-muted">
-                  {JSON.stringify(params, null, 2)}
+                <pre className="overflow-x-auto rounded-lg border border-line bg-canvas px-4 py-3 font-mono text-[12px] leading-[1.6] break-all whitespace-pre-wrap text-muted">
+                  {compactParams(params)}
                 </pre>
               </section>
               <section>
@@ -162,6 +183,49 @@ export function PayloadDialog({ conversationId, brain, request, onClose }: { con
       ) : null}
     </Dialog>
   );
+}
+
+/** Whose request to show. Arrow keys move between brains, as in any tab list. */
+function BrainSwitcher({ brains, value, onChange }: { brains: Brain[]; value: string; onChange(id: string): void }) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Whose request"
+      className="mt-3 flex flex-wrap gap-1.5"
+      onKeyDown={(e) => {
+        if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+        const i = brains.findIndex((b) => b.id === value);
+        const next = brains[(i + (e.key === "ArrowRight" ? 1 : brains.length - 1)) % brains.length]!;
+        onChange(next.id);
+        (e.currentTarget.querySelector(`[data-brain="${next.id}"]`) as HTMLElement | null)?.focus();
+      }}
+    >
+      {brains.map((b) => {
+        const on = b.id === value;
+        return (
+          <button
+            key={b.id}
+            type="button"
+            role="tab"
+            data-brain={b.id}
+            aria-selected={on}
+            tabIndex={on ? 0 : -1}
+            onClick={() => onChange(b.id)}
+            className={cx("rounded-full transition-opacity", on ? "opacity-100" : "opacity-50 hover:opacity-85")}
+          >
+            <BrainBadge name={b.name} color={b.color} className={on ? "ring-1 ring-white/25" : undefined} />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** One line per top-level field, nested values inline: the whole set fits above the messages. Raw JSON has the exact body. */
+function compactParams(params: Record<string, unknown>): string {
+  return Object.entries(params)
+    .map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`)
+    .join(",\n");
 }
 
 const ROLE_TONE: Record<ChatMessage["role"], string> = {

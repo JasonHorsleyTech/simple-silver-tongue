@@ -54,7 +54,7 @@ export function ChatHeader({
         </span>
       </div>
       <div className="flex items-center gap-0.5">
-        <Button variant="ghost" size="sm" onClick={onOpenPayload} title="The exact request the next Send would make">
+        <Button variant="ghost" size="sm" onClick={onOpenPayload} title="The exact request each brain would be sent next">
           <Braces aria-hidden className="size-4" />
           <span className="hidden lg:inline">Payload</span>
         </Button>
@@ -63,7 +63,7 @@ export function ChatHeader({
           size="sm"
           onClick={onToggleSettings}
           aria-pressed={settingsOpen}
-          title="System prompt, reasoning and templates"
+          title="Brains, setup messages, templates and models"
           className={cx(settingsOpen && "bg-hover text-fg")}
         >
           <PanelRight aria-hidden className="size-4" />

@@ -92,7 +92,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T04: Multiple brains, setup messages and templates (CP3) · `frontend`
+## T04: Multiple brains, setup messages and templates (CP3) · `done`
 
 **Engineer scope**
 - `brain.add` / `.update` / `.delete` / `.set-default`. Delete is refused while the ledger references the brain. (`brain.update` exists since T02 for name, color, system prompt, reasoning and reminder; T04 extends it with kind, tool text and safe mode. The default brain is `conversation.defaultBrainId`.) Kind is locked once the brain has messages. The final reminder is enabled by default on non-default brains, pre-filled with an editable `<!-- System reminder -->` example.
@@ -149,6 +149,11 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 **Frontend scope:** An image message card showing the prompt (streams in live, collapsible), then a loader, then the image (click to enlarge), or an error with Retry. Editing the prompt keeps the old image dimmed with a spinner until the new one arrives. The image model and size live in the settings drawer. The safe-mode toggle (default on) lives on each image brain.
 - **From T03 frontend:** `MessageItem`'s `BrainBody` is where an image card goes, and `MessageEditor` already edits the active version's `content` (the prompt, for an image message). A steered regenerate of an image message streams into the message's slot through `LiveReply` with `slot`; add `tool_args` (the prompt) and the image events to `useChat`'s one reducer (`apply`, which ignores them today). Edit/delete of image messages are refused by the server until T05 (`not_supported`); the browser shows that message inline.
 
+- **From T04 frontend:** the brain editor already edits an image brain's safe mode and all four tool texts (`BrainEditor`, under Brains in settings), and its payload braces show the forced tool call. What is still off until T05, each marked "T05" in the code:
+  - the image brain's send chip in the composer (`BrainChip`, `disabled={image}`) and its "Write as…" entry (`WriteAsMenu`, `disabled={b.kind !== "text"}`): turn them on once `turn` and `message.add` accept image brains;
+  - the "image replies arrive in T05" wording in `BrainEditor` (kind hint), `AddBrainForm`, `ConversationTab` (image model) and the chip tooltip;
+  - the image model picker is in the Conversation tab (`ConversationTab`, `ModelPicker`); the image size and options (`settings.image`) belong next to it.
+  `useChat` keeps `retry` (the error's `details.retry`) on a failed live reply, and `chat.retry()` replays it; T05's image errors can use the same path.
 - **From T04 engineer:** image brains can already be created (`brain.add --kind image`, with `DEFAULT_TOOL` text and `safeMode: true`) and edited (`--tool.*`, `--safe-mode`), and `prompt.preview --brain` shows their forced tool call. `turn`, `message.add --as <image brain>` and `message.regenerate` refuse them with `not_supported`: lift those. Call `gen.forBrain(plan.brain.id)` right after planning in any new generating path, or `assertBrainIdle` keeps every brain "busy" (undeletable) for the whole generation.
 
 **Deferred in:**

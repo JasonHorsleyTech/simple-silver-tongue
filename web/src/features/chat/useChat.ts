@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client.ts";
-import { ApiError, errorMessage, isAbortError } from "../../api/errors.ts";
-import type { Brain, Conversation, LedgerMessage, StreamYield } from "../../api/types.ts";
+import { ApiError, errorMessage, isAbortError, retryOf } from "../../api/errors.ts";
+import type { Brain, Conversation, LedgerMessage, RetryRequest, StreamYield } from "../../api/types.ts";
 import { refreshConversations } from "../conversations/store.ts";
 
 /**
@@ -31,6 +31,11 @@ export type LiveReply = {
   reasoning: string;
   phase: "waiting" | "reasoning" | "writing" | "failed";
   error: string | null;
+  /**
+   * A failed reply: the exact request that retries it, from the server's error (`details.retry`): the same
+   * brain for a turn, the same message and steer for a regenerate. Null when the server sent none.
+   */
+  retry: RetryRequest | null;
 };
 
 /** A line above the composer: an up-front send failure (error), or what a stop did and didn't save (info). */
@@ -64,13 +69,25 @@ export type Chat = {
   send(content: string, brainId?: string): Promise<string | null>;
   /** Stop the running reply (this tab's, or one followed from the CLI or another tab). */
   stop(): Promise<void>;
+  /**
+   * Retry the failed live reply exactly as the server says to: a turn goes to the brain whose reply broke
+   * (never the default brain by accident, T04 QA-1), a regenerate keeps its message and steer.
+   */
+  retry(): Promise<void>;
+  /**
+   * Words in a brain's mouth, or yours with no reply (`as`: a brain id, or "player"): message.add. Resolves
+   * to null when added, or to the reason it wasn't.
+   */
+  add(as: string, content: string): Promise<string | null>;
   actions: MessageActions;
   dismissLive(): void;
   dismissNotice(): void;
   /** After a command that returns the whole document (conversation.update). */
   replaceConversation(conv: Conversation): void;
-  /** After brain.update, which returns the brain. */
+  /** After brain.update or brain.add, which return the brain: replace it, or add it at the end. */
   replaceBrain(brain: Brain): void;
+  /** Any other local change that mirrors a command's result (brain.delete, brain.set-default, setup.*). */
+  patch(fn: (c: Conversation) => Conversation): void;
 };
 
 /**
@@ -95,6 +112,8 @@ export function useChat(id: string): Chat {
 
   const convRef = useRef<Conversation | null>(null);
   convRef.current = conv;
+  const liveRef = useRef<LiveReply | null>(null);
+  liveRef.current = live;
   const busy = live !== null && live.phase !== "failed";
   const busyRef = useRef(false);
   busyRef.current = busy;
@@ -176,6 +195,7 @@ export function useChat(id: string): Chat {
             reasoning: "",
             phase: "waiting",
             error: null,
+            retry: null,
           });
           break;
         case "message":
@@ -188,7 +208,7 @@ export function useChat(id: string): Chat {
           flush();
           setNotice((n) => (n?.tone === "info" ? null : n));
           setLive((l) => ({
-            ...(l ?? { origin: "follow", content: "", reasoning: "", phase: "waiting", error: null }),
+            ...(l ?? { origin: "follow", content: "", reasoning: "", phase: "waiting", error: null, retry: null }),
             kind: ev.regenerate ? "regenerate" : "turn",
             steer: ev.steer ?? null,
             brainId: ev.brainId,
@@ -220,7 +240,7 @@ export function useChat(id: string): Chat {
   const fail = useCallback(
     (err: unknown) => {
       flush();
-      setLive((l) => (l ? { ...l, phase: "failed", error: errorMessage(err) } : l));
+      setLive((l) => (l ? { ...l, phase: "failed", error: errorMessage(err), retry: retryOf(err) } : l));
     },
     [flush],
   );
@@ -348,6 +368,7 @@ export function useChat(id: string): Chat {
         reasoning: "",
         phase: "waiting",
         error: null,
+        retry: null,
       });
       let saved = false;
       let started = false;
@@ -400,6 +421,7 @@ export function useChat(id: string): Chat {
         reasoning: "",
         phase: "waiting",
         error: null,
+        retry: null,
       });
       let started = false;
       try {
@@ -503,6 +525,34 @@ export function useChat(id: string): Chat {
 
   const actions = useMemo<MessageActions>(() => ({ edit, remove, selectVersion, regenerate }), [edit, remove, selectVersion, regenerate]);
 
+  const retry = useCallback(async () => {
+    const l = liveRef.current;
+    if (!l || l.phase !== "failed") return;
+    const r = l.retry;
+    if (r?.command === "message.regenerate") {
+      const problem = await regenerate(r.args.message, r.args.steer ?? "");
+      if (problem) setNotice({ tone: "error", message: problem });
+      return;
+    }
+    // A turn: the brain the server names, else the one this reply was from. Never a bare turn (the default brain).
+    await send("", r?.command === "turn" ? r.args.brain : (l.brainId ?? undefined));
+  }, [regenerate, send]);
+
+  const add = useCallback(
+    async (as: string, content: string) => {
+      if (busyRef.current) return BUSY_LEDGER;
+      try {
+        upsertMessage((await api.call("message.add", { conversation: id, as, content })).message);
+        setNotice(null);
+        void refreshConversations();
+        return null;
+      } catch (err) {
+        return ledgerFailure(err);
+      }
+    },
+    [id, upsertMessage, ledgerFailure],
+  );
+
   return {
     conv,
     loadError,
@@ -513,13 +563,21 @@ export function useChat(id: string): Chat {
     notice,
     send,
     stop,
+    retry,
+    add,
     actions,
     dismissLive: useCallback(() => setLive((l) => (l?.phase === "failed" ? null : l)), []),
     dismissNotice: useCallback(() => setNotice(null), []),
     replaceConversation: useCallback((next: Conversation) => setConv(next), []),
     replaceBrain: useCallback(
-      (brain: Brain) => setConv((c) => c && { ...c, brains: c.brains.map((b) => (b.id === brain.id ? brain : b)) }),
+      (brain: Brain) =>
+        setConv((c) => {
+          if (!c) return c;
+          const known = c.brains.some((b) => b.id === brain.id);
+          return { ...c, brains: known ? c.brains.map((b) => (b.id === brain.id ? brain : b)) : [...c.brains, brain] };
+        }),
       [],
     ),
+    patch: useCallback((fn: (c: Conversation) => Conversation) => setConv((c) => c && fn(c)), []),
   };
 }

@@ -36,7 +36,9 @@ export function SteerBox({
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   useAutosize(ref, value, 180);
-  useEffect(() => ref.current?.focus(), []);
+  useEffect(() => {
+    ref.current?.focus();
+  }, []);
   const steered = value.trim() !== "";
 
   return (

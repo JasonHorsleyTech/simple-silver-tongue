@@ -16,7 +16,9 @@ export function AppShell({ user }: { user: User }) {
   const [drawer, setDrawer] = useState(false);
   const path = usePath();
 
-  useEffect(() => setDrawer(false), [path]);
+  useEffect(() => {
+    setDrawer(false);
+  }, [path]);
   useEffect(() => {
     if (!drawer) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setDrawer(false);
