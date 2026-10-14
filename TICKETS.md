@@ -209,4 +209,6 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 **Frontend scope:** The same playthrough in Chrome, plus visual polish, empty states, keyboard niceties and error toasts. Screenshots go in `reports/screens/`.
 
+- (orchestrator) The default `otherBrainImage` template says the image "is now on the player's screen". Since T05 triage, the GM can answer while the image is still painting, so make the default wording accurate (e.g. "…called generate_image with this exact prompt:"). The example campaign should do the same.
+
 **Deferred in:** *(none yet)*
