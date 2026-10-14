@@ -45,6 +45,8 @@ function sentence(s: string): string {
   return /[.!?]$/.test(t) ? t : `${t}.`;
 }
 
+const capitalized = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 function frameStyle(a: Aspect, color?: string): CSSProperties {
   return {
     aspectRatio: `${a.w} / ${a.h}`,
@@ -259,14 +261,46 @@ function Shot({
 }) {
   const [size, setSize] = useState<Aspect | null>(() => sizes.get(image.id) ?? null);
   const [broken, setBroken] = useState(false);
+  /** Why it didn't load, in the server's words (an <img> can't read the error): a damaged file says so (T06). */
+  const [why, setWhy] = useState<{ code: string; message: string } | null>(null);
+  useEffect(() => {
+    if (!broken) return;
+    let live = true;
+    void api.binaryError("image.get", { id: image.id }).then((err) => {
+      if (live) setWhy(err ? { code: err.code, message: err.message } : { code: "ok", message: "" });
+    });
+    return () => {
+      live = false;
+    };
+  }, [broken, image.id]);
   const loaded = size !== null;
   if (broken) {
+    const damaged = why?.code === "unreadable_file";
     return (
       <Frame aspect={fallback}>
-        <div className="absolute inset-0 grid place-items-center p-4 text-center text-[12.5px] text-faint">
-          <span>
-            <ImageOff aria-hidden className="mx-auto mb-1.5 size-5" />
-            The image file couldn't be loaded.
+        <div className="absolute inset-0 grid place-items-center p-4 text-center text-[12.5px] leading-5 text-faint">
+          <span className="max-w-sm">
+            <ImageOff aria-hidden className={cx("mx-auto mb-1.5 size-5", damaged && "text-amber-300/80")} />
+            {damaged ? (
+              <>
+                <span className="block text-muted">This image's file is damaged, so it can't be shown.</span>
+                <span className="mt-1 block">
+                  {capitalized(sentence(why.message.slice(why.message.indexOf(": ") + 2)))} Nothing was written over it: put back a good copy of{" "}
+                  <span className="font-mono text-[11.5px]">{why.message.split(": ")[0]}</span> from a backup, or paint it again.
+                </span>
+              </>
+            ) : why?.code === "ok" ? (
+              <>
+                The image didn't load.{" "}
+                <button type="button" onClick={() => setBroken(false)} className="underline decoration-line-strong underline-offset-4 hover:text-fg">
+                  Try again
+                </button>
+              </>
+            ) : why ? (
+              <>The image file couldn't be loaded: {why.message}</>
+            ) : (
+              "The image file couldn't be loaded."
+            )}
           </span>
         </div>
         {children}

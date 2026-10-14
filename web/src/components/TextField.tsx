@@ -17,6 +17,7 @@ export function TextField({ id, label, hint, className, ...input }: Props) {
           "block h-10 w-full rounded-lg border border-line-strong bg-raised px-3 text-[15px] text-fg",
           "placeholder:text-faint outline-none transition-[border-color,box-shadow]",
           "focus:border-focus/60 focus:ring-3 focus:ring-focus/15",
+          "aria-[invalid=true]:border-red-400/60 aria-[invalid=true]:ring-3 aria-[invalid=true]:ring-red-400/10",
         )}
         {...input}
       />

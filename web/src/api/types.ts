@@ -53,6 +53,8 @@ export type Health = {
   uptimeSec: number;
   web: "built" | "not built";
   commands: number;
+  /** T06 frontend: the idle limit (SS_SESSION_IDLE_MINUTES; 0 = never), for the login screen after a reload. */
+  sessionIdleMinutes: number;
 };
 
 /** A row of conversation.list (src/conversations/format.ts). */
@@ -151,6 +153,11 @@ export type Commands = {
   "auth.login": { args: { username: string; password: string }; result: User };
   "auth.logout": { args: { all?: boolean }; result: { loggedOut: string | null; sessions?: number } };
   "auth.whoami": { args: NoArgs; result: Who };
+  /**
+   * T06 frontend: the current password unwraps the data key, the new one rewraps it (no file is touched), and the
+   * user is logged out everywhere, this tab included. user.create and user.delete stay terminal-only.
+   */
+  "user.change-password": { args: { username: string; password: string; newPassword: string }; result: { username: string; loggedOut: number } };
   "models.list": {
     args: { type?: "text" | "image"; refresh?: boolean };
     result: { models: ModelInfo[]; defaults: { text: string; image: string } };

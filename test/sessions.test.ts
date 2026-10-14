@@ -121,7 +121,7 @@ describe("T06 triage: an idle session ends and its key is wiped (QA-1)", () => {
     assert.equal(who.username !== null && who.idle?.secondsLeft, 50 * 60, "counted from the last use, not from login");
     later(50);
     await assert.rejects(api.call("conversation.list"), { code: "session_expired" });
-    assert.deepEqual(lost, ["expired", "expired"], "x-ss-session: expired, then the 401 itself");
+    assert.deepEqual(lost, ["expired"], "one signal per response: the header's reason (the 401 says the same)");
     assert.deepEqual(await api.call("auth.whoami"), { username: null });
   });
 
@@ -132,6 +132,68 @@ describe("T06 triage: an idle session ends and its key is wiped (QA-1)", () => {
     const r = await t.cli(["auth.logout", "--all"]);
     assert.equal(r.stdout.trim(), "Logged out dev-idle everywhere (2 sessions).");
     assert.equal((await t.cli(["conversation.list"], { env: other })).code, 1, "the other terminal is out too");
+  });
+
+  test("T06 frontend: a tab or terminal left logged in hears why it was ended: everywhere, password, deleted", async () => {
+    const browser = () => {
+      let cookie: string | null = null;
+      const jarFetch = (async (input: string | URL | Request, init: RequestInit = {}) => {
+        const headers = new Headers(init.headers);
+        if (cookie) headers.set("cookie", cookie);
+        const res = await fetch(input, { ...init, headers });
+        const set = res.headers.getSetCookie().find((c) => c.startsWith("ss_session="));
+        if (set) cookie = set.split(";")[0]!;
+        return res;
+      }) as typeof fetch;
+      const api = createClient({ baseUrl: t.url, fetch: jarFetch });
+      const lost: SessionLoss[] = [];
+      api.onSessionLost((why) => lost.push(why));
+      return { api, lost };
+    };
+    const termB = { SS_SESSION_FILE: join(t.tmp, "terminal-b.json") };
+    const termC = { SS_SESSION_FILE: join(t.tmp, "terminal-c.json") };
+    const loginAs = (env: Record<string, string>, user = "dev-idle", pw = "idle-pw") => t.cli(["auth.login", "--username", user, "--password", "-"], { stdin: `${pw}\n`, env });
+
+    // Log out everywhere, from the terminal: the tab's next look and the other terminals say so.
+    const tab = browser();
+    await tab.api.call("auth.login", { username: "dev-idle", password: "idle-pw" });
+    await loginAs(termB);
+    await loginAs(termC);
+    await login();
+    assert.equal((await t.cli(["auth.logout", "--all"])).stdout.trim(), "Logged out dev-idle everywhere (4 sessions).");
+    assert.deepEqual(await tab.api.call("auth.whoami"), { username: null });
+    assert.deepEqual(tab.lost, ["logged-out"]);
+    const listB = await t.cli(["conversation.list"], { env: termB });
+    assert.equal(listB.code, 1);
+    assert.match(listB.stderr, /error: dev-idle was logged out everywhere \(Log out everywhere in the browser, or auth\.logout --all\)\.\nLog in again: \.\/ss auth\.login --username dev-idle/);
+    const whoC = await t.cli(["auth.whoami"], { env: termC });
+    assert.match(whoC.stderr, /\(Saved CLI session for dev-idle ended: this user was logged out everywhere/);
+    assert.equal(existsSync(termC.SS_SESSION_FILE), false, "the stale token is dropped");
+
+    // A password change (from the browser this time) ends the other sessions with its own reason.
+    await tab.api.call("auth.login", { username: "dev-idle", password: "idle-pw" });
+    await loginAs(termB);
+    const other = browser();
+    await other.api.call("auth.login", { username: "dev-idle", password: "idle-pw" });
+    assert.deepEqual(await tab.api.call("user.change-password", { username: "dev-idle", password: "idle-pw", newPassword: "idle-pw-2" }), { username: "dev-idle", loggedOut: 3 });
+    assert.deepEqual(await tab.api.call("auth.whoami"), { username: null }, "the tab that changed it is logged out too, its cookie cleared");
+    assert.deepEqual(tab.lost, ["logged-out"], "...without a stale-cookie signal: it knows why");
+    await assert.rejects(other.api.call("conversation.list"), { code: "session_ended", message: /The password for dev-idle was changed, which logs it out everywhere/ });
+    assert.deepEqual(other.lost, ["password-changed"]);
+    assert.match((await t.cli(["conversation.list"], { env: termB })).stderr, /The password for dev-idle was changed/);
+    await t.cli(["user.change-password", "--username", "dev-idle", "--password", "-", "--new-password", "idle-pw"], { stdin: "idle-pw-2\n" });
+
+    // Deleted: no "log in again".
+    await createUser(t.config.dataDir, "dev-gone", "gone-pw", FAST_KDF);
+    const gone = browser();
+    await gone.api.call("auth.login", { username: "dev-gone", password: "gone-pw" });
+    await loginAs(termB, "dev-gone", "gone-pw");
+    assert.equal((await t.cli(["user.delete", "--username", "dev-gone", "--confirm", "dev-gone"])).code, 0);
+    await assert.rejects(gone.api.call("conversation.list"), { code: "session_ended", message: /This user was deleted/ });
+    assert.deepEqual(gone.lost, ["deleted"]);
+    const listGone = await t.cli(["conversation.list"], { env: termB });
+    assert.match(listGone.stderr, /error: This user was deleted/);
+    assert.doesNotMatch(listGone.stderr, /Log in again/);
   });
 });
 

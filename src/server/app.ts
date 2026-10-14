@@ -5,12 +5,12 @@ import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { stream } from "hono/streaming";
 import type { z } from "zod";
-import { sessionExpired, toErrorBody } from "../lib/errors.ts";
+import { toErrorBody } from "../lib/errors.ts";
 import { toText } from "../lib/text.ts";
 import { describeCommand, indexCommands, requireSessionFrom, type AnyCommand, type Ctx, type Deps } from "../registry.ts";
 import { safeJoin } from "../storage/files.ts";
 import { closeVault, forkVault } from "../storage/vault.ts";
-import type { Session } from "./sessions.ts";
+import { endedError, type Session } from "./sessions.ts";
 
 export const SESSION_COOKIE = "ss_session";
 
@@ -77,10 +77,10 @@ export function createApp(base: Omit<Deps, "commands">, commands: AnyCommand[], 
     const token = getCookie(c, SESSION_COOKIE) ?? bearer(c.req.header("authorization"));
     const known = deps.sessions.lookup(token);
     const found = known && "session" in known ? known.session : null;
-    const expired = known !== null && "expired" in known;
-    // Lets a client drop a stale token and say why: "expired" when it timed out (T06 triage), "invalid" when the
-    // server restarted or a logout, password change or user.delete ended it.
-    if (token && !found) c.header("x-ss-session", expired ? "expired" : "invalid");
+    const ended = known !== null && "ended" in known ? known : null;
+    // Lets a client drop a stale token and say why: "expired" (T06 triage), "logged-out" (logout --all),
+    // "password-changed" or "deleted" (T06 frontend), and "invalid" for a token the server doesn't know (a restart).
+    if (token && !found) c.header("x-ss-session", ended?.ended ?? "invalid");
     // This request's own copy of the key (see vault.ts). Logging out wipes the session's key, not this one,
     // so work already running still saves under the real key. Closed once the request's work is done.
     const session: Session | null = found ? { ...found, vault: forkVault(found.vault) } : null;
@@ -90,7 +90,7 @@ export function createApp(base: Omit<Deps, "commands">, commands: AnyCommand[], 
     const ctx: Ctx = {
       deps,
       session,
-      requireSession: () => requireSessionFrom(session, expired ? sessionExpired(deps.sessions.idleMinutes) : undefined),
+      requireSession: () => requireSessionFrom(session, ended ? endedError(ended.ended, ended.username, deps.sessions.idleMinutes) : undefined),
       setSession: (s) => {
         change = { session: s };
       },

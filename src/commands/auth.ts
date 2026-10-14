@@ -71,7 +71,7 @@ With --all, end every session of this user: other browser tabs and terminals too
   handler: (args, ctx): LoggedOut => {
     const was = ctx.session?.username ?? null;
     let n = 0;
-    if (ctx.session) n = args.all ? ctx.deps.sessions.destroyUser(ctx.session.username) : Number(ctx.deps.sessions.destroy(ctx.session.token));
+    if (ctx.session) n = args.all ? ctx.deps.sessions.destroyUser(ctx.session.username, "logged-out") : Number(ctx.deps.sessions.destroy(ctx.session.token));
     ctx.setSession(null);
     return args.all ? { loggedOut: was, sessions: n } : { loggedOut: was };
   },

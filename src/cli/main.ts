@@ -94,17 +94,14 @@ export async function run(argv: string[], io: Io): Promise<number> {
     // 3. Call the server.
     const res = await call(name, args, { text: !global.json && info.kind === "json" });
     const stale = res.headers.get("x-ss-session");
-    if ((stale === "invalid" || stale === "expired") && saved) {
+    if (stale && saved) {
       await rm(sessionFile, { force: true });
       const yours = `Saved CLI session${saved.username ? ` for ${saved.username}` : ""}`;
       // A command that needed the login fails with the server's own words for it; auth.login is replacing it anyway.
-      if (stale === "expired" && res.ok && name !== "auth.login") {
-        err(dim(`(${yours} expired: nothing used it for the idle limit, so the server logged it out and wiped its key from memory.)`));
-      } else if (stale === "invalid") {
-        err(dim(`(${yours} is no longer valid: the server restarted, or it was ended elsewhere by a logout, a password change or user.delete.)`));
-      }
+      const why = STALE_SESSION[stale];
+      if (why && (stale === "invalid" || (res.ok && name !== "auth.login"))) err(dim(`(${yours} ${why})`));
     }
-    if (!res.ok) return await printError(res, saved, err);
+    if (!res.ok) return await printError(res, saved, err, stale);
 
     if (info.kind === "stream") return await printStream(res, global.json, io, dim);
 
@@ -181,7 +178,16 @@ async function promptForSecrets(schema: JsonSchema, args: Record<string, unknown
   }
 }
 
-async function printError(res: Response, saved: SavedSession | null, err: (s: string) => void): Promise<number> {
+/** What the server's x-ss-session header says about a saved token it no longer accepts (sessions.ts, EndReason). */
+const STALE_SESSION: Record<string, string> = {
+  invalid: "is no longer valid: the server restarted since it logged in (a restart logs everyone out).",
+  expired: "expired: nothing used it for the idle limit, so the server logged it out and wiped its key from memory.",
+  "logged-out": "ended: this user was logged out everywhere (auth.logout --all, or Log out everywhere in the browser).",
+  "password-changed": "ended: this user's password was changed, which logs it out everywhere.",
+  deleted: "ended: this user was deleted.",
+};
+
+async function printError(res: Response, saved: SavedSession | null, err: (s: string) => void, stale: string | null): Promise<number> {
   let message = `HTTP ${res.status}`;
   let code = "";
   try {
@@ -192,7 +198,8 @@ async function printError(res: Response, saved: SavedSession | null, err: (s: st
     /* not JSON */
   }
   err(`error: ${message}`);
-  if ((code === "unauthenticated" || code === "session_expired") && saved?.username) err(`Log in again: ./ss auth.login --username ${saved.username}`);
+  const loggedOut = code === "unauthenticated" || code === "session_expired" || (code === "session_ended" && stale !== null);
+  if (loggedOut && stale !== "deleted" && saved?.username) err(`Log in again: ./ss auth.login --username ${saved.username}`);
   return EXIT.failed;
 }
 

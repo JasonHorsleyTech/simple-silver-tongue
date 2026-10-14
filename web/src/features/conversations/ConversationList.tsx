@@ -8,7 +8,8 @@ import { refreshConversations, resetConversations, useConversations } from "./st
 
 /**
  * The sidebar: "New conversation", then every conversation (newest first) linking to /c/<id>. Files the
- * server can't read are listed greyed out with the reason (T02 QA-4) rather than silently missing.
+ * server can't read are listed as damaged (T02 QA-4) rather than silently missing; each links to /c/<id>, where the
+ * chat view says what is wrong with it and what to do (T06 frontend).
  * Refreshes when the user changes and whenever the tab regains focus (the CLI may have changed things).
  */
 let listOwner: string | null = null;
@@ -86,15 +87,28 @@ export function ConversationList({ username }: { username: string }) {
               </li>
             );
           })}
-          {list.unreadable.map((u) => (
-            <li key={u.id} title={`${u.id}: ${u.error}`} className="flex cursor-not-allowed gap-2 rounded-md px-2 py-1.5 opacity-70">
-              <FileWarning aria-hidden className="mt-0.5 size-3.5 shrink-0 text-amber-300/80" />
-              <div className="min-w-0">
-                <div className="truncate font-mono text-[12px] text-faint">{u.id}</div>
-                <div className="text-[11.5px] leading-4 text-faint">Can't read this file: {u.error}</div>
-              </div>
-            </li>
-          ))}
+          {list.unreadable.map((u) => {
+            const active = u.id === activeId;
+            return (
+              <li key={u.id}>
+                <Link
+                  to={`/c/${u.id}`}
+                  aria-current={active ? "page" : undefined}
+                  title={`${u.id}: ${u.error}`}
+                  className={cx(
+                    "flex gap-2 rounded-md px-2 py-1.5 transition-colors",
+                    active ? "bg-hover" : "opacity-80 hover:bg-hover/60 hover:opacity-100",
+                  )}
+                >
+                  <FileWarning aria-hidden className="mt-0.5 size-3.5 shrink-0 text-amber-300/80" />
+                  <div className="min-w-0">
+                    <div className="text-[13px] text-muted">Damaged conversation</div>
+                    <div className="truncate font-mono text-[11px] text-faint">{u.id}</div>
+                  </div>
+                </Link>
+              </li>
+            );
+          })}
         </ul>
       )}
       {list.status === "ready" && list.error && (

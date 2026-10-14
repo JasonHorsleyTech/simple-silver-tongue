@@ -37,9 +37,11 @@ export function Button({ variant = "secondary", size = "md", loading = false, cl
       aria-busy={loading || undefined}
       className={cx(
         "inline-flex shrink-0 select-none items-center justify-center font-medium whitespace-nowrap transition-colors",
-        VARIANTS[variant],
+        // A quiet primary replaces its colors rather than adding to them: both set the background, and in the
+        // stylesheet bg-silver comes after bg-hover, so adding left a disabled primary looking clickable.
+        variant === "primary" && disabled && !loading ? INACTIVE.primary : VARIANTS[variant],
         SIZES[size],
-        loading ? "cursor-wait" : disabled && INACTIVE[variant],
+        loading ? "cursor-wait" : disabled && variant !== "primary" && INACTIVE[variant],
         className,
       )}
       {...rest}

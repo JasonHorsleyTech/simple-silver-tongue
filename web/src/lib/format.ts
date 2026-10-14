@@ -56,3 +56,12 @@ export function fullTime(iso: string): string {
 export function compactNumber(n: number): string {
   return n < 1000 ? String(n) : `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
 }
+
+/** An idle limit in minutes, as words: "60 minutes", "1 minute"; a test's fraction reads as seconds ("15 seconds"). */
+export function idleDuration(minutes: number): string {
+  if (minutes < 1) {
+    const s = Math.round(minutes * 60);
+    return s === 1 ? "1 second" : `${s} seconds`;
+  }
+  return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+}

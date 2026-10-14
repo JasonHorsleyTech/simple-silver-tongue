@@ -13,6 +13,7 @@ export function Dialog({
   footer,
   onClose,
   className,
+  width = "w-[min(56rem,calc(100vw-2rem))]",
 }: {
   title: ReactNode;
   subtitle?: ReactNode;
@@ -20,6 +21,8 @@ export function Dialog({
   footer?: ReactNode;
   onClose(): void;
   className?: string;
+  /** Replaces the default width (two width classes would fight by stylesheet order, not by which comes last). */
+  width?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const body = useRef<HTMLDivElement>(null);
@@ -27,7 +30,10 @@ export function Dialog({
     const d = ref.current;
     const before = document.activeElement; // where focus goes back to on close (unmounting skips the browser's own restore)
     if (d && !d.open) d.showModal();
-    body.current?.focus(); // not the close button: arrow keys then scroll the content
+    // A form marks its first field with data-autofocus (React's autoFocus fires before the dialog is open, so it
+    // can't). Otherwise the content, not the close button: arrow keys then scroll it.
+    const first = d?.querySelector<HTMLElement>("[data-autofocus]");
+    (first ?? body.current)?.focus();
     return () => {
       d?.close();
       if (before instanceof HTMLElement && before.isConnected) before.focus();
@@ -43,7 +49,8 @@ export function Dialog({
       }}
       onClick={(e) => e.target === ref.current && onClose()}
       className={cx(
-        "m-auto flex max-h-[min(88vh,56rem)] w-[min(56rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-line-strong bg-panel p-0 text-fg shadow-2xl shadow-black/60",
+        width,
+        "m-auto flex max-h-[min(88vh,56rem)] flex-col overflow-hidden rounded-2xl border border-line-strong bg-panel p-0 text-fg shadow-2xl shadow-black/60",
         "backdrop:bg-black/65 backdrop:backdrop-blur-[2px]",
         className,
       )}

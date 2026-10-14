@@ -2,6 +2,7 @@ import { PenLine, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Notice } from "../../components/Notice.tsx";
 import { Spinner } from "../../components/Spinner.tsx";
+import { drafts } from "../../lib/drafts.ts";
 import { Link } from "../../lib/router.tsx";
 import { readLocal, writeLocal } from "../../lib/storage.ts";
 import { useMediaQuery } from "../../lib/useMediaQuery.ts";
@@ -10,15 +11,10 @@ import { PayloadDialog, type PayloadRequest } from "../payload/PayloadDialog.tsx
 import { SETTINGS_TABS, SettingsPanel, type SettingsTab } from "../settings/SettingsPanel.tsx";
 import { BrainBadge } from "./BrainBadge.tsx";
 import { ChatHeader } from "./ChatHeader.tsx";
+import { DamagedFile } from "./DamagedFile.tsx";
 import { AS_PLAYER, Composer } from "./Composer.tsx";
 import { Scrollback } from "./Scrollback.tsx";
 import { useChat } from "./useChat.ts";
-
-/**
- * Unsent text per conversation, kept while you move between conversations. Memory only: for an encrypted
- * user, a draft must not land in the browser's storage on disk.
- */
-const drafts = new Map<string, string>();
 
 const SETTINGS_OPEN_KEY = "ss.settingsOpen";
 const SETTINGS_TAB_KEY = "ss.settingsTab";
@@ -105,6 +101,7 @@ export function ChatView({ id }: { id: string }) {
     return problem;
   }
 
+  if (loadError?.code === "unreadable_file") return <DamagedFile error={loadError} />;
   if (loadError) {
     return (
       <div className="flex min-h-full items-center justify-center px-6 py-16 text-center">

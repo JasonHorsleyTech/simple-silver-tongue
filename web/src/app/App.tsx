@@ -21,7 +21,7 @@ function Root() {
     case "unreachable":
       return <UnreachableScreen error={state.error} />;
     case "out":
-      return <LoginScreen notice={state.notice} />;
+      return <LoginScreen notice={state.notice} pick={state.pick} />;
     case "in":
       return <AppShell user={state.user} />;
   }

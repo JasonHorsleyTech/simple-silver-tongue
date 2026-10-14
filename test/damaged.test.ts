@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import type { Conversation } from "../src/conversations/types.ts";
 import { createUser } from "../src/storage/users.ts";
+import { createClient } from "../web/src/api/client.ts";
 import { startTestServer } from "./helpers.ts";
 
 const FAST_KDF = { N: 2 ** 10, r: 8, p: 1 };
@@ -66,6 +67,13 @@ describe("T06 triage: damaged files say what is wrong, never 'Internal server er
     await copyFile(join(dir("dev-dmg", "conversations"), conv), join(dir("dev-dmg", "images"), "img_dmg0000001.bin"));
     await flip(join(dir("dev-dmg", "images"), "img_dmg0000001.bin"), 40);
     await fails(["image.get", "--id", "img_dmg0000001", "--out", join(t.tmp, "x.png")], /images\/img_dmg0000001\.bin: can't be decrypted with this user's key/);
+
+    // The browser's <img> can't read an error; the client asks the same GET why it failed (T06 frontend).
+    const token = JSON.parse(await readFile(join(t.config.runDir, "cli-session.json"), "utf8")).token as string;
+    const web = createClient({ baseUrl: t.url, fetch: ((input: string, init: RequestInit = {}) => fetch(input, { ...init, headers: { cookie: `ss_session=${token}` } })) as typeof fetch });
+    const why = await web.binaryError("image.get", { id: "img_dmg0000001" });
+    assert.equal(why?.code, "unreadable_file");
+    assert.match(why!.message, /^images\/img_dmg0000001\.bin: can't be decrypted/);
 
     await ok(["auth.login", "--username", "dev-dmg-plain", "--password", ""]);
     const c = (JSON.parse((await ok(["conversation.create", "--title", "Plain", "--system-prompt", "x", "--json"])).stdout) as Conversation).id;

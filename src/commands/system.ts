@@ -43,6 +43,8 @@ export const health = command({
       uptimeSec: Math.round(process.uptime()),
       web: existsSync(join(config.webDist, "index.html")) ? "built" : "not built",
       commands: ctx.deps.commands.length,
+      /** Minutes without activity before a login ends (0 = never), so a client can say so even after a reload. */
+      sessionIdleMinutes: ctx.deps.sessions.idleMinutes,
     };
   },
   format: (r) =>

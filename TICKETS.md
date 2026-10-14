@@ -180,7 +180,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T06: Multi-user encryption hardening (CP5) · `frontend`
+## T06: Multi-user encryption hardening (CP5) · `done`
 
 **Engineer scope**
 - An audit: for an encrypted user, every file under `data/users/<u>/` except `user.json` is ciphertext, conversations and images alike. No plaintext anywhere else: logs, temp files, `.run/`, error messages.
@@ -230,5 +230,10 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 - (orchestrator) Default `hideWatermark` to **true** for new conversations and the example campaign. The T05 live image showed a Venice watermark, and this is a personal scratch pad.
 - **From T06 engineer, corrected in T06 triage (QA-3):** the terminal playthrough "as an encrypted `dev-` user" is fine as written, *because the user is a throwaway `dev-` user with made-up content*: agents' shells keep no shell history, but Claude Code keeps every command an agent runs and every output it reads in plain text (`~/.claude/projects/…/*.jsonl`), decrypted `conversation.get` output and piped passwords included (design.md, "Where plaintext can still appear"). So the playthrough never uses Jason's own users or his real campaign text (AGENTS.md). The data on disk is ciphertext (check it with `grep -r` as T06 did). For Jason's own campaign from his terminal, text typed in flags (`--content "..."`) lands in `~/.zsh_history`: AGENTS.md ("Running it") says to use the browser, or `--content -`. If `conversation.import --file` reads a plaintext example into an encrypted user, the example file itself is plaintext by design (it's committed); an import of private text from a file leaves that file where it was.
+
+- **From T06 frontend:**
+  - The login is a user picker now (locks on encrypted users), and the sidebar's user card is a menu: Switch user, Change password…, Log out, Log out everywhere. Nothing in the playthrough needs more; log in as the `dev-` user by clicking it.
+  - The browser can change an encrypted user's password (`user.change-password`, at the orchestrator's request); `user.create` and `user.delete` stay terminal-only.
+  - Polish candidates seen in Chrome, none blocking: a visible tab asks `auth.whoami` + `health` every 30 s, which is 2 lines a minute in `.run/server.log` per open window (the server logs every request; leaving those two out of the log would quiet it). A damaged conversation can't be removed from the app (by design: every write loads first, and a damaged file may still be rescued); the page says to move it aside. With a notice, four users and a damaged one, the login card's footer ("New user? …") falls below a laptop's fold.
 
 **Deferred in:** *(none yet)*

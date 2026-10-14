@@ -106,12 +106,12 @@ out everywhere.`,
     const mine = ctx.session?.username === name ? ctx.session.vault : null;
     const running = forksOpen(dir, mine);
     if (running) throw userBusy(name, dir, running);
-    let loggedOut = ctx.deps.sessions.destroyUser(name);
+    let loggedOut = ctx.deps.sessions.destroyUser(name, "deleted");
     closeVaultsOf(dir);
 
     await removeUserFolder(dataDir, name);
     // A login that was deriving its key while the folder went: its key is closed too (unlockUser also re-checks).
-    loggedOut += ctx.deps.sessions.destroyUser(name);
+    loggedOut += ctx.deps.sessions.destroyUser(name, "deleted");
     closeVaultsOf(dir);
     if (mine) ctx.setSession(null);
     return { deleted: name, encrypted: user.encrypted, ...counts, loggedOut };
@@ -155,7 +155,7 @@ opens with the old password, since the data key stays the same.`,
   examples: ["./ss user.change-password --username jason", "printf 'old\\nnew\\n' | ./ss user.change-password --username dev-b"],
   handler: async (args, ctx) => {
     await changePassword(ctx.deps.config.dataDir, args.username, args.password, args.newPassword);
-    const loggedOut = ctx.deps.sessions.destroyUser(args.username);
+    const loggedOut = ctx.deps.sessions.destroyUser(args.username, "password-changed");
     if (ctx.session?.username === args.username) ctx.setSession(null);
     return { username: args.username, loggedOut };
   },
