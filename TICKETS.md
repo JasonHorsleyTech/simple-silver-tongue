@@ -180,7 +180,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T06: Multi-user encryption hardening (CP5) · `triage`
+## T06: Multi-user encryption hardening (CP5) · `frontend`
 
 **Engineer scope**
 - An audit: for an encrypted user, every file under `data/users/<u>/` except `user.json` is ciphertext, conversations and images alike. No plaintext anywhere else: logs, temp files, `.run/`, error messages.
@@ -198,6 +198,12 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
   - **I added `autoComplete="off"`** to the four raw textareas (`Composer`, `SteerBox`, `MessageEditor`, the shared `TextArea`) and the title input in `ChatHeader`, like the inputs that had it, so Chrome keeps no Autofill history of content. Please check in Chrome that nothing changed for the user (spellcheck, typing, the composer's autosize).
   - **One check only Chrome can answer:** does a draft typed in the composer (not sent) reach Chrome's profile on disk? Chrome keeps a tab's form state for session restore in its `Sessions/` files; the HTML spec says `autocomplete="off"` values aren't kept for history restore, but I couldn't confirm Chrome honours that for a `<textarea>`. Type a unique phrase into the composer, wait ~30 s (and/or open a second tab and close the first), then `grep -rl "<phrase>"` the Chrome profile folder the DevTools MCP uses. Report what you find; if it is there, say which file (design.md, "Where plaintext can still appear").
   - Two users side by side from the CLI: `SS_SESSION_FILE=<path> ./ss ...` gives a terminal its own login (the browser has its own cookie, as before).
+- **From T06 triage:**
+  - **Sessions now end after 60 idle minutes** (design.md, "Sessions"), and the browser part of that is built, so the session-expired redirect exists: `api.onSessionLost(why)` passes `"expired"` (header `x-ss-session: expired`, or 401 `session_expired`) or `"ended"`, and the login screen says "You were logged out after 60 minutes without activity, and the server wiped your key from its memory. Log in again to carry on." `session.tsx` also looks again (`auth.whoami`, which doesn't count as activity) when `idle.secondsLeft` runs out, so an idle tab drops to login on its own (checked in Chrome with `SS_SESSION_IDLE_MINUTES=0.1`). Polish the wording and look as you like; keep the timer.
+  - **An unsent composer draft is lost when the session expires** (the shell unmounts). Don't save drafts to `localStorage` (that's plaintext on disk). If you keep one, keep it in memory only and only for the same user, and drop it on logout. Probably not worth it: an hour without sending anything is rare.
+  - `auth.logout` takes `{all: true}` (`./ss auth.logout --all`): this user out of every tab and terminal. A "Log out everywhere" choice beside Log out would suit "I'm stepping away".
+  - `user.list` → `{users, unreadable}`: a user whose `user.json` is damaged is in `unreadable` (`{username, error}`), not in `users`. The picker can ignore it, or show it greyed with its error.
+  - The "session ended" wording after a `user.delete` still says "The server restarted, or you logged out in another tab" (QA's note); word it without blaming the user, as the engineer asked.
 
 **Deferred in:**
 - ~~Encrypted users' image files show their sniffed type in the extension (`images/img_….webp` / `.png`), which hints at the model family (T05 QA-6).~~ Done in T06 engineer: encrypted users' images are `img_….bin`; `readImageFile` sniffs the decrypted bytes (`image.get`, and `settleStaleImages` for `mime`); old names are still found and `auth.login` renames them to `.bin` (names only).
@@ -223,6 +229,6 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 - (orchestrator) The default `otherBrainImage` template says the image "is now on the player's screen". Since T05 triage, the GM can answer while the image is still painting, so make the default wording accurate (e.g. "…called generate_image with this exact prompt:"). The example campaign should do the same.
 
 - (orchestrator) Default `hideWatermark` to **true** for new conversations and the example campaign. The T05 live image showed a Venice watermark, and this is a personal scratch pad.
-- **From T06 engineer:** the terminal playthrough "as an encrypted `dev-` user" is fine as written: agents' shells are non-interactive and keep no history, and the data on disk is ciphertext (check it with `grep -r` as T06 did). For Jason's own campaign from his terminal, text typed in flags (`--content "..."`) lands in `~/.zsh_history`: AGENTS.md ("Running it") says to use the browser, or `--content -`. If `conversation.import --file` reads a plaintext example into an encrypted user, the example file itself is plaintext by design (it's committed); an import of private text from a file leaves that file where it was.
+- **From T06 engineer, corrected in T06 triage (QA-3):** the terminal playthrough "as an encrypted `dev-` user" is fine as written, *because the user is a throwaway `dev-` user with made-up content*: agents' shells keep no shell history, but Claude Code keeps every command an agent runs and every output it reads in plain text (`~/.claude/projects/…/*.jsonl`), decrypted `conversation.get` output and piped passwords included (design.md, "Where plaintext can still appear"). So the playthrough never uses Jason's own users or his real campaign text (AGENTS.md). The data on disk is ciphertext (check it with `grep -r` as T06 did). For Jason's own campaign from his terminal, text typed in flags (`--content "..."`) lands in `~/.zsh_history`: AGENTS.md ("Running it") says to use the browser, or `--content -`. If `conversation.import --file` reads a plaintext example into an encrypted user, the example file itself is plaintext by design (it's committed); an import of private text from a file leaves that file where it was.
 
 **Deferred in:** *(none yet)*

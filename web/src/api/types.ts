@@ -31,10 +31,17 @@ export type { Brain, BrainTool, ChatMessage, ChatRequest, Conversation, ImageRec
  */
 export { BRAIN_COLORS, DEFAULT_SETUP_LABEL, IMAGE_STOP_NOTE, REASONING_NOTE, STOP_BILL_NOTE } from "../../../src/conversations/wording.ts";
 
-export type User = { username: string; encrypted: boolean };
+/**
+ * T06 triage: the server ends a session after `minutes` without activity, `secondsLeft` from now if nothing uses it
+ * (auth.whoami doesn't count as use). Null: sessions never time out (SS_SESSION_IDLE_MINUTES=0).
+ */
+export type Idle = { minutes: number; secondsLeft: number | null } | null;
+export type User = { username: string; encrypted: boolean; idle: Idle };
 export type Who = User | { username: null };
 
 export type UserSummary = { username: string; encrypted: boolean; createdAt: string };
+/** A user whose user.json is damaged: listed apart, so it doesn't silently vanish (T06 QA-5). */
+export type UnreadableUser = { username: string; error: string };
 
 export type Health = {
   ok: true;
@@ -140,9 +147,9 @@ export type NoArgs = Record<string, never>;
 /** JSON commands: POST /api/<name> with args, answered with result. */
 export type Commands = {
   health: { args: NoArgs; result: Health };
-  "user.list": { args: NoArgs; result: { users: UserSummary[] } };
+  "user.list": { args: NoArgs; result: { users: UserSummary[]; unreadable: UnreadableUser[] } };
   "auth.login": { args: { username: string; password: string }; result: User };
-  "auth.logout": { args: NoArgs; result: { loggedOut: string | null } };
+  "auth.logout": { args: { all?: boolean }; result: { loggedOut: string | null; sessions?: number } };
   "auth.whoami": { args: NoArgs; result: Who };
   "models.list": {
     args: { type?: "text" | "image"; refresh?: boolean };

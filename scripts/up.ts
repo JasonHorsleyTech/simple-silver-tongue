@@ -1,7 +1,8 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ROOT, veniceApiKey } from "../src/config.ts";
+import { loadConfig, ROOT, veniceApiKey } from "../src/config.ts";
+import { minutes } from "../src/lib/errors.ts";
 import { foreignHolder, MOCK, RUN_DIR, SERVER, stop, tail, waitFor, type Proc } from "./proc.ts";
 
 /**
@@ -54,7 +55,8 @@ function buildWeb(): string {
 function startDetached(p: Proc, env: NodeJS.ProcessEnv): number {
   if (existsSync(p.logFile)) renameSync(p.logFile, `${p.logFile}.1`);
   const log = openSync(p.logFile, "a", 0o600);
-  const child = spawn(process.execPath, [p.marker], { cwd: ROOT, detached: true, stdio: ["ignore", log, log], env });
+  // --disable-sigusr1: no one at the Mac can open the inspector (and read the keys in memory) with kill -USR1 (T06 QA-1).
+  const child = spawn(process.execPath, ["--disable-sigusr1", p.marker], { cwd: ROOT, detached: true, stdio: ["ignore", log, log], env });
   child.unref();
   if (!child.pid) fail(`could not start the ${p.name}`);
   writeFileSync(p.pidFile, `${child.pid}\n`);
@@ -100,6 +102,8 @@ if (mock) {
   if (!veniceApiKey()) console.warn("up: WARNING: VENICE_ADMIN_KEY is not in .env; Venice commands will fail.");
 }
 
+// What the server will use: its env, plus .env in live mode (loaded above, as the server loads it).
+const idle = loadConfig({ ...process.env, ...env }).sessionIdleMinutes;
 const pid = startDetached(SERVER, env);
 if (!(await waitFor(`http://127.0.0.1:${SERVER.port}/api/health`, pid))) {
   fail(`the server did not become healthy. Last log lines:\n${tail(SERVER.logFile)}`);
@@ -113,5 +117,6 @@ console.log(
     `  web:    ${web}`,
     `  pid ${pid} · log .run/server.log · stop with npm run down`,
     "  Sessions live in server memory, so log in again: ./ss auth.login --username <name>",
+    `  ${idle > 0 ? `A login ends after ${minutes(idle)} without activity` : "Logins never time out"} (SS_SESSION_IDLE_MINUTES${idle > 0 ? "; 0 = never" : ""})`,
   ].join("\n"),
 );

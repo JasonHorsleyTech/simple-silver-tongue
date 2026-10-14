@@ -5,7 +5,7 @@ import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { stream } from "hono/streaming";
 import type { z } from "zod";
-import { toErrorBody } from "../lib/errors.ts";
+import { sessionExpired, toErrorBody } from "../lib/errors.ts";
 import { toText } from "../lib/text.ts";
 import { describeCommand, indexCommands, requireSessionFrom, type AnyCommand, type Ctx, type Deps } from "../registry.ts";
 import { safeJoin } from "../storage/files.ts";
@@ -75,8 +75,12 @@ export function createApp(base: Omit<Deps, "commands">, commands: AnyCommand[], 
     }
 
     const token = getCookie(c, SESSION_COOKIE) ?? bearer(c.req.header("authorization"));
-    const found = deps.sessions.get(token);
-    if (token && !found) c.header("x-ss-session", "invalid"); // lets the CLI drop a stale saved token
+    const known = deps.sessions.lookup(token);
+    const found = known && "session" in known ? known.session : null;
+    const expired = known !== null && "expired" in known;
+    // Lets a client drop a stale token and say why: "expired" when it timed out (T06 triage), "invalid" when the
+    // server restarted or a logout, password change or user.delete ended it.
+    if (token && !found) c.header("x-ss-session", expired ? "expired" : "invalid");
     // This request's own copy of the key (see vault.ts). Logging out wipes the session's key, not this one,
     // so work already running still saves under the real key. Closed once the request's work is done.
     const session: Session | null = found ? { ...found, vault: forkVault(found.vault) } : null;
@@ -86,7 +90,7 @@ export function createApp(base: Omit<Deps, "commands">, commands: AnyCommand[], 
     const ctx: Ctx = {
       deps,
       session,
-      requireSession: () => requireSessionFrom(session),
+      requireSession: () => requireSessionFrom(session, expired ? sessionExpired(deps.sessions.idleMinutes) : undefined),
       setSession: (s) => {
         change = { session: s };
       },
@@ -102,7 +106,10 @@ export function createApp(base: Omit<Deps, "commands">, commands: AnyCommand[], 
     };
 
     try {
-      if (info.auth) ctx.requireSession();
+      if (info.auth) {
+        ctx.requireSession();
+        deps.sessions.touch(found!); // only a command that needs the login counts as activity (sessions.ts)
+      }
 
       if (cmd.kind === "json") {
         const result = await cmd.handler(parsed.data, ctx);

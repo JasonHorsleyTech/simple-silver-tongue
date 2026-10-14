@@ -34,7 +34,9 @@ describe("CLI end to end against an in-process server and mock Venice", () => {
     assert.equal((await stat(join(t.config.runDir, "cli-session.json"))).mode & 0o777, 0o600);
 
     r = await t.cli(["auth.whoami", "--json"]);
-    assert.deepEqual(JSON.parse(r.stdout), { username: "dev-a", encrypted: false });
+    const who = JSON.parse(r.stdout);
+    assert.ok(who.idle.secondsLeft > 3540 && who.idle.secondsLeft <= 3600, "a fresh login has the whole idle limit");
+    assert.deepEqual(who, { username: "dev-a", encrypted: false, idle: { minutes: 60, secondsLeft: who.idle.secondsLeft } });
 
     r = await t.cli(["auth.logout"]);
     assert.match(r.stdout, /Logged out dev-a/);
@@ -68,7 +70,7 @@ describe("CLI end to end against an in-process server and mock Venice", () => {
     r = await t.cli(["auth.login", "--username", "dev-b", "--password", "-"], { stdin: "s3cret\n" });
     assert.equal(r.code, 0, r.stderr);
     r = await t.cli(["auth.whoami"]);
-    assert.equal(r.stdout.trim(), "dev-b (encrypted)");
+    assert.equal(r.stdout.trim(), "dev-b (encrypted)\nThe session ends after 60 minutes without activity (60 minutes left), and the server wipes its key.");
 
     r = await t.cli(["user.list", "--json"]);
     assert.deepEqual(

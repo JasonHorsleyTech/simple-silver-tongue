@@ -1,9 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readdir, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { badRequest, conflict, notFound, wrongPassword } from "../lib/errors.ts";
+import { badRequest, conflict, isUnreadable, notFound, unreadableFile, wrongPassword } from "../lib/errors.ts";
 import { nowIso } from "../lib/ids.ts";
-import { createKeyEnvelope, DecryptError, KDF_DEFAULTS, openKeyEnvelope, wrapKey, type KdfParams } from "./crypto.ts";
+import { checkKdf, createKeyEnvelope, DecryptError, KDF_DEFAULTS, KdfError, openKeyEnvelope, wrapKey, type KdfParams } from "./crypto.ts";
 import { listDir, readFileOrNull, writeFileAtomic } from "./files.ts";
 import { closeVault, openVault, type Vault } from "./vault.ts";
 
@@ -39,9 +39,41 @@ export function summarize(u: UserRecord): UserSummary {
   return { username: u.username, encrypted: u.encrypted, createdAt: u.createdAt };
 }
 
+/**
+ * Null when there is no user.json. A damaged one (cut short, edited by hand, another user's copied in) is a clear
+ * `unreadable_file` error rather than a 500 with a stack, and its key-derivation settings are checked before anything
+ * runs them (T06 QA-5). user.json holds no secret, but V8's JSON errors quote their input, so they never reach the log.
+ */
 export async function loadUser(dataDir: string, username: string): Promise<UserRecord | null> {
   const raw = await readFileOrNull(join(userDir(dataDir, username), "user.json"));
-  return raw ? (JSON.parse(raw.toString("utf8")) as UserRecord) : null;
+  if (!raw) return null;
+  let u: UserRecord;
+  try {
+    u = JSON.parse(raw.toString("utf8")) as UserRecord;
+  } catch {
+    throw damagedUser(username, "it is not valid JSON");
+  }
+  if (typeof u !== "object" || u === null || typeof u.encrypted !== "boolean" || typeof u.createdAt !== "string") {
+    throw damagedUser(username, "fields are missing");
+  }
+  if (u.username !== username) throw damagedUser(username, `it is ${typeof u.username === "string" ? `${u.username}'s` : "no user's"} (copied or renamed by hand?)`);
+  if (u.encrypted) {
+    if (typeof u.wrappedKey !== "string") throw damagedUser(username, "its wrapped key is missing");
+    try {
+      checkKdf(u.kdf);
+    } catch (err) {
+      if (err instanceof KdfError) throw damagedUser(username, err.message);
+      throw err;
+    }
+  }
+  return u;
+}
+
+function damagedUser(username: string, why: string) {
+  return unreadableFile(
+    `users/${username}/user.json`,
+    `damaged: ${why}. So ${username} can't log in. Put back a good copy if you have one (an encrypted user's data can't be read without it), or remove the user with ./ss user.delete --username ${username}.`,
+  );
 }
 
 export async function createUser(
@@ -74,14 +106,23 @@ export async function createUser(
   }
 }
 
-export async function listUsers(dataDir: string): Promise<UserSummary[]> {
-  const out: UserSummary[] = [];
+export type UnreadableUser = { username: string; error: string };
+
+/** Every user, plus those whose user.json is damaged: listed, not silently left out (T06 QA-5). */
+export async function listUsers(dataDir: string): Promise<{ users: UserSummary[]; unreadable: UnreadableUser[] }> {
+  const users: UserSummary[] = [];
+  const unreadable: UnreadableUser[] = [];
   for (const name of await listDir(usersDir(dataDir))) {
     if (!USERNAME_RE.test(name)) continue;
-    const u = await loadUser(dataDir, name).catch(() => null);
-    if (u) out.push(summarize(u));
+    try {
+      const u = await loadUser(dataDir, name);
+      if (u) users.push(summarize(u));
+    } catch (err) {
+      if (!isUnreadable(err)) throw err;
+      unreadable.push({ username: name, error: (err as Error).message.replace(`users/${name}/user.json: `, "") });
+    }
   }
-  return out;
+  return { users, unreadable };
 }
 
 const sameUser = (a: UserRecord | null, b: UserRecord) => a !== null && a.createdAt === b.createdAt && a.username === b.username;
@@ -96,9 +137,8 @@ export async function unlockUser(dataDir: string, username: string, password: st
     if (password !== "") throw wrongPassword(`${username} has no password (unencrypted user). Log in with an empty password.`);
     vault = openVault(dir, null);
   } else {
-    if (!user.kdf || !user.wrappedKey) throw new Error(`${username}/user.json is missing its key envelope`);
     try {
-      vault = openVault(dir, await openKeyEnvelope(password, user.kdf, user.wrappedKey));
+      vault = openVault(dir, await openKeyEnvelope(password, user.kdf!, user.wrappedKey!));
     } catch (err) {
       if (err instanceof DecryptError) throw wrongPassword(`Wrong password for ${username}.`);
       throw err;
@@ -106,7 +146,10 @@ export async function unlockUser(dataDir: string, username: string, password: st
   }
   // scrypt takes ~200 ms. If user.delete (or a password change) landed meanwhile, don't hand out a key for a
   // user that is gone: its session's first write would bring back a folder with no user.json (T06).
-  const now = await loadUser(dataDir, username);
+  const now = await loadUser(dataDir, username).catch((err) => {
+    closeVault(vault);
+    throw err;
+  });
   if (!sameUser(now, user)) {
     closeVault(vault);
     throw notFound(`No user named ${username}: it was deleted while you were logging in.`);
@@ -133,10 +176,9 @@ export async function changePassword(dataDir: string, username: string, current:
   if (next === "") {
     throw badRequest(`The new password can't be empty: ${username} is encrypted and stays encrypted (no password would mean decrypting every file). Choose a new password.`);
   }
-  if (!user.kdf || !user.wrappedKey) throw new Error(`${username}/user.json is missing its key envelope`);
   let dataKey: Buffer;
   try {
-    dataKey = await openKeyEnvelope(current, user.kdf, user.wrappedKey);
+    dataKey = await openKeyEnvelope(current, user.kdf!, user.wrappedKey!);
   } catch (err) {
     if (err instanceof DecryptError) throw wrongPassword(`Wrong password for ${username}. Nothing was changed.`);
     throw err;

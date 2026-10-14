@@ -22,6 +22,16 @@ export const wrongPassword = (message: string) => new CommandError(401, "wrong_p
 export const sessionEnded = (message = "Your session ended (you logged out or logged in again) before this work could use your data.") =>
   new CommandError(401, "session_ended", message);
 export const USER_DELETED = "This user was deleted (user.delete), so its data is gone and its session has ended.";
+/** A session nobody used for the idle limit is ended and its key wiped (T06 triage, sessions.ts). */
+export const sessionExpired = (idleMinutes: number) =>
+  new CommandError(401, "session_expired", `Your session expired: nothing used it for ${minutes(idleMinutes)}, so the server logged it out and wiped its key from memory.`);
+export const minutes = (n: number) => (n === 1 ? "1 minute" : `${n} minutes`);
+/**
+ * A user file that can't be read: damaged, cut short, or not this user's (T06 QA-2). The message names the file and
+ * why, never its content, so it is safe to show and to log. Nothing is ever written over such a file.
+ */
+export const unreadableFile = (file: string, why: string) => new CommandError(500, "unreadable_file", `${file}: ${why}`);
+export const isUnreadable = (err: unknown) => err instanceof CommandError && err.code === "unreadable_file";
 export const notFound = (message: string) => new CommandError(404, "not_found", message);
 export const conflict = (message: string) => new CommandError(409, "conflict", message);
 /**

@@ -154,7 +154,7 @@ describe("streaming chat end to end: CLI → server → mock Venice", () => {
     const list = await json(["conversation.list"]);
     assert.deepEqual(list.conversations.map((c: { id: string }) => c.id), [conv.id]);
     assert.deepEqual(list.unreadable, [
-      { id: "c_corrupt01", error: "not valid JSON" },
+      { id: "c_corrupt01", error: "not valid JSON (damaged, or edited by hand)" },
       { id: "c_partial01", error: "not a conversation document (fields are missing)" },
     ]);
     const text = (await t.cli(["conversation.list"])).stdout;

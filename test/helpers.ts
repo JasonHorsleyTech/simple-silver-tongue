@@ -10,14 +10,17 @@ import { startMockVenice, type MockOptions, type MockVenice } from "../src/dev/m
 import { nowIso } from "../src/lib/ids.ts";
 import type { AnyCommand } from "../src/registry.ts";
 import { createApp } from "../src/server/app.ts";
-import { createSessionStore } from "../src/server/sessions.ts";
+import { createSessionStore, type SessionOptions } from "../src/server/sessions.ts";
 import { createVeniceClient } from "../src/venice/client.ts";
 
 export type CliResult = { code: number; stdout: string; stderr: string };
 
 /** An in-process server (temp data dir) against an in-process mock Venice, plus an in-process CLI. */
 /** `log` receives every line the server would write to .run/server.log (the T06 audit greps them). */
-export async function startTestServer(opts: { commands?: AnyCommand[]; mock?: MockOptions; log?: (line: string) => void } = {}) {
+/** `sessions` sets the idle timeout and the sessions' clock (T06 triage: tests move a fake clock, then sweep). */
+export async function startTestServer(
+  opts: { commands?: AnyCommand[]; mock?: MockOptions; log?: (line: string) => void; sessions?: SessionOptions } = {},
+) {
   const tmp = await mkdtemp(join(tmpdir(), "ss-test-"));
   const mock: MockVenice = await startMockVenice({ delayMs: 0, slowDelayMs: 20, imageDelayMs: 0, ...opts.mock });
   const config = {
@@ -27,10 +30,11 @@ export async function startTestServer(opts: { commands?: AnyCommand[]; mock?: Mo
     webDist: join(tmp, "no-web"),
     veniceBaseUrl: mock.url,
   };
+  const sessions = createSessionStore({ idleMinutes: config.sessionIdleMinutes, ...opts.sessions });
   const app = createApp(
     {
       config,
-      sessions: createSessionStore(),
+      sessions,
       venice: createVeniceClient({ baseUrl: mock.url, apiKey: "test-key" }),
       startedAt: nowIso(),
     },
@@ -65,8 +69,10 @@ export async function startTestServer(opts: { commands?: AnyCommand[]; mock?: Mo
     tmp,
     config,
     mock,
+    sessions,
     cli,
     async close() {
+      sessions.close();
       server.close();
       (server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();
       await mock.close();

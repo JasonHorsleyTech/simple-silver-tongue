@@ -24,20 +24,23 @@ export type ClientOptions = {
 };
 
 /** Codes that mean "your session is gone": the view should go back to the login screen. */
-const SESSION_GONE = new Set(["unauthenticated", "session_ended"]);
+const SESSION_GONE = new Set(["unauthenticated", "session_ended", "session_expired"]);
+
+/** Why the session is gone: it timed out (T06 triage), or anything else (a restart, a logout elsewhere, a delete). */
+export type SessionLoss = "expired" | "ended";
 
 export function createClient<C extends CommandMap = Commands, S extends StreamMap = StreamCommands>(opts: ClientOptions = {}) {
   const base = opts.baseUrl ?? "";
   const doFetch = opts.fetch ?? globalThis.fetch.bind(globalThis);
-  const lostListeners = new Set<() => void>();
+  const lostListeners = new Set<(why: SessionLoss) => void>();
 
-  const sessionLost = () => {
-    for (const fn of lostListeners) fn();
+  const sessionLost = (why: SessionLoss) => {
+    for (const fn of lostListeners) fn(why);
   };
 
   /** Report an error, letting session listeners know when it means the login is gone. */
   const noticed = (err: ApiError): ApiError => {
-    if (SESSION_GONE.has(err.code)) sessionLost();
+    if (SESSION_GONE.has(err.code)) sessionLost(err.code === "session_expired" ? "expired" : "ended");
     return err;
   };
 
@@ -54,10 +57,11 @@ export function createClient<C extends CommandMap = Commands, S extends StreamMa
       if (isAbortError(err)) throw err;
       throw new ApiError(0, "network", "Can't reach the simple-silver server. Start it with npm run up, then try again.");
     }
-    // The server marks responses to a cookie it no longer knows (it restarted, or we logged out elsewhere).
-    // A login replaces that cookie and a logout is leaving anyway, so only other commands count.
-    if (res.headers.get("x-ss-session") === "invalid" && name !== "auth.login" && name !== "auth.logout") {
-      sessionLost();
+    // The server marks responses to a cookie it no longer knows: "expired" when it timed out, "invalid" when it
+    // restarted or we logged out elsewhere. A login replaces that cookie and a logout is leaving anyway.
+    const stale = res.headers.get("x-ss-session");
+    if ((stale === "invalid" || stale === "expired") && name !== "auth.login" && name !== "auth.logout") {
+      sessionLost(stale === "expired" ? "expired" : "ended");
     }
     if (!res.ok) throw noticed(await errorFrom(res));
     return res;
@@ -104,8 +108,8 @@ export function createClient<C extends CommandMap = Commands, S extends StreamMa
     return `${base}/api/${name}?${new URLSearchParams(query)}`;
   }
 
-  /** Called when the server says the session is gone. Returns an unsubscribe function. */
-  function onSessionLost(fn: () => void): () => void {
+  /** Called when the server says the session is gone, and why. Returns an unsubscribe function. */
+  function onSessionLost(fn: (why: SessionLoss) => void): () => void {
     lostListeners.add(fn);
     return () => void lostListeners.delete(fn);
   }

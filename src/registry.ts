@@ -84,8 +84,9 @@ export function binaryCommand<A extends Args>(def: Omit<BinaryCommand<A>, "kind"
   return { ...def, kind: "binary", args: strict(def.args) } as unknown as AnyCommand;
 }
 
-export function requireSessionFrom(session: Session | null): Session {
-  if (!session) throw unauthenticated();
+/** `why` explains a missing session better than "Not logged in" when the adapter knows more (it timed out). */
+export function requireSessionFrom(session: Session | null, why?: Error): Session {
+  if (!session) throw why ?? unauthenticated();
   return session;
 }
 

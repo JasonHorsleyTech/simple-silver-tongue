@@ -1,4 +1,4 @@
-import { CommandError, imageBusy } from "../lib/errors.ts";
+import { CommandError, imageBusy, isUnreadable } from "../lib/errors.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { readImageFile, removeImageFiles } from "../images/files.ts";
 import type { StreamEvent } from "../registry.ts";
@@ -95,7 +95,7 @@ export async function settleStaleImages(vault: Vault, conv: Conversation): Promi
       if (!img || img.status !== "pending" || painting.has(keyOf(vault, img.id))) continue;
       // The bytes say what the image is: an encrypted user's file name doesn't (img_….bin, T06).
       const file = await readImageFile(vault, img.id).catch((err) => {
-        if (err instanceof CommandError) throw err; // session_ended and the like
+        if (err instanceof CommandError && !isUnreadable(err)) throw err; // session_ended and the like
         return null; // an unreadable file is no image
       });
       img.finishedAt = nowIso();

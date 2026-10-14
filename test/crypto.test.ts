@@ -56,7 +56,7 @@ test("encrypted user: files on disk are ciphertext and read back intact; wrong p
 
   // A plaintext file planted in an encrypted user's folder is refused, not silently trusted.
   await writeFile(join(vault.dir, "conversations", "c_plain.json"), "{}");
-  await assert.rejects(readJson(vault, "conversations/c_plain.json"), /expected an encrypted file/);
+  await assert.rejects(readJson(vault, "conversations/c_plain.json"), { code: "unreadable_file", message: /not encrypted, but every file of an encrypted user is/ });
   // user.json never goes through the vault, and paths can't escape the user's folder.
   await assert.rejects(writeJson(vault, "user.json", {}), /not vault data/);
   await assert.rejects(writeJson(vault, "../dev-other/x.json", {}), /unsafe path/);

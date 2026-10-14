@@ -1,4 +1,4 @@
-import { CommandError, conflict, imageBusy, notFound, toErrorBody, type ErrorBody } from "../lib/errors.ts";
+import { CommandError, conflict, imageBusy, isUnreadable, notFound, toErrorBody, unreadableFile, type ErrorBody } from "../lib/errors.ts";
 import { nowIso } from "../lib/ids.ts";
 import type { StreamEvent } from "../registry.ts";
 import { listFiles, readJson, removeFile, writeJson, type Vault } from "../storage/vault.ts";
@@ -20,6 +20,8 @@ const keyOf = (vault: Vault, id: string) => `${vault.dir}\0${id}`;
 export async function loadConversation(vault: Vault, id: string): Promise<Conversation> {
   const conv = await readJson<Conversation>(vault, fileOf(id));
   if (!conv) throw notFound(`No conversation ${id}. List yours with ./ss conversation.list.`);
+  // A copy of another conversation's file under this name would list twice and take this one's writes (T06 QA-4).
+  if (conv.id !== id) throw unreadableFile(fileOf(id), `holds ${typeof conv.id === "string" ? `conversation ${conv.id}` : "no conversation id"}, not ${id} (a copy of another file?), so it isn't used`);
   await settleStaleImages(vault, conv); // a pending image no job owns is settled here, never left pending (T05)
   return conv;
 }
@@ -38,7 +40,7 @@ export async function listConversations(vault: Vault): Promise<{ conversations: 
     const id = ids[i]!;
     if (r.status === "fulfilled") conversations.push(r.value);
     else if (r.reason instanceof CommandError && r.reason.code === "not_found") continue; // deleted while we listed
-    else if (r.reason instanceof CommandError) throw r.reason; // session_ended and the like
+    else if (r.reason instanceof CommandError && !isUnreadable(r.reason)) throw r.reason; // session_ended and the like
     else unreadable.push({ id, error: String((r.reason as Error)?.message ?? r.reason).replace(`${fileOf(id)}: `, "") });
   }
   conversations.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -51,7 +53,7 @@ function checkShape(id: string, c: Conversation): Conversation {
     typeof c === "object" && c !== null &&
     typeof c.title === "string" && typeof c.updatedAt === "string" && typeof c.settings?.textModel === "string" &&
     Array.isArray(c.messages) && c.messages.every((m) => Array.isArray(m?.versions));
-  if (!ok) throw new Error(`${fileOf(id)}: not a conversation document (fields are missing)`);
+  if (!ok) throw unreadableFile(fileOf(id), "not a conversation document (fields are missing)");
   return c;
 }
 

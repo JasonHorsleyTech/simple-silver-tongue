@@ -11,6 +11,13 @@ export const DEFAULT_IMAGE_MODEL = "z-image-turbo";
 
 export type Mode = "live" | "mock";
 
+/**
+ * A login nobody has used for this long ends, and its key is wiped from memory (T06 triage, QA-1): the server runs
+ * for days, so a session that never ended was the easy way in for anyone at the Mac. SS_SESSION_IDLE_MINUTES
+ * changes it (in the environment, or in .env for npm run up); 0 means sessions never time out.
+ */
+export const DEFAULT_SESSION_IDLE_MINUTES = 60;
+
 export type Config = {
   host: string;
   port: number;
@@ -19,6 +26,8 @@ export type Config = {
   runDir: string;
   webDist: string;
   veniceBaseUrl: string;
+  /** Minutes without activity before a session ends. 0 = never. */
+  sessionIdleMinutes: number;
 };
 
 /** Everything except the API key, which stays out of this object so it can't leak into output. */
@@ -32,7 +41,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     runDir: resolve(env.SS_RUN_DIR || join(ROOT, ".run")),
     webDist: resolve(env.SS_WEB_DIST || join(ROOT, "web", "dist")),
     veniceBaseUrl: (env.VENICE_BASE_URL || LIVE_VENICE_BASE_URL).replace(/\/+$/, ""),
+    sessionIdleMinutes: idleMinutes(env.SS_SESSION_IDLE_MINUTES),
   };
+}
+
+/** A number of minutes, 0 or more (fractions are fine, for a quick check by hand). Anything else: the default. */
+export function idleMinutes(v: string | undefined): number {
+  const n = v === undefined || v.trim() === "" ? NaN : Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_SESSION_IDLE_MINUTES;
 }
 
 export function veniceApiKey(env: NodeJS.ProcessEnv = process.env): string {

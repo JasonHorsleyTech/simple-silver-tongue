@@ -42,6 +42,12 @@ async function collect(body: ReadableStream<Uint8Array>): Promise<unknown[]> {
   return out;
 }
 
+/** A login or whoami answer with secondsLeft rounded to the minute, so a slow run can't flake on a second. */
+const roughly = <T,>(w: T): T => {
+  const idle = (w as { idle?: { secondsLeft: number | null } | null }).idle;
+  return idle?.secondsLeft ? { ...w, idle: { ...idle, secondsLeft: Math.round(idle.secondsLeft / 60) * 60 } } : w;
+};
+
 describe("web NDJSON reader", () => {
   test("lines split anywhere, even inside a multi-byte character; blank lines skipped; no final newline", async () => {
     const bytes = new TextEncoder().encode('{"type":"delta","delta":"café ☕"}\n');
@@ -114,9 +120,9 @@ describe("web API client against the real server", () => {
   test("login, whoami and logout ride the cookie; empty password works for an unencrypted user", async () => {
     const api = client();
     assert.deepEqual(await api.call("auth.whoami"), { username: null });
-    assert.deepEqual(await api.call("auth.login", { username: "web-plain", password: "" }), { username: "web-plain", encrypted: false });
-    assert.deepEqual(await api.call("auth.whoami"), { username: "web-plain", encrypted: false });
-    assert.deepEqual(await api.call("auth.login", { username: "web-enc", password: "pw-1" }), { username: "web-enc", encrypted: true });
+    assert.deepEqual(roughly(await api.call("auth.login", { username: "web-plain", password: "" })), { username: "web-plain", encrypted: false, idle: { minutes: 60, secondsLeft: 3600 } });
+    assert.deepEqual(roughly(await api.call("auth.whoami")), { username: "web-plain", encrypted: false, idle: { minutes: 60, secondsLeft: 3600 } });
+    assert.deepEqual(roughly(await api.call("auth.login", { username: "web-enc", password: "pw-1" })), { username: "web-enc", encrypted: true, idle: { minutes: 60, secondsLeft: 3600 } });
     assert.deepEqual(await api.call("test.private"), { ok: true });
     assert.deepEqual(await api.call("auth.logout"), { loggedOut: "web-enc" });
     assert.deepEqual(await api.call("auth.whoami"), { username: null });
@@ -145,7 +151,7 @@ describe("web API client against the real server", () => {
     await api.call("auth.login", { username: "web-plain", password: "" });
     await assert.rejects(api.call("auth.login", { username: "web-enc", password: "nope" }));
     assert.equal(lost, 0, "a wrong password is not a lost session");
-    assert.deepEqual(await api.call("auth.whoami"), { username: "web-plain", encrypted: false });
+    assert.deepEqual(roughly(await api.call("auth.whoami")), { username: "web-plain", encrypted: false, idle: { minutes: 60, secondsLeft: 3600 } });
 
     // Kill the session behind the client's back, as a server restart does: its cookie is now unknown.
     await fetch(`${t.url}/api/auth.logout`, { method: "POST", headers: { "content-type": "application/json", cookie: jar.cookie()! } });

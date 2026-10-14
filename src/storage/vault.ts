@@ -1,7 +1,7 @@
 import { mkdir, rename, rm } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
-import { sessionEnded, USER_DELETED } from "../lib/errors.ts";
-import { decrypt, DecryptError, encrypt, isEncryptedBlob } from "./crypto.ts";
+import { sessionEnded, unreadableFile, USER_DELETED } from "../lib/errors.ts";
+import { decrypt, DecryptError, encrypt, hasMagic, isEncryptedBlob } from "./crypto.ts";
 import { listDir, readFileOrNull, safeJoin, writeFileAtomic } from "./files.ts";
 
 /**
@@ -100,20 +100,28 @@ async function makeParents(vault: Vault, path: string): Promise<void> {
   }
 }
 
+/**
+ * A file that can't be read is an `unreadable_file` error that says which and why (T06 QA-2), so `conversation.get`
+ * and `image.get` explain it as `conversation.list` does instead of answering "Internal server error".
+ */
 export async function readBytes(vault: Vault, rel: string): Promise<Buffer | null> {
   const raw = await readFileOrNull(pathFor(vault, rel));
   if (raw === null) return null;
   if (vault.closed) throw ended(vault); // closed while we were reading
   if (vault.key) {
-    if (!isEncryptedBlob(raw)) throw new Error(`${rel}: expected an encrypted file, found plaintext`);
+    if (raw.length === 0) throw unreadableFile(rel, "empty, so it is damaged (an encrypted file never is)");
+    if (!hasMagic(raw)) {
+      throw unreadableFile(rel, "not encrypted, but every file of an encrypted user is (copied in from an unencrypted user, or written by hand?), so it isn't used");
+    }
+    if (!isEncryptedBlob(raw)) throw unreadableFile(rel, "damaged: cut short, too small to be an encrypted file");
     try {
       return decrypt(vault.key, raw);
     } catch (err) {
-      if (err instanceof DecryptError) throw new Error(`${rel}: ${err.message}`);
+      if (err instanceof DecryptError) throw unreadableFile(rel, "can't be decrypted with this user's key: it is damaged, or it is another user's file");
       throw err;
     }
   }
-  if (isEncryptedBlob(raw)) throw new Error(`${rel}: encrypted file in a plaintext user's folder`);
+  if (hasMagic(raw)) throw unreadableFile(rel, "encrypted, but this user is unencrypted (copied in from an encrypted user?), so it can't be read here");
   return raw;
 }
 
@@ -130,7 +138,7 @@ export async function readJson<T>(vault: Vault, rel: string): Promise<T | null> 
     return JSON.parse(bytes.toString("utf8")) as T;
   } catch {
     // V8's message quotes the text it choked on, and internal errors are logged: never let content reach the log.
-    throw new Error(`${rel}: not valid JSON`);
+    throw unreadableFile(rel, "not valid JSON (damaged, or edited by hand)");
   }
 }
 

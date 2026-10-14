@@ -6,6 +6,7 @@ import { loadConfig, ROOT, veniceApiKey } from "../config.ts";
 import { finishInFlight, stopTakingWork } from "../conversations/store.ts";
 import { nowIso } from "../lib/ids.ts";
 import { createVeniceClient } from "../venice/client.ts";
+import { minutes } from "../lib/errors.ts";
 import { consoleLogger as log, createApp } from "./app.ts";
 import { createSessionStore } from "./sessions.ts";
 
@@ -16,14 +17,27 @@ if (process.env.SS_MODE !== "mock") {
   if (existsSync(envFile)) process.loadEnvFile(envFile);
 }
 
+/**
+ * SIGUSR1 would open Node's inspector on 127.0.0.1:9229 for anyone at the Mac, and with it every logged-in session's
+ * key and the Venice key (T06 QA-1). npm run up starts us with --disable-sigusr1, which ignores the signal outright.
+ * For a server started by hand, this listener keeps the inspector shut instead, and logs the try (both tested on
+ * Node 26). Only the first ~100 ms of such a server, before this line runs, would still open it.
+ */
+process.on("SIGUSR1", () => log("SIGUSR1 ignored: the debugger is disabled on this server"));
+
 const config = loadConfig();
 const apiKey = veniceApiKey();
 if (!apiKey) log("WARNING: VENICE_ADMIN_KEY is not set; Venice commands will fail until it is in .env");
+const idleRaw = process.env.SS_SESSION_IDLE_MINUTES;
+if (idleRaw && Number(idleRaw) !== config.sessionIdleMinutes) {
+  log(`WARNING: SS_SESSION_IDLE_MINUTES must be a number of minutes, 0 or more (0 = never); using ${config.sessionIdleMinutes}`);
+}
+const sessions = createSessionStore({ idleMinutes: config.sessionIdleMinutes });
 
 const app = createApp(
   {
     config,
-    sessions: createSessionStore(),
+    sessions,
     venice: createVeniceClient({ baseUrl: config.veniceBaseUrl, apiKey }),
     startedAt: nowIso(),
   },
@@ -32,6 +46,7 @@ const app = createApp(
 
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
   log(`simple-silver listening on http://${config.host}:${info.port} (${config.mode} Venice: ${config.veniceBaseUrl})`);
+  log(sessions.idleMinutes > 0 ? `sessions end after ${minutes(sessions.idleMinutes)} without activity (SS_SESSION_IDLE_MINUTES)` : "sessions never time out (SS_SESSION_IDLE_MINUTES=0)");
 });
 
 server.on("error", (err: NodeJS.ErrnoException) => {

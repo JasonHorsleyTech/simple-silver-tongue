@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { paintingFor } from "../conversations/images.ts";
 import { generatingFor } from "../conversations/store.ts";
-import { badRequest, CommandError, notFound } from "../lib/errors.ts";
+import { badRequest, CommandError, isUnreadable, notFound } from "../lib/errors.ts";
 import { table } from "../lib/text.ts";
 import { command } from "../registry.ts";
 import {
@@ -15,6 +15,7 @@ import {
   userDir,
   USERNAME_RE,
   USERNAME_RULE,
+  type UnreadableUser,
   type UserSummary,
 } from "../storage/users.ts";
 import { closeVaultsOf, forksOpen } from "../storage/vault.ts";
@@ -50,17 +51,21 @@ export const userList = command({
   description: "List local users and whether each one is encrypted.",
   auth: false,
   args: z.object({}),
-  handler: async (_args, ctx) => ({ users: await listUsers(ctx.deps.config.dataDir) }),
-  format: (r: { users: UserSummary[] }) =>
-    r.users.length === 0
-      ? "No users yet. Create one with ./ss user.create --username <name>."
-      : table(
-          ["USERNAME", "ENCRYPTED", "CREATED"],
-          r.users.map((u) => [u.username, u.encrypted ? "yes" : "no", u.createdAt]),
-        ),
+  handler: async (_args, ctx) => listUsers(ctx.deps.config.dataDir),
+  format: (r: { users: UserSummary[]; unreadable: UnreadableUser[] }) => {
+    const out: string[] = [];
+    if (r.users.length) out.push(table(["USERNAME", "ENCRYPTED", "CREATED"], r.users.map((u) => [u.username, u.encrypted ? "yes" : "no", u.createdAt])));
+    else if (!r.unreadable.length) out.push("No users yet. Create one with ./ss user.create --username <name>.");
+    if (r.unreadable.length) {
+      out.push(`${r.users.length ? "\n" : ""}Users whose user.json is damaged (${r.unreadable.length}):`);
+      for (const u of r.unreadable) out.push(`  ${u.username}: ${u.error}`);
+    }
+    return out.join("\n");
+  },
 });
 
-type Deleted = { deleted: string; encrypted: boolean; conversations: number; images: number; loggedOut: number };
+/** encrypted is null when user.json was damaged: such a user can still be removed (T06 QA-5). */
+type Deleted = { deleted: string; encrypted: boolean | null; conversations: number; images: number; loggedOut: number };
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -86,7 +91,10 @@ out everywhere.`,
     const { dataDir } = ctx.deps.config;
     const name = args.username;
     if (args.confirm !== name) throw badRequest(`Not deleted: the confirmation must be the username, ${name}, typed exactly.`);
-    const user = await loadUser(dataDir, name);
+    const user = await loadUser(dataDir, name).catch((err) => {
+      if (isUnreadable(err)) return { encrypted: null };
+      throw err;
+    });
     if (!user) throw notFound(`No user named ${name}. ./ss user.list shows them.`);
     const dir = userDir(dataDir, name);
     const counts = await countUserFiles(dataDir, name);
@@ -109,7 +117,7 @@ out everywhere.`,
     return { deleted: name, encrypted: user.encrypted, ...counts, loggedOut };
   },
   format: (r: Deleted) =>
-    `Deleted ${r.deleted} (${r.encrypted ? "encrypted" : "unencrypted"}) with ${plural(r.conversations, "conversation")} and ${plural(r.images, "image")}, for good.${r.loggedOut ? ` Logged out ${plural(r.loggedOut, "session")}.` : ""}`,
+    `Deleted ${r.deleted} (${r.encrypted === null ? "damaged user.json" : r.encrypted ? "encrypted" : "unencrypted"}) with ${plural(r.conversations, "conversation")} and ${plural(r.images, "image")}, for good.${r.loggedOut ? ` Logged out ${plural(r.loggedOut, "session")}.` : ""}`,
 });
 
 function userBusy(name: string, dir: string, forks: number): CommandError {

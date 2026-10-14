@@ -130,7 +130,7 @@ describe("T06: user.delete, user.change-password, and the CLI around them", () =
     r = await t.cli(["user.change-password", "--username", "dev-pw-plain"], { stdin: "\nx\n" });
     assert.equal(r.code, 1);
     assert.match(r.stderr, /dev-pw-plain is unencrypted, so it has no password to change/);
-    assert.equal((await ok(["auth.whoami"])).stdout.trim(), "dev-pw (encrypted)", "nothing changed so far");
+    assert.equal((await ok(["auth.whoami"])).stdout.split("\n")[0], "dev-pw (encrypted)", "nothing changed so far");
 
     // Prompted: current (hidden), new (hidden, twice). No warning: nothing was typed on the command line.
     r = await ok(["user.change-password", "--username", "dev-pw"], { secrets: ["old-pw", "new-pw", "new-pw"] });
@@ -158,7 +158,7 @@ describe("T06: user.delete, user.change-password, and the CLI around them", () =
     await createUser(t.config.dataDir, "dev-warn", "warn-pw", FAST_KDF);
     let r = await ok(["auth.login", "--username", "dev-warn", "--password", "warn-pw"]);
     assert.match(r.stderr, /warning: --password on the command line is saved in your shell history \(and shows in ps while \.\/ss runs\)/);
-    assert.match(r.stdout, /Logged in as dev-warn \(encrypted\)\.\nNote: text you type on the \.\/ss command line .* shell history as plain text\. For private text, use --content -/);
+    assert.match(r.stdout, /Logged in as dev-warn \(encrypted\)\.\nThe session ends after 60 minutes without activity, and the server wipes its key\.\nNote: text you type on the \.\/ss command line .* shell history as plain text\. For private text, use --content -/);
     r = await ok(["auth.login", "--username", "dev-warn", "--password", "-"], { stdin: "warn-pw\n" });
     assert.doesNotMatch(r.stderr, /warning/);
     await createUser(t.config.dataDir, "dev-warn-plain", "", FAST_KDF);
@@ -166,7 +166,7 @@ describe("T06: user.delete, user.change-password, and the CLI around them", () =
     r = await ok(["auth.login", "--username", "dev-warn-plain", "--password", ""], { env: other });
     assert.doesNotMatch(r.stderr, /warning/, "an empty password is no secret");
     assert.doesNotMatch(r.stdout, /Note:/, "a plaintext user's data is plain anyway");
-    assert.equal((await ok(["auth.whoami"], { env: other })).stdout.trim(), "dev-warn-plain (unencrypted)");
-    assert.equal((await ok(["auth.whoami"])).stdout.trim(), "dev-warn (encrypted)", "this terminal is still the other user");
+    assert.equal((await ok(["auth.whoami"], { env: other })).stdout.split("\n")[0], "dev-warn-plain (unencrypted)");
+    assert.equal((await ok(["auth.whoami"])).stdout.split("\n")[0], "dev-warn (encrypted)", "this terminal is still the other user");
   });
 });
