@@ -54,6 +54,11 @@ describe("presets: list, start one, add one of its brains (T10)", () => {
     assert.deepEqual(p.brains.map((b: { name: string }) => b.name), SEVEN);
     assert.deepEqual(p.brains.map((b: { kind: string }) => b.kind), ["text", "text", "text", "text", "text", "image", "image"]);
     assert.ok(p.brains.every((b: { about?: string; color?: string }) => b.about && /^#[0-9a-f]{6}$/i.test(b.color ?? "")), "a line on each brain's job, and its badge color");
+    // Reasoning is a labeled opt-in: the list says which brain the preset switches it on for (T10 frontend: the badges).
+    assert.deepEqual(
+      p.brains.filter((b: { reasoning?: string }) => b.reasoning).map((b: { name: string; reasoning: string }) => [b.name, b.reasoning]),
+      [["Character Actor", "low"]],
+    );
     assert.equal(p.setup, undefined, "a preset has no setup to list");
     const text = (await ok(["presets.list"])).stdout;
     assert.match(text, /conversation\.import --preset tabletop-rpg/);

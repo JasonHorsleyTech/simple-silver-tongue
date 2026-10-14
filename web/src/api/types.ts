@@ -177,8 +177,11 @@ export type BrainUpdate = BrainFields & { conversation: string; brain?: string }
 /** Every setup command answers with the whole ordered list: replace conv.setup with it. */
 export type SetupListing = { conversationId: string; setup: SetupMessage[]; changed?: string; deleted?: string };
 
-/** A brain as examples.list and presets.list show it: its badge, and (T10) one line on its job, for pickers. */
-export type LibraryBrain = { name: string; kind: Brain["kind"]; color?: string; about?: string };
+/**
+ * A brain as examples.list and presets.list show it: its badge, and (T10) one line on its job, for pickers.
+ * `reasoning`: its effort, present only when the file switches reasoning on (a labeled opt-in: show it).
+ */
+export type LibraryBrain = { name: string; kind: Brain["kind"]; color?: string; about?: string; reasoning?: string };
 
 /** examples.list (T07): a committed campaign in examples/, ready to import. `error`: the file can't be imported. */
 export type ExampleInfo = {

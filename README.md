@@ -32,7 +32,7 @@ A login ends after 60 minutes without activity, and the server wipes your key fr
 
 The app comes with a ready-made campaign: **The Gilded Goat**, a deliberately quiet D&D 5e evening in a village tavern, with five brains (Game Master, Dice Master, Joke Teller, Scene Painter, Character Portraitist), a World Bible and an opening scene. A hooded figure sits in the corner booth.
 
-Open http://localhost:4747, pick your name and type your password. The start page shows **The Gilded Goat**: press **Start this campaign**. You get your own copy, encrypted like the rest of your data, and it opens on the Game Master's opening scene. Start it again any time for a fresh evening (**New conversation** in the sidebar brings you back to that page).
+Open http://localhost:4747, pick your name and type your password. The start page has three ways in: **Ready to play**, **From a preset** and **From scratch**. Under **Ready to play**, **The Gilded Goat**: press **Start this campaign**. You get your own copy, encrypted like the rest of your data, and it opens on the Game Master's opening scene. Start it again any time for a fresh evening (**New conversation** in the sidebar brings you back to that page).
 
 From the terminal instead: `./ss auth.login --username jason`, then `./ss conversation.import --example dnd-tavern` (`./ss examples.list` lists the examples).
 
@@ -51,6 +51,8 @@ A **preset** is a kit of brains with good instructions and no world: no World Bi
 
 Every brain reads every sheet, so a secret can slip out now and then; the prompts are written to keep that rare.
 
+In the browser: **New conversation** → **From a preset**. The Tabletop RPG card shows its seven brains (**What each brain does** lists their jobs). Type a title ("Chinatown") and press **Start from this preset**. The new conversation opens on **Write the World Bible first**: press **Write the World Bible**, and the Setup tab opens on it with the cursor ready. Say what kind of story it is, who you play and where tonight begins (three lines is plenty), then **Save** (⌘ Enter). Then play: type "I approach the hooded figure" and press Enter for the Game Master, or press **Send** with nothing typed and the Game Master opens the scene. The other brains are the chips beside Send (see **Play** below).
+
 From the terminal:
 
 ```bash
@@ -67,7 +69,7 @@ export SS_CONVERSATION=c_...
 ./ss turn --brain "Character Portraitist"
 ```
 
-**Add one brain from a preset** to a conversation you already have (the Gilded Goat could use a Character Actor):
+**Add one brain from a preset** to a conversation you already have (the Gilded Goat could use a Character Actor). In the browser: **Settings** → **Brains** → **Add a brain** → **From a preset**. Every preset's brains are listed with their jobs, and below them the example campaigns' brains. Click one, keep its name or change it (it suggests "Character Actor 2" if one by that name is already there), and press **Add brain**. Its card opens, with a note on what stayed behind (the conversation's own templates, for instance). From the terminal:
 
 ```bash
 ./ss brain.import --preset tabletop-rpg --brain "Character Actor"
@@ -90,7 +92,7 @@ In the browser:
 - **Edit or delete anything**, at any depth. Editing an image prompt paints a new picture.
 - **Hidden notes:** a brain's secret notes (a character sheet, the GM's plans), written in a ```` ```hidden ```` block, show as a folded bar, `Hidden · 11 lines`, never a word of them. Click it to read the note, click again to fold it; every reload starts folded. Every brain reads the note, and you can write one too. Edit shows it as written.
 - **Look at the pictures:** click one to open it large; ‹ › (or ← →) steps through every picture in the campaign. If one finishes while its card is out of sight, a "picture is ready" button at the bottom takes you to it.
-- **Change the table mid-game:** **Settings** (top right) has Brains (edit any system prompt, reminder or stop sequence, or **Add a brain**), Setup (the World Bible), Templates (the `<!-- from: ... -->` framing and your rolls' wording) and Conversation (models, image size, watermark, clone). The next message uses the change; nothing restarts.
+- **Change the table mid-game:** **Settings** (top right) has Brains (edit any system prompt, reminder or stop sequence, or **Add a brain**: blank, or from a preset), Setup (the World Bible), Templates (the `<!-- from: ... -->` framing and your rolls' wording) and Conversation (models, image size, watermark, clone). The next message uses the change; nothing restarts.
 
 **A new campaign from this one's setup** (say, Pathfinder from the D&D one): Settings → Conversation → **Clone this campaign**. Give it a title, keep **Setup only** (the brains, World Bible, templates and settings, with no story), and press **Clone and open it**. Then edit the World Bible and the prompts to suit. **With the story** copies everything instead, images included: a branch to try something else. The original stays as it was.
 

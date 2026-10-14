@@ -33,6 +33,8 @@ export function SettingsPanel({
   writingBrainId,
   addBrainNonce,
   addSetupNonce,
+  focusSetupId,
+  onSetupFocused,
   onClose,
   onConversation,
   onBrain,
@@ -46,6 +48,9 @@ export function SettingsPanel({
   writingBrainId: string | null;
   addBrainNonce: number;
   addSetupNonce: number;
+  /** A setup message to open with the cursor in it (T10: the World Bible just added from the empty conversation). */
+  focusSetupId?: string | null;
+  onSetupFocused?(): void;
   onClose(): void;
   onConversation(c: Conversation): void;
   onBrain(b: Brain): void;
@@ -119,7 +124,9 @@ export function SettingsPanel({
             />
           </>
         )}
-        {tab === "setup" && <SetupTab conv={conv} addNonce={addSetupNonce} onSetup={(setup) => onPatch((c) => ({ ...c, setup }))} />}
+        {tab === "setup" && (
+          <SetupTab conv={conv} addNonce={addSetupNonce} focusId={focusSetupId} onFocused={onSetupFocused} onSetup={(setup) => onPatch((c) => ({ ...c, setup }))} />
+        )}
         {tab === "templates" && (
           <div className="px-5 pt-4 pb-8">
             <p className="mb-5 text-[12.5px] leading-5 text-faint">

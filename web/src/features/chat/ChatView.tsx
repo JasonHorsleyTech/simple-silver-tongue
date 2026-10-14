@@ -1,12 +1,17 @@
-import { PenLine, Plus, X } from "lucide-react";
+import { BookOpen, PenLine, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { api } from "../../api/client.ts";
+import { errorMessage } from "../../api/errors.ts";
+import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { Spinner } from "../../components/Spinner.tsx";
+import { cx } from "../../lib/cx.ts";
 import { drafts } from "../../lib/drafts.ts";
 import { Link } from "../../lib/router.tsx";
 import { readLocal, writeLocal } from "../../lib/storage.ts";
 import { useMediaQuery } from "../../lib/useMediaQuery.ts";
-import type { Brain, Conversation } from "../../api/types.ts";
+import { DEFAULT_SETUP_LABEL, type Brain, type Conversation } from "../../api/types.ts";
+import { BrainTags } from "../conversations/Cast.tsx";
 import { PayloadDialog, type PayloadRequest } from "../payload/PayloadDialog.tsx";
 import { SETTINGS_TABS, SettingsPanel, type SettingsTab } from "../settings/SettingsPanel.tsx";
 import { BrainBadge } from "./BrainBadge.tsx";
@@ -33,6 +38,9 @@ export function ChatView({ id }: { id: string }) {
   const [tab, setTabState] = useState<SettingsTab>(savedTab);
   /** Bumped to open a tab's add form from outside it (the empty conversation's "Add a brain"). */
   const [addNonce, setAddNonce] = useState({ brain: 0, setup: 0 });
+  /** A setup message to open, cursor in it, once the Setup tab shows (T10: the World Bible just added). */
+  const [focusSetup, setFocusSetup] = useState<string | null>(null);
+  const setupFocused = useCallback(() => setFocusSetup(null), []);
   /** The composer adds words as this brain (or you) instead of sending. */
   const [writeAs, setWriteAsState] = useState<string | null>(null);
   /** T09: the die is armed: the next send rolls a d20 after the composer's words, and then switches it off. */
@@ -71,6 +79,22 @@ export function ChatView({ id }: { id: string }) {
     },
     [toggleSettings, setTab],
   );
+
+  /**
+   * T10: a table with no world (a preset has none) gets its World Bible in one click: setup.add pre-fills it with
+   * "<!-- This is the World Bible. -->", and the Setup tab opens on it with the cursor after that line.
+   */
+  async function writeWorldBible(): Promise<string | null> {
+    try {
+      const r = await api.call("setup.add", { conversation: id, label: DEFAULT_SETUP_LABEL });
+      chat.patch((c) => ({ ...c, setup: r.setup }));
+      setFocusSetup(r.changed ?? null);
+      openSettings("setup");
+      return null;
+    } catch (err) {
+      return errorMessage(err);
+    }
+  }
 
   /** Writing as someone adds words with no roll: choosing to do so puts the die down. */
   const setWriteAs = useCallback((as: string | null) => {
@@ -168,6 +192,8 @@ export function ChatView({ id }: { id: string }) {
       writingBrainId={chat.busy ? (live?.brainId ?? null) : null}
       addBrainNonce={addNonce.brain}
       addSetupNonce={addNonce.setup}
+      focusSetupId={focusSetup}
+      onSetupFocused={setupFocused}
       onClose={() => toggleSettings(false)}
       onConversation={chat.replaceConversation}
       onBrain={chat.replaceBrain}
@@ -196,6 +222,7 @@ export function ChatView({ id }: { id: string }) {
               conv={conv}
               brain={brain}
               onSettings={openSettings}
+              onWriteWorldBible={writeWorldBible}
               onWriteOpening={() => setWriteAs(brain.kind === "text" ? brain.id : (conv.brains.find((b) => b.kind === "text")?.id ?? AS_PLAYER))}
             />
           }
@@ -270,26 +297,44 @@ export function ChatView({ id }: { id: string }) {
 /**
  * A fresh conversation: who is listening and what the default brain was told, so nothing about it is hidden,
  * then the three things a campaign is set up with: the brains, the setup messages, and an opening in a brain's
- * own words. Each opens where it is done. A plain chat can ignore all of it and just type.
+ * own words. Each opens where it is done. A plain chat can ignore all of it and just type. A table of brains
+ * with no world yet (T10: every conversation started from a preset) is pointed at its World Bible first.
  */
 function EmptyConversation({
   conv,
   brain,
   onSettings,
+  onWriteWorldBible,
   onWriteOpening,
 }: {
   conv: Conversation;
   brain: Brain;
   onSettings(tab: SettingsTab, add?: "brain" | "setup"): void;
+  /** Adds the World Bible and opens it; resolves to a problem to show, or null. */
+  onWriteWorldBible(): Promise<string | null>;
   onWriteOpening(): void;
 }) {
   const row = "flex items-center gap-3 px-4 py-3";
   const link = "shrink-0 rounded-md px-2 py-1 text-[12.5px] text-muted transition-colors hover:bg-hover hover:text-fg";
+  const several = conv.brains.length > 1;
+  const noWorld = several && conv.setup.length === 0;
+  const [pending, setPending] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  async function writeWorld() {
+    if (pending) return;
+    setPending(true);
+    setProblem(null);
+    const p = await onWriteWorldBible();
+    setPending(false);
+    setProblem(p);
+  }
+
   return (
     <div className="mx-auto mt-[9vh] max-w-xl">
       <div className="text-center">
         <BrainBadge name={brain.name} color={brain.color} />
-        <p className="mt-4 text-[13px] text-faint">{conv.brains.length > 1 ? `${brain.name}'s system prompt (the default brain)` : "System prompt"}</p>
+        <p className="mt-4 text-[13px] text-faint">{several ? `${brain.name}'s system prompt (the default brain)` : "System prompt"}</p>
         <blockquote className="mx-auto mt-2 line-clamp-5 max-w-lg text-[14.5px] leading-6 whitespace-pre-wrap text-muted">{brain.systemPrompt}</blockquote>
         <button
           type="button"
@@ -300,12 +345,40 @@ function EmptyConversation({
         </button>
       </div>
 
-      <div className="mt-9 divide-y divide-line rounded-xl border border-line bg-panel/60 text-[13px]">
+      {noWorld && (
+        <section aria-labelledby="no-world" className="mt-9 rounded-xl border border-focus/35 bg-focus/[0.06] px-4 py-4 sm:px-5">
+          <div className="flex items-start gap-3">
+            <BookOpen aria-hidden className="mt-0.5 size-4.5 shrink-0 text-focus" />
+            <div className="min-w-0 flex-1">
+              <h2 id="no-world" className="text-[14px] font-semibold text-silver-hi">
+                Write the World Bible first
+              </h2>
+              <p className="mt-1 text-[13px] leading-5 text-muted">
+                These brains know how to play, not where. Say what kind of story it is, who you play, and where tonight begins: every brain reads it before
+                anything else, word for word.
+              </p>
+              {problem && (
+                <Notice tone="error" className="mt-3">
+                  {problem}
+                </Notice>
+              )}
+              <Button variant="primary" size="sm" className="mt-3.5" loading={pending} onClick={() => void writeWorld()}>
+                <BookOpen aria-hidden className="size-4" /> Write the World Bible
+              </Button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      <div className={cx("divide-y divide-line rounded-xl border border-line bg-panel/60 text-[13px]", noWorld ? "mt-4" : "mt-9")}>
         <div className={row}>
           <span className="w-24 shrink-0 text-faint">Brains</span>
-          <span className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+          <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1.5">
             {conv.brains.map((b) => (
-              <BrainBadge key={b.id} name={b.name} color={b.color} />
+              <span key={b.id} className="inline-flex max-w-full items-center gap-1">
+                <BrainBadge name={b.name} color={b.color} />
+                <BrainTags kind={b.kind} reasoning={b.reasoning.enabled ? b.reasoning.effort : null} />
+              </span>
             ))}
           </span>
           <button type="button" className={link} onClick={() => onSettings("brains", "brain")}>
@@ -324,14 +397,18 @@ function EmptyConversation({
             ) : (
               <>
                 <Plus aria-hidden className="mr-1 inline size-3.5 align-[-2px]" />
-                Add a World Bible
+                {noWorld ? "Add a setup message" : "Add a World Bible"}
               </>
             )}
           </button>
         </div>
         <div className={row}>
           <span className="w-24 shrink-0 text-faint">Opening</span>
-          <span className="min-w-0 flex-1 text-faint">Write the first scene yourself, or just send a message below.</span>
+          <span className="min-w-0 flex-1 text-faint">
+            {several && brain.kind === "text"
+              ? `Write the first scene yourself, or press Send with nothing typed and ${brain.name} opens it.`
+              : "Write the first scene yourself, or just send a message below."}
+          </span>
           <button type="button" className={link} onClick={onWriteOpening}>
             <PenLine aria-hidden className="mr-1 inline size-3.5 align-[-2px]" />
             Write as {brain.kind === "text" ? brain.name : "…"}

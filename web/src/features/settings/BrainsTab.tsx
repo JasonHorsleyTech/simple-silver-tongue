@@ -2,15 +2,17 @@ import { Braces, ChevronDown, Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import type { Brain, Conversation, ModelInfo } from "../../api/types.ts";
+import type { Brain, BrainImport, Conversation, ModelInfo } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { Segmented } from "../../components/Segmented.tsx";
 import { TextArea } from "../../components/TextArea.tsx";
 import { TextField } from "../../components/TextField.tsx";
 import { cx } from "../../lib/cx.ts";
+import { readLocal, writeLocal } from "../../lib/storage.ts";
 import { BrainBadge } from "../chat/BrainBadge.tsx";
 import { BrainEditor } from "./BrainEditor.tsx";
+import { ImportBrainPicker, ImportedNotes } from "./ImportBrain.tsx";
 
 /**
  * The brains: one quiet card each (badge, what is on, how much it has said, its prompt's first line), opened
@@ -43,6 +45,8 @@ export function BrainsTab({
   const imagePlan = `${conv.settings.imageModel} · ${size}`;
   const [openId, setOpenId] = useState<string | null>(() => (conv.brains.length === 1 ? conv.brains[0]!.id : null));
   const [adding, setAdding] = useState(false);
+  /** The last brain.import, shown in its brain's card until dismissed: what it left behind (T10). */
+  const [imported, setImported] = useState<BrainImport | null>(null);
   const counts = useMemo(() => {
     const n = new Map<string, number>();
     for (const m of conv.messages) if (m.author.type === "brain") n.set(m.author.brainId, (n.get(m.author.brainId) ?? 0) + 1);
@@ -66,11 +70,13 @@ export function BrainsTab({
             brain={b}
             open={openId === b.id}
             onToggle={() => setOpenId((o) => (o === b.id ? null : b.id))}
+            fromImport={imported?.brain.id === b.id}
             isDefault={b.id === conv.defaultBrainId}
             messageCount={counts.get(b.id) ?? 0}
             writing={writingBrainId === b.id}
             onPayload={() => onPayload(b.id)}
           >
+            {imported?.brain.id === b.id && <ImportedNotes imported={imported} onDismiss={() => setImported(null)} />}
             <BrainEditor
               conversationId={conv.id}
               brain={b}
@@ -90,11 +96,12 @@ export function BrainsTab({
       </div>
       <div className="mt-3">
         {adding ? (
-          <AddBrainForm
-            conversationId={conv.id}
+          <AddBrain
+            conv={conv}
             onCancel={() => setAdding(false)}
-            onAdded={(b) => {
+            onAdded={(b, r) => {
               onBrain(b);
+              setImported(r ?? null);
               setAdding(false);
               setOpenId(b.id);
             }}
@@ -113,6 +120,7 @@ function BrainCard({
   brain,
   open,
   onToggle,
+  fromImport,
   isDefault,
   messageCount,
   writing,
@@ -122,6 +130,8 @@ function BrainCard({
   brain: Brain;
   open: boolean;
   onToggle(): void;
+  /** Just brought in by brain.import: show its top, where the notes on what stayed behind are. */
+  fromImport?: boolean;
   isDefault: boolean;
   messageCount: number;
   writing: boolean;
@@ -130,8 +140,18 @@ function BrainCard({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (open) ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [open]);
+    const el = ref.current;
+    if (!open || !el) return;
+    const box = el.closest("#settings-body");
+    if (fromImport && box) {
+      // Its top, where the import's notes are. Scroll the panel only: scrollIntoView({block: "start"}) would scroll
+      // the page itself too, and push the header off screen (T05 frontend lesson).
+      const top = box.scrollTop + el.getBoundingClientRect().top - box.getBoundingClientRect().top - 12;
+      box.scrollTo({ top, behavior: "smooth" });
+    } else {
+      el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [open, fromImport]);
   const tags = [
     isDefault && "default",
     brain.kind === "image" && "image",
@@ -201,17 +221,66 @@ function BrainCard({
   );
 }
 
+const SOURCE_KEY = "ss.addBrainFrom";
+type Source = "blank" | "library";
+
+/** "Add a brain": a blank one (name, kind, system prompt), or (T10) one brought over from a preset or an example. */
+function AddBrain({ conv, onAdded, onCancel }: { conv: Conversation; onAdded(b: Brain, imported?: BrainImport): void; onCancel(): void }) {
+  const [source, setSourceState] = useState<Source>(() => (readLocal(SOURCE_KEY) === "library" ? "library" : "blank"));
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, []);
+  const setSource = (s: Source) => {
+    setSourceState(s);
+    writeLocal(SOURCE_KEY, s === "library" ? s : null);
+  };
+  return (
+    <div
+      ref={ref}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          onCancel();
+        }
+      }}
+      className="scroll-mt-3 space-y-4 rounded-xl border border-focus/30 bg-raised/50 p-3.5"
+    >
+      <div className="flex items-center gap-3">
+        <h4 className="flex-1 text-[13px] font-semibold text-fg">New brain</h4>
+        <Segmented<Source>
+          label="Start from"
+          value={source}
+          onChange={setSource}
+          options={[
+            { value: "blank", label: "Blank", title: "Write its name and system prompt yourself" },
+            { value: "library", label: "From a preset", title: "A ready-made brain from a preset or an example campaign" },
+          ]}
+        />
+      </div>
+      {source === "blank" ? (
+        <BlankBrainForm conversationId={conv.id} onAdded={(b) => onAdded(b)} onCancel={onCancel} />
+      ) : (
+        <>
+          <ImportBrainPicker conv={conv} onImported={(r) => onAdded(r.brain, r)} />
+          <div className="flex justify-end">
+            <Button size="sm" variant="ghost" onClick={onCancel}>
+              Cancel
+            </Button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /** A new brain: name, kind and system prompt. Its reminder starts on, pre-filled with an example to edit. */
-function AddBrainForm({ conversationId, onAdded, onCancel }: { conversationId: string; onAdded(b: Brain): void; onCancel(): void }) {
+function BlankBrainForm({ conversationId, onAdded, onCancel }: { conversationId: string; onAdded(b: Brain): void; onCancel(): void }) {
   const [name, setName] = useState("");
   const [kind, setKind] = useState<Brain["kind"]>("text");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const ref = useRef<HTMLFormElement>(null);
-  useEffect(() => {
-    ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, []);
 
   async function submit(e?: FormEvent) {
     e?.preventDefault();
@@ -230,24 +299,31 @@ function AddBrainForm({ conversationId, onAdded, onCancel }: { conversationId: s
 
   return (
     <form
-      ref={ref}
       onSubmit={submit}
       onKeyDown={(e) => {
         if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
           e.preventDefault();
           void submit();
-        } else if (e.key === "Escape") {
-          e.stopPropagation();
-          onCancel();
         }
       }}
       noValidate
-      className="scroll-mt-3 space-y-4 rounded-xl border border-focus/30 bg-raised/50 p-3.5"
+      className="space-y-4"
     >
-      <div className="flex items-center gap-3">
-        <h4 className="flex-1 text-[13px] font-semibold text-fg">New brain</h4>
+      <div className="flex items-end gap-3">
+        <TextField
+          id="nb-name"
+          label="Name"
+          className="min-w-0 flex-1"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Dice Master"
+          maxLength={60}
+          autoFocus
+          autoComplete="off"
+        />
         <Segmented<Brain["kind"]>
           label="Kind"
+          className="mb-[3px]"
           value={kind}
           onChange={setKind}
           options={[
@@ -256,13 +332,12 @@ function AddBrainForm({ conversationId, onAdded, onCancel }: { conversationId: s
           ]}
         />
       </div>
-      <TextField id="nb-name" label="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Dice Master" maxLength={60} autoFocus autoComplete="off" />
       <TextArea
         id="nb-sp"
         label="System prompt"
         value={systemPrompt}
         onChange={(e) => setSystemPrompt(e.target.value)}
-        placeholder="You are the Dice Master. When the player tries something risky, call for a check and roll it…"
+        placeholder="You are the Dice Master. When the player tries something risky, name the check and the number to beat…"
         maxPx={300}
       />
       <p className="text-[12.5px] leading-5 text-faint">

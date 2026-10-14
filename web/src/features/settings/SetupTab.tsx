@@ -18,11 +18,16 @@ import { compactNumber } from "../../lib/format.ts";
 export function SetupTab({
   conv,
   addNonce,
+  focusId,
+  onFocused,
   onSetup,
 }: {
   conv: Conversation;
   /** Changes when something outside asks for the add form ("Add a World Bible" in an empty conversation). */
   addNonce: number;
+  /** A setup message added outside (T10: the empty conversation's "Write the World Bible"): open it, cursor in its text. */
+  focusId?: string | null;
+  onFocused?(): void;
   onSetup(setup: SetupMessage[]): void;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
@@ -35,6 +40,13 @@ export function SetupTab({
   useEffect(() => {
     if (addNonce) setAdding(true);
   }, [addNonce]);
+
+  useEffect(() => {
+    if (!focusId) return;
+    setOpenId(focusId);
+    setFresh(focusId);
+    onFocused?.();
+  }, [focusId, onFocused]);
 
   async function run(p: Promise<SetupListing>): Promise<SetupListing | null> {
     setError(null);

@@ -1,46 +1,19 @@
-import { ArrowRight, Dices, ImageIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ArrowRight, Dices } from "lucide-react";
+import { useState } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import { BRAIN_COLORS, type ExampleInfo } from "../../api/types.ts";
+import type { ExampleInfo } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { navigate } from "../../lib/router.tsx";
-import { BrainBadge } from "../chat/BrainBadge.tsx";
+import { Cast } from "./Cast.tsx";
 import { refreshConversations } from "./store.ts";
 
 /**
- * T07: the committed example campaigns (examples.list), each one click from play (conversation.import
- * --example). The import is the user's own copy, encrypted like the rest of their data; the example file
- * itself is never changed. Renders nothing until the list is in, and nothing if there are no examples.
+ * T07: a committed example campaign (examples.list), one click from play (conversation.import --example). The
+ * import is the user's own copy, encrypted like the rest of their data; the example file itself is never changed.
  */
-export function ExampleCampaigns() {
-  const [examples, setExamples] = useState<ExampleInfo[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let live = true;
-    api.call("examples.list").then(
-      (r) => live && setExamples(r.examples),
-      (err) => live && setError(errorMessage(err)),
-    );
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  if (error) return <Notice tone="error">Couldn't list the example campaigns. {error}</Notice>;
-  if (!examples?.length) return null;
-  return (
-    <div className="space-y-3">
-      {examples.map((e) => (
-        <ExampleCard key={e.name} example={e} />
-      ))}
-    </div>
-  );
-}
-
-function ExampleCard({ example: e }: { example: ExampleInfo }) {
+export function ExampleCard({ example: e }: { example: ExampleInfo }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(e.error ? `It can't be imported: ${e.error}` : null);
 
@@ -77,16 +50,7 @@ function ExampleCard({ example: e }: { example: ExampleInfo }) {
         </div>
       </div>
 
-      {e.brains.length > 0 && (
-        <ul aria-label="Brains" className="mt-3.5 flex flex-wrap items-center gap-1.5">
-          {e.brains.map((b, i) => (
-            <li key={b.name} className="inline-flex items-center gap-1" title={b.kind === "image" ? `${b.name} answers with a picture` : undefined}>
-              <BrainBadge name={b.name} color={b.color ?? BRAIN_COLORS[i % BRAIN_COLORS.length]!} />
-              {b.kind === "image" && <ImageIcon aria-label="(image)" className="size-3.5 text-faint" />}
-            </li>
-          ))}
-        </ul>
-      )}
+      <Cast brains={e.brains} />
 
       {error && (
         <Notice tone="error" className="mt-3">

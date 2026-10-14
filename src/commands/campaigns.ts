@@ -237,8 +237,11 @@ async function readCampaign(lib: Library, name: string): Promise<{ doc: Campaign
 
 // ── Commands ──
 
-/** A brain's color is its badge (T07 frontend: the browser shows the cast before you start); `about` is its job (T10). */
-type BrainInfo = { name: string; kind: string; color?: string; about?: string };
+/**
+ * A brain's color is its badge (T07 frontend: the browser shows the cast before you start); `about` is its job (T10).
+ * `reasoning` is its effort when the file switches reasoning on (T10 frontend): a labeled opt-in, so the pickers say so.
+ */
+type BrainInfo = { name: string; kind: string; color?: string; about?: string; reasoning?: string };
 type ExampleInfo = { name: string; title: string; about?: string; brains: BrainInfo[]; setup: string[]; messages: number; error?: string };
 type PresetInfo = { name: string; title: string; about?: string; brains: BrainInfo[]; error?: string };
 
@@ -248,12 +251,20 @@ async function listLibrary(lib: Library): Promise<ExampleInfo[]> {
   for (const name of await libraryNames(lib)) {
     try {
       const { doc, where } = await readCampaign(lib, name);
-      toConversation(doc, where); // T10 QA-7: what an import would refuse (two brains of one name) isn't listed as usable
+      // T10 QA-7: what an import would refuse (two brains of one name) isn't listed as usable. The brains are listed as
+      // an import makes them (the color it would give one without, its reasoning), in the file's order.
+      const conv = toConversation(doc, where);
       out.push({
         name,
         title: doc.title ?? name,
         about: doc.about,
-        brains: doc.brains.map((b) => ({ name: b.name, kind: b.kind, ...(b.color ? { color: b.color } : {}), ...(b.about ? { about: b.about } : {}) })),
+        brains: conv.brains.map((b, i) => ({
+          name: b.name,
+          kind: b.kind,
+          color: b.color,
+          ...(doc.brains[i]?.about ? { about: doc.brains[i]!.about } : {}),
+          ...(b.reasoning.enabled ? { reasoning: b.reasoning.effort } : {}),
+        })),
         setup: doc.setup.map((s) => s.label),
         messages: doc.messages.length,
       });
@@ -264,7 +275,7 @@ async function listLibrary(lib: Library): Promise<ExampleInfo[]> {
   return out;
 }
 
-const brainNames = (brains: BrainInfo[]) => brains.map((b) => (b.kind === "image" ? `${b.name} (image)` : b.name)).join(", ");
+const brainNames = (brains: BrainInfo[]) => brains.map((b) => `${b.name}${b.kind === "image" ? " (image)" : ""}${b.reasoning ? ` (reasoning ${b.reasoning})` : ""}`).join(", ");
 
 export const examplesList = command({
   name: "examples.list",
@@ -314,7 +325,7 @@ already have: ./ss brain.import --preset <name> --brain <brain>. Nothing here is
               : [
                   `${p.name}: ${p.title}`,
                   p.about ? `  ${p.about}` : "",
-                  ...p.brains.map((b) => `  · ${b.name}${b.kind === "image" ? " (image)" : ""}${b.about ? `: ${b.about}` : ""}`),
+                  ...p.brains.map((b) => `  · ${b.name}${b.kind === "image" ? " (image)" : ""}${b.reasoning ? ` (reasoning ${b.reasoning})` : ""}${b.about ? `: ${b.about}` : ""}`),
                   `  Start one: ./ss conversation.import --preset ${p.name} --title "..."`,
                   `  Add one brain: ./ss brain.import --conversation c_... --preset ${p.name} --brain "${p.brains[0]?.name ?? "..."}"`,
                 ]

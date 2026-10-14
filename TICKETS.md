@@ -357,7 +357,7 @@ Any brain can be sent a roll, image brains included (Jason: "sure, why not"). It
 
 ---
 
-## T10: Presets · `frontend`
+## T10: Presets · `done`
 
 Jason, 2026-10-14: typing in a campaign's brains by hand is the slow part. A **preset** is a ready-made kit of brains with good default instructions and no world: no World Bible, no story. You can start a new conversation from one ("Chinatown, film noir": pick the tabletop preset, write the World Bible, play). You can also add any one of a preset's brains to a conversation you already have.
 
@@ -424,5 +424,7 @@ Rules for every brain:
 - **From T10 triage** (report: `reports/T10-triage.md`):
   - Four prompts changed on live evidence (fix against control): the odds (no chance only for the impossible; a person who'd rather say no is a roll), the Co-GM (settles plain details only, never one that gives a secret away, not even to deny it), the GM (after a roll, never writes the player's pitch), the Portraitist (nothing written about hands). The Gilded Goat is unchanged.
   - **For Frontend:** `brain.import` can now return a third note, for a preset brain going into a conversation with a brain that doesn't know hidden notes (the Goat): it says the brain can't read other brains' system prompts. It's a sentence for the user, like the others; show all `notes`. `presets.list` and `examples.list` now list a file an import would refuse (e.g. two brains of one name) with `error`: show it as unusable, not pickable. `about` is always one line (a line break is refused). The CLI marks the Actor "(reasoning low)" in `conversation.import`'s brain list; the preset picker's badges could say so too (its `about` already does). README has a new paragraph on preset brains in the Goat.
+- **From T10 frontend** (report: `reports/T10-frontend.md`):
+  - Built: the start page's three ways in (Ready to play, From a preset, From scratch), one at a time; a preset card with its cast (reasoning tagged, "What each brain does"), a Title field and **Start from this preset**; **Write the World Bible first** in a conversation with brains and no setup (one click adds the World Bible and opens it in the Setup tab); Settings → Brains → Add a brain → **From a preset** (preset and example brains with their jobs, an editable name pre-filled with a free one, `brain.import`, the new card opened on its notes). `presets.list` / `examples.list` brains now carry `reasoning` (effort, when on). Live: GM, Creator, Actor, odds and a roll to the GM, all in the browser.
 
 **Deferred in:** *(none yet)*
