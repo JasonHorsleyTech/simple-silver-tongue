@@ -3,6 +3,7 @@ import { memo, useEffect, useState } from "react";
 import type { Brain, LedgerMessage, MessageVersion } from "../../api/types.ts";
 import { cx } from "../../lib/cx.ts";
 import { activeVersion, clockTime, fullTime } from "../../lib/format.ts";
+import { rollView } from "../../lib/rolls.ts";
 import { ImageBody, type Aspect } from "./ImageCard.tsx";
 import { LiveReply } from "./LiveReply.tsx";
 import { MessageEditor } from "./MessageEditor.tsx";
@@ -10,6 +11,7 @@ import { BrainMessageFrame, PlayerBubble, SteerNote } from "./MessageFrame.tsx";
 import { CopyAction, DeleteConfirm, IconAction, MessageFooter, VersionMeta, VersionPager } from "./MessageFooter.tsx";
 import { MessageText } from "./MessageText.tsx";
 import { Reasoning } from "./Reasoning.tsx";
+import { RollBubble } from "./RollCard.tsx";
 import { SteerBox } from "./SteerBox.tsx";
 import { IMAGE_BUSY, imagePending, type LiveReply as Live, type MessageActions } from "./useChat.ts";
 
@@ -28,6 +30,8 @@ type Mode = "view" | "edit" | "delete" | "steer";
  *   image message the picture and its prompt (ImageCard); edit changes the prompt and paints it again, and
  *                 "Paint again" makes another image of a finished one, as a new version (both are kept)
  * A text message's hidden notes (T08) show folded (MessageText); the editor and Copy have the raw text.
+ * A roll (T09) is the player's message with the die beside its line (RollBubble); edited, its line is the roll,
+ * and the die's own number is only history in the footer ("🎲 d20 said 12").
  * Actions show on hover or keyboard focus, and stay shown on the last message. During a reply they explain
  * why they can't run instead of failing with the server's 409, and so do those that would replace or remove
  * an image still being made (its prompt edit, its retry, the message's delete).
@@ -111,7 +115,13 @@ export const MessageItem = memo(function MessageItem({
       busy={busy}
       compact={compact}
       kind={image ? "image" : "text"}
-      versionNote={message.versions.length > 1 ? `Editing version ${message.activeVersion + 1} of ${message.versions.length}` : undefined}
+      versionNote={
+        message.versions.length > 1
+          ? `Editing version ${message.activeVersion + 1} of ${message.versions.length}`
+          : v.roll
+            ? "Your roll's line: every brain reads what you save"
+            : undefined
+      }
       onCancel={() => setMode("view")}
       onSave={async (content) => {
         const problem = await actions.edit(message.id, content);
@@ -136,34 +146,44 @@ export const MessageItem = memo(function MessageItem({
   );
 
   if (message.author.type === "player") {
+    const roll = rollView(v);
+    const footer = (
+      <MessageFooter align="end" pinned={mode === "delete"}>
+        {mode === "delete" ? (
+          <DeleteConfirm versions={1} pending={pending} onConfirm={() => void remove()} onCancel={() => setMode("view")} />
+        ) : (
+          <>
+            <CopyAction text={v.content} />
+            <IconAction label={roll ? "Edit the roll's line" : "Edit"} onClick={() => setMode("edit")}>
+              <Pencil aria-hidden className="size-3.5" />
+            </IconAction>
+            <IconAction label={roll ? "Delete the roll" : "Delete"} blocked={busy} onClick={unlessBusy(() => setMode("delete"))}>
+              <Trash2 aria-hidden className="size-3.5" />
+            </IconAction>
+            {v.edited && <span className="px-1">edited</span>}
+            {roll?.history && (
+              <span
+                title={`What the server's die rolled. The line was edited since, and every brain reads the edited line: the honor system.`}
+                className="cursor-help px-1 whitespace-nowrap"
+              >
+                {roll.history}
+              </span>
+            )}
+            <time dateTime={v.createdAt} title={fullTime(v.createdAt)} className="px-1 tabular-nums">
+              {clockTime(v.createdAt)}
+            </time>
+          </>
+        )}
+      </MessageFooter>
+    );
     return (
       <div>
         {mode === "edit" ? (
           <div className="flex justify-end">{editor(true)}</div>
+        ) : roll ? (
+          <RollBubble key={v.edited ? "edited" : "rolled"} version={v} footer={footer} />
         ) : (
-          <PlayerBubble
-            footer={
-              <MessageFooter align="end" pinned={mode === "delete"}>
-                {mode === "delete" ? (
-                  <DeleteConfirm versions={1} pending={pending} onConfirm={() => void remove()} onCancel={() => setMode("view")} />
-                ) : (
-                  <>
-                    <CopyAction text={v.content} />
-                    <IconAction label="Edit" onClick={() => setMode("edit")}>
-                      <Pencil aria-hidden className="size-3.5" />
-                    </IconAction>
-                    <IconAction label="Delete" blocked={busy} onClick={unlessBusy(() => setMode("delete"))}>
-                      <Trash2 aria-hidden className="size-3.5" />
-                    </IconAction>
-                    {v.edited && <span className="px-1">edited</span>}
-                    <time dateTime={v.createdAt} title={fullTime(v.createdAt)} className="px-1 tabular-nums">
-                      {clockTime(v.createdAt)}
-                    </time>
-                  </>
-                )}
-              </MessageFooter>
-            }
-          >
+          <PlayerBubble footer={footer}>
             <MessageText key={message.activeVersion} text={v.content} />
           </PlayerBubble>
         )}

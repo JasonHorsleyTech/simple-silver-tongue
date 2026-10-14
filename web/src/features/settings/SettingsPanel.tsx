@@ -123,8 +123,8 @@ export function SettingsPanel({
         {tab === "templates" && (
           <div className="px-5 pt-4 pb-8">
             <p className="mb-5 text-[12.5px] leading-5 text-faint">
-              How each brain sees the others: your messages, other brains' lines and pictures, and a steer. Plain text, sent as written; the payload view shows
-              the effect.
+              How each brain sees the others: your messages, other brains' lines and pictures, a steer, and your dice rolls. Plain text, sent as written; the
+              payload view shows the effect.
             </p>
             <TemplatesEditor conv={conv} onSaved={onConversation} />
           </div>

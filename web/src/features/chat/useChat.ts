@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client.ts";
 import { ApiError, errorMessage, isAbortError, retryOf } from "../../api/errors.ts";
 import { IMAGE_STOP_NOTE, type Brain, type Conversation, type LedgerMessage, type RetryRequest, type StreamYield } from "../../api/types.ts";
+import { forBrowser } from "../../lib/format.ts";
 import { refreshConversations } from "../conversations/store.ts";
 
 /**
@@ -21,6 +22,10 @@ import { refreshConversations } from "../conversations/store.ts";
  * ledger, however it got there (a turn, a regenerate, an edit, an add, a retry, a reload), has a watcher on
  * `image.follow`, which ends with the message as saved. Messages from different streams can arrive out of
  * order, so an older copy of a message (an earlier `updatedAt`) never replaces a newer one.
+ *
+ * Dice (T09): a send can carry a roll (`turn` with `roll: true`). The server rolls; the roll arrives as a `message`
+ * event, after your text's and before `start`, and is upserted like any message. Until it does, `pendingRoll`
+ * stands in for it (a tumbling die, never a number). `roll()` just rolls (message.roll), asking no brain.
  */
 
 export type LiveReply = {
@@ -47,6 +52,13 @@ export type LiveReply = {
   image: boolean;
 };
 
+/**
+ * What a send gives back when it saved nothing (refused up front, or stopped before Venice answered): the text for
+ * the composer, and whether the die was armed, so the roll is armed again too (T09). Once anything is saved, the
+ * roll included, there is nothing to give back: sending again must not add the text or roll twice.
+ */
+export type Unsent = { text: string; roll: boolean };
+
 /** A line above the composer: an up-front send failure (error), or what a stop did and didn't save (info). */
 export type ChatNotice = { tone: "error" | "info"; message: string; note?: string };
 
@@ -72,6 +84,8 @@ export type Chat = {
   loadError: ApiError | null;
   /** The player's text while `turn` waits for Venice to accept it (it is saved only then). */
   pendingPlayer: string | null;
+  /** T09: a roll is on its way (a roll-and-send before Venice accepts it, or message.roll): a die tumbles in its place. */
+  pendingRoll: boolean;
   live: LiveReply | null;
   /** True while a reply is streaming (in this tab or followed). */
   busy: boolean;
@@ -79,10 +93,11 @@ export type Chat = {
   stopping: boolean;
   notice: ChatNotice | null;
   /**
-   * Send a message (empty = the brain just responds). Resolves to the text to put back in the composer
-   * when the message was not saved (the send failed up front, or was stopped before Venice answered), else null.
+   * Send a message (empty = the brain just responds), with a d20 roll after it when `roll` (T09: the server rolls).
+   * Resolves to what to give back when nothing was saved (the send failed up front, or was stopped before Venice
+   * answered), else null.
    */
-  send(content: string, brainId?: string): Promise<string | null>;
+  send(content: string, brainId?: string, opts?: { roll?: boolean }): Promise<Unsent | null>;
   /** Stop the running reply (this tab's, or one followed from the CLI or another tab). */
   stop(): Promise<void>;
   /**
@@ -95,6 +110,8 @@ export type Chat = {
    * to null when added, or to the reason it wasn't.
    */
   add(as: string, content: string): Promise<string | null>;
+  /** T09: just roll (message.roll): the server rolls a d20 and adds it as your message; no brain is asked. Resolves to null, or why not. */
+  roll(): Promise<string | null>;
   actions: MessageActions;
   dismissLive(): void;
   dismissNotice(): void;
@@ -155,6 +172,7 @@ export function useChat(id: string): Chat {
   const [conv, setConv] = useState<Conversation | null>(null);
   const [loadError, setLoadError] = useState<ApiError | null>(null);
   const [pendingPlayer, setPendingPlayer] = useState<string | null>(null);
+  const [pendingRoll, setPendingRoll] = useState(false);
   const [live, setLive] = useState<LiveReply | null>(null);
   const [notice, setNotice] = useState<ChatNotice | null>(null);
   const [stopping, setStopping] = useState(false);
@@ -263,6 +281,8 @@ export function useChat(id: string): Chat {
           flush();
           upsertMessage(ev.message);
           setPendingPlayer(null);
+          // Your text comes first, then (T09) your roll: the tumbling die stays until the roll itself is in.
+          if (ev.message.versions.some((v) => v.roll)) setPendingRoll(false);
           void refreshConversations();
           break;
         case "start":
@@ -316,7 +336,7 @@ export function useChat(id: string): Chat {
   const fail = useCallback(
     (err: unknown) => {
       flush();
-      setLive((l) => (l ? { ...l, phase: "failed", error: errorMessage(err), retry: retryOf(err) } : l));
+      setLive((l) => (l ? { ...l, phase: "failed", error: forBrowser(errorMessage(err)), retry: retryOf(err) } : l));
     },
     [flush],
   );
@@ -331,7 +351,8 @@ export function useChat(id: string): Chat {
       flush();
       setLive(null);
       setPendingPlayer(null);
-      setNotice((n) => (n?.note ? n : { tone: "info", message: err.message }));
+      setPendingRoll(false);
+      setNotice((n) => (n?.note ? n : { tone: "info", message: forBrowser(err.message) }));
       watchCost();
       void refreshConversations();
       return true;
@@ -484,14 +505,17 @@ export function useChat(id: string): Chat {
   }, [conv, busy, reload]);
 
   const send = useCallback(
-    async (content: string, brainId?: string): Promise<string | null> => {
-      const c = convRef.current;
-      if (!c || busyRef.current) return content;
+    async (content: string, brainId?: string, opts?: { roll?: boolean }): Promise<Unsent | null> => {
+      const roll = opts?.roll === true;
       const hasText = content.trim() !== "";
+      const unsent = hasText || roll ? { text: hasText ? content : "", roll } : null;
+      const c = convRef.current;
+      if (!c || busyRef.current) return unsent;
       const target = c.brains.find((b) => b.id === (brainId ?? c.defaultBrainId)) ?? null;
       busyRef.current = true;
       setNotice(null);
       setPendingPlayer(hasText ? content : null);
+      setPendingRoll(roll);
       setLive({
         origin: "turn",
         kind: "turn",
@@ -509,17 +533,17 @@ export function useChat(id: string): Chat {
       let saved = false;
       let started = false;
       try {
-        const args = { conversation: id, ...(hasText ? { content } : {}), ...(brainId ? { brain: brainId } : {}) };
+        const args = { conversation: id, ...(hasText ? { content } : {}), ...(brainId ? { brain: brainId } : {}), ...(roll ? { roll: true } : {}) };
         for await (const ev of api.stream("turn", args, { signal: alive.current.signal })) {
-          if (ev.type === "message") saved = true;
+          if (ev.type === "message") saved = true; // your text and your roll are saved together
           if (ev.type === "start") started = true;
           if (apply(ev)) break; // the prompt is saved: the image is followed on its own, and the table is free
         }
         return null;
       } catch (err) {
         if (isAbortError(err)) return null;
-        const giveBack = saved || !hasText ? null : content;
-        if (stoppedEarly(err)) return giveBack; // stopped before Venice answered: the message wasn't saved
+        const giveBack = saved ? null : unsent;
+        if (stoppedEarly(err)) return giveBack; // stopped before Venice answered: nothing was saved, the roll included
         setPendingPlayer(null);
         if (started) {
           fail(err); // keep the partial text, with the error and a Retry
@@ -531,6 +555,8 @@ export function useChat(id: string): Chat {
           if (err instanceof ApiError && err.code === "conflict") void follow();
         }
         return giveBack;
+      } finally {
+        setPendingRoll(false);
       }
     },
     [apply, fail, flush, follow, stoppedEarly, id],
@@ -593,7 +619,7 @@ export function useChat(id: string): Chat {
       const r = await api.call("generation.stop", { conversation: id });
       if (r.stopped) {
         // The stream this tab is reading delivers the saved message (or the `stopped` error) by itself.
-        const head = r.message ? "Stopped. What had arrived is kept." : (r.error?.message ?? "Stopped.");
+        const head = r.message ? "Stopped. What had arrived is kept." : r.error ? forBrowser(r.error.message) : "Stopped.";
         setNotice({ tone: "info", message: head, ...(r.note ? { note: r.note } : {}) });
         watchCost();
       } else if (r.painting?.length) {
@@ -739,10 +765,26 @@ export function useChat(id: string): Chat {
     [id, upsertMessage, ledgerFailure],
   );
 
+  const roll = useCallback(async () => {
+    if (busyRef.current) return BUSY_LEDGER;
+    setPendingRoll(true); // brings the scrollback to the bottom, where the roll lands
+    try {
+      upsertMessage((await api.call("message.roll", { conversation: id })).message);
+      setNotice(null);
+      void refreshConversations();
+      return null;
+    } catch (err) {
+      return ledgerFailure(err);
+    } finally {
+      setPendingRoll(false);
+    }
+  }, [id, upsertMessage, ledgerFailure]);
+
   return {
     conv,
     loadError,
     pendingPlayer,
+    pendingRoll,
     live,
     busy,
     stopping,
@@ -751,6 +793,7 @@ export function useChat(id: string): Chat {
     stop,
     retry,
     add,
+    roll,
     actions,
     dismissLive: useCallback(() => setLive((l) => (l?.phase === "failed" ? null : l)), []),
     dismissNotice: useCallback(() => setNotice(null), []),

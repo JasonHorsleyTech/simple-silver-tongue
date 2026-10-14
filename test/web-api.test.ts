@@ -7,6 +7,8 @@ import { command, streamCommand } from "../src/registry.ts";
 import { createClient } from "../web/src/api/client.ts";
 import { ApiError, errorMessage, retryOf } from "../web/src/api/errors.ts";
 import { readNdjson } from "../web/src/api/ndjson.ts";
+import { forBrowser } from "../web/src/lib/format.ts";
+import { rollLineIndex, rollView } from "../web/src/lib/rolls.ts";
 import { STOP_BILL_NOTE as SERVER_STOP_NOTE } from "../src/commands/chat.ts";
 import { BRAIN_COLORS as SERVER_COLORS } from "../src/conversations/defaults.ts";
 import { REASONING_NOTE as SERVER_REASONING_NOTE } from "../src/conversations/prompt.ts";
@@ -16,6 +18,7 @@ import {
   BRAIN_COLORS,
   IMAGE_STOP_NOTE,
   REASONING_NOTE,
+  ROLL_PREVIEW_NOTE,
   STOP_BILL_NOTE,
   type Commands,
   type NoArgs,
@@ -279,6 +282,58 @@ describe("web API client against the real server", () => {
 
     assert.equal(REASONING_NOTE, SERVER_REASONING_NOTE, "the brain editor shows the server's own sentence");
     assert.deepEqual(BRAIN_COLORS, SERVER_COLORS, "the color picker offers the server's palette");
+  });
+
+  test("T09: the web client's roll-and-send, message.roll, roll preview and roll template are what the server accepts", async () => {
+    const api = client();
+    await api.call("auth.login", { username: "web-plain", password: "" });
+    const conv = await api.call("conversation.create", { title: "T09 web", systemPrompt: "You are the GM." });
+
+    // Roll-and-send: your text's message, then the roll's, both before start (the browser shows the roll at once).
+    const events = await collectStream(api.stream("turn", { conversation: conv.id, content: "I haggle.", roll: true }));
+    assert.deepEqual(events.slice(0, 3).map((e) => e.type), ["message", "message", "start"]);
+    const rolled = (events[1] as Extract<StreamYield, { type: "message" }>).message;
+    const v = rolled.versions[0]!;
+    assert.ok(v.roll && v.roll.die === "d20" && v.roll.result >= 1 && v.roll.result <= 20);
+    assert.equal(v.content, `🎲 I rolled a d20: **${v.roll.result}**`);
+    assert.deepEqual(rollView(v), { roll: v.roll, face: v.roll.result, label: `🎲 d20: ${v.roll.result}`, history: null });
+    assert.equal(rollView((events[0] as Extract<StreamYield, { type: "message" }>).message.versions[0]!), null, "typed text is no roll");
+
+    // The honor system: once edited, the line is the roll; the die's number is only history, never the face (T09 QA-1).
+    // (Another number than the die's: an edit that changes nothing isn't marked edited.)
+    const fudged = v.roll.result === 3 ? 4 : 3;
+    const edited = await api.call("message.edit", { conversation: conv.id, message: rolled.id, content: `🎲 I rolled a d20: **${fudged}**` });
+    const shown = rollView(edited.message.versions[0]!)!;
+    assert.equal(shown.face, null);
+    assert.equal(shown.history, `🎲 d20 said ${v.roll.result}`);
+
+    // Just roll: a roll in the ledger, no brain asked (the mock keeps its newest 20 requests, newest first).
+    const newest = t.mock.state.requests[0];
+    const just = await api.call("message.roll", { conversation: conv.id });
+    assert.ok(just.message.versions[0]!.roll);
+    assert.equal(t.mock.state.requests[0], newest);
+
+    // The preview: the note first, and the browser marks {{roll}} in the roll's own line only, not in typed text.
+    const preview = await api.call("prompt.preview", { conversation: conv.id, content: 'I carve "{{roll}}".', roll: true });
+    assert.equal(preview.notes[0], ROLL_PREVIEW_NOTE);
+    const messages = preview.body.messages;
+    const at = rollLineIndex(messages, conv.brains[0]!.finalReminder);
+    assert.equal(at, messages.length - 1);
+    assert.match(messages[at - 1]!.content, /I carve "\{\{roll\}\}"/);
+    const reminder = { enabled: true, content: "Stay in character." };
+    assert.equal(rollLineIndex([...messages, { role: "user", content: reminder.content }], reminder), at, "a final reminder comes after the roll's line");
+    assert.equal(rollLineIndex([...messages.slice(0, -1), { role: "user", content: "I haggle." }], null), -1, "no {{roll}} last, nothing marked");
+
+    // The template, as the templates editor saves it; one without {{roll}} is refused.
+    assert.equal((await api.call("conversation.update", { id: conv.id, templates: { roll: "Fate says {{roll}}." } })).templates.roll, "Fate says {{roll}}.");
+    await assert.rejects(api.call("conversation.update", { id: conv.id, templates: { roll: "Fate says." } }), (e: unknown) => e instanceof ApiError && e.status === 400);
+
+    // A broken roll-and-send keeps the roll. Its retry never rolls, and the browser's words drop the terminal command.
+    await api.call("conversation.update", { id: conv.id, templates: { roll: "MOCK_MIDSTREAM_ERROR {{roll}}" } });
+    const broken = await collectStream(api.stream("turn", { conversation: conv.id, roll: true })).catch((e: unknown) => e);
+    assert.match(errorMessage(broken), /no new roll: turn --brain b_\w+ without --content or --roll, or Retry in the browser\.$/);
+    assert.match(forBrowser(errorMessage(broken)), /send again to Assistant with no new message and no new roll, or Retry in the browser\.$/);
+    assert.deepEqual(retryOf(broken), { command: "turn", args: { conversation: conv.id, brain: conv.defaultBrainId } });
   });
 
   test("an unreachable server is a network ApiError", async () => {

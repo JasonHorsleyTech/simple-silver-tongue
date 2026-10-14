@@ -1,6 +1,7 @@
 import { ArrowUp, Check, ImageIcon, PenLine, Plus, Square, X } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { STOP_BILL_NOTE, type Brain } from "../../api/types.ts";
+import { D20Icon } from "../../components/D20.tsx";
 import { Spinner } from "../../components/Spinner.tsx";
 import { cx } from "../../lib/cx.ts";
 import { useAutosize } from "../../lib/useAutosize.ts";
@@ -27,6 +28,11 @@ export const AS_PLAYER = "player";
  * While a reply is being written (sent here, regenerated, or followed from the CLI) the chips give way to who
  * is writing, and the big button is Stop. Its caption and tooltip are the server's own sentence: a stop saves
  * waiting, not money.
+ *
+ * The die (T09, ⌥R) arms a d20 roll for the next send, whichever button sends it: the server rolls, the roll goes
+ * in as your message (after your words, if any), then that brain answers. Send and the chips wear the die while it
+ * is armed, and the send switches it off. Its band offers "Just roll" (message.roll: no brain is asked). Esc or ×
+ * disarms it. Writing as someone else has no roll: the die steps aside.
  */
 export function Composer({
   value,
@@ -41,6 +47,9 @@ export function Composer({
   status,
   onStop,
   stopping,
+  roll,
+  onRoll,
+  onJustRoll,
   autoFocus,
 }: {
   value: string;
@@ -58,11 +67,18 @@ export function Composer({
   status?: string;
   onStop(): void;
   stopping: boolean;
+  /** T09: the die is armed: the next send rolls a d20 after your words, then the brain answers. */
+  roll: boolean;
+  onRoll(armed: boolean): void;
+  /** Roll now with no brain asked (message.roll). Resolves to null when rolled, or to the reason it wasn't. */
+  onJustRoll(): Promise<string | null>;
   autoFocus?: boolean;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  const [justRolling, setJustRolling] = useState(false);
+  const [rollError, setRollError] = useState<string | null>(null);
   const [menu, setMenu] = useState(false);
   useAutosize(ref, value, typeof window === "undefined" ? 320 : Math.max(160, Math.round(window.innerHeight * 0.4)));
   const main = brains.find((b) => b.id === defaultBrainId) ?? brains[0];
@@ -73,6 +89,8 @@ export function Composer({
   const paints = author?.kind === "image";
   const empty = value.trim() === "";
   const several = brains.length > 1;
+  /** The die is armed and this is a send (writing as someone adds words, with no roll). */
+  const rolling = roll && !writing;
 
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
@@ -88,6 +106,11 @@ export function Composer({
     setAddError(null);
     if (writeAs) ref.current?.focus();
   }, [writeAs]);
+
+  // A changed mind (disarmed, or rolled) clears an old "couldn't roll".
+  useEffect(() => {
+    setRollError(null);
+  }, [roll]);
 
   // A brain that is gone (deleted elsewhere) can't be written as.
   useEffect(() => {
@@ -108,6 +131,16 @@ export function Composer({
     onSend(b.id);
   };
 
+  async function justRoll() {
+    if (justRolling || busy) return;
+    setJustRolling(true);
+    setRollError(null);
+    const problem = await onJustRoll();
+    setJustRolling(false);
+    if (problem) setRollError(problem);
+    ref.current?.focus();
+  }
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.altKey && !e.metaKey && !e.ctrlKey && /^Digit[1-9]$/.test(e.code) && !writing) {
       const b = others[Number(e.code.slice(5)) - 1];
@@ -117,10 +150,21 @@ export function Composer({
       }
       return;
     }
+    if (e.altKey && !e.metaKey && !e.ctrlKey && e.code === "KeyR" && !writing) {
+      e.preventDefault(); // Option+R would otherwise type ®
+      onRoll(!roll);
+      return;
+    }
     if (e.key === "Escape" && writing && !menu) {
       e.preventDefault();
       e.stopPropagation(); // not the settings drawer
       onWriteAs(null);
+      return;
+    }
+    if (e.key === "Escape" && rolling) {
+      e.preventDefault();
+      e.stopPropagation();
+      onRoll(false);
       return;
     }
     if (e.key !== "Enter" || e.shiftKey || e.altKey || e.nativeEvent.isComposing || e.keyCode === 229) return;
@@ -139,7 +183,11 @@ export function Composer({
       <div
         className={cx(
           "@container mx-auto w-full max-w-3xl rounded-2xl border bg-raised shadow-xl shadow-black/30 transition-[border-color,box-shadow]",
-          writing ? "border-line-strong" : "border-line-strong focus-within:border-focus/45 focus-within:ring-3 focus-within:ring-focus/10",
+          writing
+            ? "border-line-strong"
+            : rolling
+              ? "border-silver/35 focus-within:ring-3 focus-within:ring-silver/10"
+              : "border-line-strong focus-within:border-focus/45 focus-within:ring-3 focus-within:ring-focus/10",
         )}
         style={writing ? { borderColor: tint ? `color-mix(in oklab, ${tint} 45%, transparent)` : "var(--color-focus)" } : undefined}
       >
@@ -171,6 +219,41 @@ export function Composer({
             </button>
           </div>
         )}
+        {rolling && (
+          <div className="flex items-center gap-2 border-b border-line px-3.5 py-1.5 text-[12.5px] text-faint">
+            <D20Icon className="size-4 shrink-0 text-silver" />
+            <span className="shrink-0 font-medium text-fg">Rolling a d20</span>
+            <span
+              className="hidden min-w-0 truncate sm:inline"
+              title="The server rolls it (never a model) when you send. The roll goes in as your message, which every brain reads, then the brain you sent to answers. Edit or delete it like any message."
+            >
+              {empty ? "· with your next send, then that brain answers" : "· after your words, then that brain answers"}
+            </span>
+            <button
+              type="button"
+              onClick={() => void justRoll()}
+              disabled={busy || justRolling}
+              title={
+                busy
+                  ? "A reply is being written. Roll once it's done, or stop it."
+                  : `Roll a d20 now and add it as your message, without asking any brain.${empty ? "" : " Your words stay here."}`
+              }
+              className="ml-auto inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md px-2 text-[12px] text-muted transition-colors enabled:hover:bg-hover enabled:hover:text-fg disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {justRolling && <Spinner className="size-3" />}
+              Just roll
+            </button>
+            <button
+              type="button"
+              onClick={() => onRoll(false)}
+              aria-label="Don't roll"
+              title="Don't roll (Esc)"
+              className="grid size-6 shrink-0 place-items-center rounded-md text-faint transition-colors hover:bg-hover hover:text-fg"
+            >
+              <X aria-hidden className="size-3.5" />
+            </button>
+          </div>
+        )}
         <label htmlFor="composer" className="sr-only">
           {writing ? `Words for ${authorName}` : `Message ${main?.name}`}
         </label>
@@ -192,11 +275,14 @@ export function Composer({
                 : author
                   ? `${author.name}'s words… (the opening scene, a line you'd rather write yourself)`
                   : "Your message, added without asking anyone to reply…"
-              : `Message ${main?.name ?? "the brain"}…`
+              : rolling
+                ? "What you try, if anything; the roll goes after it…"
+                : `Message ${main?.name ?? "the brain"}…`
           }
           className="block max-h-[40vh] w-full resize-none bg-transparent px-4 pt-3.5 pb-1 text-[15px] leading-[1.6] text-fg outline-none placeholder:text-faint"
         />
         {addError && <p className="px-4 pt-1 text-[12.5px] leading-5 text-red-200">{addError}</p>}
+        {rollError && rolling && <p className="px-4 pt-1 text-[12.5px] leading-5 text-red-200">{rollError}</p>}
         <div className="flex items-end gap-2 px-2.5 pt-1 pb-2.5">
           <WriteAsMenu
             open={menu}
@@ -208,6 +294,28 @@ export function Composer({
               setMenu(false);
             }}
           />
+          {!writing && (
+            <button
+              type="button"
+              aria-pressed={roll}
+              onClick={() => {
+                onRoll(!roll);
+                ref.current?.focus();
+              }}
+              aria-label="Roll a d20 with the next send"
+              title={
+                roll
+                  ? "Don't roll (⌥R)"
+                  : "Roll a d20 with your next send (⌥R): the server rolls it, the roll goes in as your message, then the brain you send to answers"
+              }
+              className={cx(
+                "grid size-8 shrink-0 place-items-center rounded-lg transition-colors",
+                roll ? "bg-silver/[0.13] text-silver-hi ring-1 ring-silver/30 ring-inset" : "text-faint hover:bg-hover hover:text-fg",
+              )}
+            >
+              <D20Icon className="size-[18px]" />
+            </button>
+          )}
           {/* Who else can answer, in their colors; while a reply runs, who is writing (the chips would be off anyway). */}
           <div className="flex min-h-8 min-w-0 flex-1 flex-wrap items-center gap-1.5">
             {busy ? (
@@ -219,7 +327,11 @@ export function Composer({
                 <Kbd>Enter</Kbd> {paints ? "paints it" : "adds it"} · <Kbd>Esc</Kbd> back to sending
               </p>
             ) : several ? (
-              others.map((b, i) => <BrainChip key={b.id} brain={b} index={i} empty={empty} onClick={() => sendTo(b)} />)
+              others.map((b, i) => <BrainChip key={b.id} brain={b} index={i} empty={empty} roll={rolling} onClick={() => sendTo(b)} />)
+            ) : rolling ? (
+              <p className="hidden min-w-0 truncate text-[11.5px] text-faint sm:block">
+                <Kbd>Enter</Kbd> rolls and sends · <Kbd>Esc</Kbd> no roll
+              </p>
             ) : (
               <p className="hidden min-w-0 truncate text-[11.5px] text-faint sm:block">
                 <Kbd>Enter</Kbd> to send · <Kbd>Shift</Kbd> <Kbd>Enter</Kbd> for a new line · Markdown works
@@ -259,13 +371,18 @@ export function Composer({
               <button
                 type="button"
                 onClick={() => onSend()}
-                title={`${empty && several ? `Ask ${main?.name} to respond` : `Send to ${main?.name ?? "the brain"}`} (Enter)`}
-                aria-label={`Send to ${main?.name ?? "the brain"}`}
+                title={
+                  rolling
+                    ? `${empty ? "Roll a d20 and send it" : "Send your words and a d20 roll"} to ${main?.name ?? "the brain"} (Enter)`
+                    : `${empty && several ? `Ask ${main?.name} to respond` : `Send to ${main?.name ?? "the brain"}`} (Enter)`
+                }
+                aria-label={rolling ? `Roll a d20 and send to ${main?.name ?? "the brain"}` : `Send to ${main?.name ?? "the brain"}`}
                 className="inline-flex h-8 max-w-[16rem] items-center gap-1.5 rounded-lg bg-silver px-3 text-[13px] font-medium text-canvas shadow-[inset_0_1px_0_rgb(255_255_255/0.55)] transition-colors hover:bg-silver-hi"
               >
-                <ArrowUp aria-hidden className="size-4 shrink-0" strokeWidth={2.25} />
+                {rolling ? <D20Icon className="size-4 shrink-0" strokeWidth={2} /> : <ArrowUp aria-hidden className="size-4 shrink-0" strokeWidth={2.25} />}
                 <span className="truncate">
-                  Send{several && <span className="hidden @2xl:inline"> to {main?.name}</span>}
+                  {rolling ? "Roll & send" : "Send"}
+                  {several && <span className="hidden @2xl:inline"> to {main?.name}</span>}
                 </span>
               </button>
             )}
@@ -281,33 +398,52 @@ export function Composer({
   );
 }
 
-/** A small send button in a brain's own color. An image brain's has a picture icon: it answers with an image. */
-function BrainChip({ brain: b, index, empty, onClick }: { brain: Brain; index: number; empty: boolean; onClick(): void }) {
+/**
+ * A small send button in a brain's own color. An image brain's has a picture icon: it answers with an image.
+ * With the die armed (`roll`), it wears the die too: it rolls, then that brain answers (or paints).
+ */
+function BrainChip({ brain: b, index, empty, roll, onClick }: { brain: Brain; index: number; empty: boolean; roll: boolean; onClick(): void }) {
   const image = b.kind === "image";
   const key = index < 9 ? ` (⌥${index + 1})` : "";
-  const title = image
-    ? empty
-      ? `Ask ${b.name} for a picture of the scene as it stands${key}`
-      : `Send to ${b.name}: it paints a picture, with your message as its note${key}`
-    : empty
-      ? `Ask ${b.name} to respond, with no new message${key}`
-      : `Send to ${b.name}${key}`;
+  const title = roll
+    ? `${empty ? "Roll a d20 and send it" : "Send your words and a d20 roll"} to ${b.name}${image ? ": it paints a picture, with the roll as its note" : ""}${key}`
+    : image
+      ? empty
+        ? `Ask ${b.name} for a picture of the scene as it stands${key}`
+        : `Send to ${b.name}: it paints a picture, with your message as its note${key}`
+      : empty
+        ? `Ask ${b.name} to respond, with no new message${key}`
+        : `Send to ${b.name}${key}`;
   return (
     <button
       type="button"
       onClick={onClick}
       title={title}
-      aria-label={image ? (empty ? `Ask ${b.name} for a picture` : `Send to ${b.name} for a picture`) : empty ? `Ask ${b.name} to respond` : `Send to ${b.name}`}
-      className="inline-flex h-7 max-w-[11rem] items-center gap-1.5 rounded-md border px-2 text-[12.5px] font-medium transition-colors enabled:hover:brightness-125 disabled:cursor-not-allowed disabled:opacity-40"
+      aria-label={
+        roll
+          ? `Roll a d20 and send to ${b.name}${image ? " for a picture" : ""}`
+          : image
+            ? empty
+              ? `Ask ${b.name} for a picture`
+              : `Send to ${b.name} for a picture`
+            : empty
+              ? `Ask ${b.name} to respond`
+              : `Send to ${b.name}`
+      }
+      className={cx(
+        "inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-[12.5px] font-medium transition-colors enabled:hover:brightness-125 disabled:cursor-not-allowed disabled:opacity-40",
+        roll ? "max-w-[13rem]" : "max-w-[11rem]", // room for the die beside the name
+      )}
       style={{
         color: `color-mix(in oklab, ${b.color} 55%, white)`,
         borderColor: `color-mix(in oklab, ${b.color} 30%, transparent)`,
         backgroundColor: `color-mix(in oklab, ${b.color} 9%, transparent)`,
       }}
     >
+      {roll && <D20Icon className="size-3.5 shrink-0" strokeWidth={1.9} />}
       {image ? (
         <ImageIcon aria-hidden className="size-3.5 shrink-0" style={{ color: b.color }} />
-      ) : (
+      ) : roll ? null : (
         <span aria-hidden className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: b.color }} />
       )}
       <span className="truncate">{b.name}</span>

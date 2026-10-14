@@ -2,17 +2,22 @@ import { Check, Copy, RotateCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import { stopNote, type Brain, type ChatMessage, type Preview } from "../../api/types.ts";
+import { ROLL_PREVIEW_NOTE, stopNote, type Brain, type ChatMessage, type Preview } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
+import { D20Icon } from "../../components/D20.tsx";
 import { Dialog } from "../../components/Dialog.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { Spinner } from "../../components/Spinner.tsx";
 import { copyText } from "../../lib/clipboard.ts";
 import { cx } from "../../lib/cx.ts";
+import { rollLineIndex } from "../../lib/rolls.ts";
 import { BrainBadge } from "../chat/BrainBadge.tsx";
 
-/** Which request to show: the next Send (with the unsent composer text), or a Regenerate with its steer. */
-export type PayloadRequest = { kind: "turn"; draft: string } | { kind: "regenerate"; messageId: string; steer: string };
+/**
+ * Which request to show: the next Send (with the unsent composer text, and a roll when the die is armed), or a
+ * Regenerate with its steer.
+ */
+export type PayloadRequest = { kind: "turn"; draft: string; roll?: boolean } | { kind: "regenerate"; messageId: string; steer: string };
 
 /**
  * "Exact payload": prompt.preview for one brain, which is built by the same code path that turn and
@@ -25,6 +30,10 @@ export type PayloadRequest = { kind: "turn"; draft: string } | { kind: "regenera
  * An image brain's request (T05) is followed by the second one its answer leads to: POST /image/generate with
  * the prompt from its tool call, word for word, and the parameters shown (`preview.image`), with any notes on
  * settings this image model doesn't take.
+ *
+ * A roll-and-send (T09) is previewed with prompt.preview --roll: the die isn't rolled until you send, so the roll's
+ * line has {{roll}} where the number will go (marked here), and ROLL_PREVIEW_NOTE says so. "With a roll" in the
+ * footer switches it, starting from the composer's die.
  */
 export function PayloadDialog({
   conversationId,
@@ -46,6 +55,7 @@ export function PayloadDialog({
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<"messages" | "json">("messages");
   const [copied, setCopied] = useState(false);
+  const [withRoll, setWithRoll] = useState(request.kind === "turn" && request.roll === true);
   const regen = request.kind === "regenerate" ? request : null;
   const draft = request.kind === "turn" ? request.draft : "";
   const withDraft = draft.trim() !== "";
@@ -58,14 +68,14 @@ export function PayloadDialog({
     try {
       const args = regenId
         ? { conversation: conversationId, regenerate: true, message: regenId, ...(steer ? { steer } : {}) }
-        : { conversation: conversationId, brain: brain.id, ...(withDraft ? { content: draft } : {}) };
+        : { conversation: conversationId, brain: brain.id, ...(withDraft ? { content: draft } : {}), ...(withRoll ? { roll: true } : {}) };
       setPreview(await api.call("prompt.preview", args));
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, [conversationId, brain.id, draft, withDraft, regenId, steer]);
+  }, [conversationId, brain.id, draft, withDraft, withRoll, regenId, steer]);
 
   useEffect(() => {
     void load();
@@ -73,6 +83,7 @@ export function PayloadDialog({
 
   const body = preview?.body;
   const { messages = [], ...params } = body ?? {};
+  const rollAt = preview?.notes.includes(ROLL_PREVIEW_NOTE) ? rollLineIndex(messages, brain.finalReminder) : -1;
 
   return (
     <Dialog
@@ -95,9 +106,13 @@ export function PayloadDialog({
           <>
             <code className="font-mono text-[11.5px] text-muted">POST /chat/completions</code>, exactly as the next Send to {brain.name} would make it, minus
             the API key.{" "}
-            {withDraft
-              ? "Your unsent message is included, framed, as the last ledger message."
-              : `With the composer empty, ${brain.name} just answers the ledger as it stands.`}
+            {withDraft && withRoll
+              ? "Your unsent message is included, framed, then your roll, with {{roll}} where the number will go."
+              : withDraft
+                ? "Your unsent message is included, framed, as the last ledger message."
+                : withRoll
+                  ? "Your roll is the last ledger message, with {{roll}} where the number will go."
+                  : `With the composer empty, ${brain.name} just answers the ledger as it stands.`}
             {!regen && brains.length > 1 && <BrainSwitcher brains={brains} value={brain.id} onChange={setBrainId} />}
           </>
         )
@@ -121,6 +136,20 @@ export function PayloadDialog({
               </button>
             ))}
           </div>
+          {!regen && (
+            <button
+              type="button"
+              aria-pressed={withRoll}
+              onClick={() => setWithRoll((r) => !r)}
+              title={withRoll ? "Show the next send without a roll" : "Show the next send with a d20 roll after your message (what the die in the composer does)"}
+              className={cx(
+                "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] transition-colors",
+                withRoll ? "border-silver/30 bg-silver/[0.1] text-fg" : "border-line-strong text-faint hover:text-muted",
+              )}
+            >
+              <D20Icon className="size-3.5" /> With a roll
+            </button>
+          )}
           <Button size="sm" variant="ghost" className="ml-auto" onClick={() => void load()} disabled={loading}>
             <RotateCw aria-hidden className="size-3.5" /> Refresh
           </Button>
@@ -151,7 +180,7 @@ export function PayloadDialog({
         <div className={cx("space-y-4 transition-opacity", loading && "opacity-60")} aria-busy={loading || undefined}>
           {preview.notes.map((n) => (
             // The stop note says what a visible setting does; the rest warn of something we can't see or that will fail.
-            <Notice key={n} tone={body.stop?.length && n === stopNote(body.stop) ? "info" : "warn"}>
+            <Notice key={n} tone={(body.stop?.length && n === stopNote(body.stop)) || n === ROLL_PREVIEW_NOTE ? "info" : "warn"}>
               {n}
             </Notice>
           ))}
@@ -181,7 +210,7 @@ export function PayloadDialog({
                 </h3>
                 <ol className="space-y-2">
                   {messages.map((m, i) => (
-                    <PayloadMessage key={i} index={i} message={m} />
+                    <PayloadMessage key={i} index={i} message={m} rollLine={i === rollAt} />
                   ))}
                 </ol>
               </section>
@@ -276,17 +305,36 @@ const ROLE_TONE: Record<ChatMessage["role"], string> = {
   tool: "text-violet-200/90 bg-violet-300/[0.08] border-violet-300/20",
 };
 
-function PayloadMessage({ index, message: m }: { index: number; message: ChatMessage }) {
+/** `rollLine`: the roll's own line in a roll preview (T09): its {{roll}} is where the server puts the number. */
+function PayloadMessage({ index, message: m, rollLine }: { index: number; message: ChatMessage; rollLine?: boolean }) {
   return (
     <li className="overflow-hidden rounded-lg border border-line bg-canvas">
       <div className="flex items-center gap-2 border-b border-line bg-panel px-3 py-1.5">
         <span className="font-mono text-[11px] text-faint tabular-nums">[{index}]</span>
         <span className={cx("rounded border px-1.5 py-px font-mono text-[11px]", ROLE_TONE[m.role])}>{m.role}</span>
         {m.role === "tool" && <span className="font-mono text-[11px] text-faint">tool_call_id {m.tool_call_id}</span>}
+        {rollLine && (
+          <span className="inline-flex items-center gap-1 text-[11px] text-muted">
+            <D20Icon className="size-3" /> your roll, rolled when you send
+          </span>
+        )}
         <span className="ml-auto text-[11px] text-faint tabular-nums">{m.content.length} chars</span>
       </div>
       {m.content !== "" && (
-        <pre className="px-3.5 py-2.5 font-mono text-[12.5px] leading-[1.65] break-words whitespace-pre-wrap text-fg">{m.content}</pre>
+        <pre className="px-3.5 py-2.5 font-mono text-[12.5px] leading-[1.65] break-words whitespace-pre-wrap text-fg">
+          {rollLine
+            ? m.content.split("{{roll}}").map((part, i) => (
+                <span key={i}>
+                  {i > 0 && (
+                    <mark title="The server puts the number it rolls (1 to 20) here, when you send" className="rounded-sm bg-sky-300/15 px-0.5 text-sky-100">
+                      {"{{roll}}"}
+                    </mark>
+                  )}
+                  {part}
+                </span>
+              ))
+            : m.content}
+        </pre>
       )}
       {m.role === "assistant" && m.tool_calls && (
         <pre className="border-t border-line px-3.5 py-2.5 font-mono text-[12px] leading-[1.6] whitespace-pre-wrap text-muted">

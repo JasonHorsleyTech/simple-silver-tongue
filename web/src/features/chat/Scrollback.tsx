@@ -7,13 +7,14 @@ import { LiveReply } from "./LiveReply.tsx";
 import { MessageItem } from "./MessageItem.tsx";
 import { PlayerBubble } from "./MessageFrame.tsx";
 import { MessageText } from "./MessageText.tsx";
+import { PendingRoll } from "./RollCard.tsx";
 import type { Chat } from "./useChat.ts";
 
 /** Within this many pixels of the bottom counts as "at the bottom": new text keeps it pinned there. */
 const STICK_PX = 96;
 
 /**
- * The ledger, top to bottom, then the optimistic player message and the live reply. A regenerate's live reply
+ * The ledger, top to bottom, then the optimistic player message, a roll on its way (T09) and the live reply. A regenerate's live reply
  * goes in the slot of the message it rewrites instead. It follows the stream while you are at the bottom,
  * and leaves you alone once you scroll up (a "Latest" button brings you back).
  */
@@ -36,7 +37,7 @@ export function Scrollback({
   const jumping = useRef(false);
   const [away, setAway] = useState(false);
   const brains = new Map(conv.brains.map((b) => [b.id, b]));
-  const { live, pendingPlayer } = chat;
+  const { live, pendingPlayer, pendingRoll } = chat;
   // A new object only when the size settings change, so the memo'd messages don't all re-render.
   const { width, height, aspectRatio, resolution } = conv.settings.image;
   const aspect = useMemo(() => expectedAspect({ width, height, aspectRatio, resolution }), [width, height, aspectRatio, resolution]);
@@ -128,10 +129,10 @@ export function Scrollback({
     setAway(false);
   }, []);
 
-  // Sending always brings you to the bottom.
+  // Sending (or rolling) always brings you to the bottom.
   useLayoutEffect(() => {
-    if (pendingPlayer !== null || live?.origin === "turn") toBottom();
-  }, [pendingPlayer, live?.origin, toBottom]);
+    if (pendingPlayer !== null || pendingRoll || live?.origin === "turn") toBottom();
+  }, [pendingPlayer, pendingRoll, live?.origin, toBottom]);
 
   // New text while pinned: stay pinned. Runs after every render that changes what is shown.
   useLayoutEffect(() => {
@@ -162,13 +163,14 @@ export function Scrollback({
     }
   };
 
-  const nothing = conv.messages.length === 0 && pendingPlayer === null && !live;
+  const nothing = conv.messages.length === 0 && pendingPlayer === null && !pendingRoll && !live;
   const last = conv.messages.at(-1);
   // A regenerate streams in its message's slot (also when re-attached by generation.follow, once `start` says
   // which message). Anything else, or a regenerate of a message we don't have, goes at the bottom.
   const inSlot = live?.kind === "regenerate" && live.messageId && conv.messages.some((m) => m.id === live.messageId) ? live.messageId : null;
   const atBottom = live && !inSlot ? live : null;
-  const canRegenerate = !!last && last.author.type === "brain" && !atBottom && pendingPlayer === null;
+  const waiting = pendingPlayer !== null || pendingRoll;
+  const canRegenerate = !!last && last.author.type === "brain" && !atBottom && !waiting;
 
   return (
     <div className="relative min-h-0 flex-1">
@@ -185,7 +187,7 @@ export function Scrollback({
                       <MessageItem
                         message={m}
                         brain={m.author.type === "brain" ? brains.get(m.author.brainId) : undefined}
-                        isLast={m === last && !atBottom && pendingPlayer === null}
+                        isLast={m === last && !atBottom && !waiting}
                         canRegenerate={m === last && canRegenerate}
                         live={m.id === inSlot ? live! : undefined}
                         busy={chat.busy}
@@ -201,6 +203,11 @@ export function Scrollback({
                       <PlayerBubble pending>
                         <MessageText text={pendingPlayer} />
                       </PlayerBubble>
+                    </li>
+                  )}
+                  {pendingRoll && (
+                    <li>
+                      <PendingRoll />
                     </li>
                   )}
                   {atBottom && (

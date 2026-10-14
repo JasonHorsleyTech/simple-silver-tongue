@@ -306,7 +306,7 @@ Why a fence: models write fences reliably, Markdown parses it without HTML, and 
 
 ---
 
-## T09: Dice rolls · `frontend`
+## T09: Dice rolls · `done`
 
 Jason, 2026-10-14: a button that rolls a real d20 and sends it to a brain. The server's random number generator rolls it, never a model. The result goes into the ledger as a message every brain reads, and then the brain the player picked answers the conversation. Here is the loop it serves, with T10's Show Me the Odds brain:
 1. The player sends "I try to talk the hooded figure down to half price" to Show Me the Odds.
@@ -348,6 +348,10 @@ Any brain can be sent a roll, image brains included (Jason: "sure, why not"). It
   - **An edited roll shows its text, never the die's number as the roll (QA-1).** The version keeps `roll.result` (history), but once `edited` the `content` is the roll every brain was told. Unedited: the die plus `rollLabel(roll)` ("🎲 d20: 14"). Edited: the `content` is the face; the die's number only as quiet history beside the "edited" mark, `rollLabel(roll, true)` ("🎲 d20 said 12"). This replaces "show it, or at least when `edited`" above; design.md's browser recipe says the same.
   - **A stop before any reply text now says how to get a reply without sending twice (QA-2):** "… Your roll is saved; the reply isn't. To get a reply, send again to Game Master with no new message and no new roll: turn --brain b_… without --content or --roll." The browser shows it as the stop notice (`stoppedEarly` in `useChat`); after such a stop, the roll toggle should be off, so the brain's chip with an empty composer is exactly that resend.
   - `ROLL_PREVIEW_NOTE` now says the number goes into the roll's line only (QA-3); the payload view shows it from `notes` as before.
+
+- **From T09 frontend** (report: `reports/T09-frontend.md`):
+  - Built: a d20 toggle beside the pen (⌥R) that the next send uses, whichever button sends it: Send becomes **Roll & send**, every chip wears the die (image brains too), and the send puts it down. Its bar offers **Just roll** (`message.roll`) and × (Esc). A send that saved nothing gives back the text *and* the armed die; once the roll is saved the die stays down, so a stop's resend is the brain's chip with nothing typed (the notice drops the terminal command, `forBrowser`). In the scrollback a roll is a die showing its number beside its line; a tumbling "Rolling a d20…" stands in while Venice accepts (about a second live); an edited roll shows no number, its line as the face, and "🎲 d20 said 12" beside "edited" in the footer. The payload view previews `--roll` when the die is armed ("With a roll" flips it), shows `ROLL_PREVIEW_NOTE` as information and marks `{{roll}}` in the roll's own line. The templates editor has a fifth row, "Your dice rolls", which can't be saved without `{{roll}}`. No new commands.
+  - **For T10:** the browser needs nothing more for Show Me the Odds: its odds sentence, then the die and the GM's chip (or Send) is the whole loop. Live, the Gilded Goat's Dice Master gave "Persuasion check: roll 1d20 + 5, DC 12" and the GM narrated a 2 as a failure.
 
 **Deferred in:** *(none yet)*
 

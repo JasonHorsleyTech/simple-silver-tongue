@@ -2,7 +2,8 @@ import { api } from "../../api/client.ts";
 import type { Conversation, Templates } from "../../api/types.ts";
 import { SavedText } from "../../components/SavedText.tsx";
 
-type Spec = { key: keyof Templates; label: string; description: string; needs: string[] };
+/** `required`: the server refuses the template without its placeholders (the roll's), so it can't be saved here either. */
+type Spec = { key: keyof Templates; label: string; description: string; needs: string[]; required?: boolean };
 
 const SPECS: Spec[] = [
   {
@@ -29,11 +30,20 @@ const SPECS: Spec[] = [
     description: "Sent once, last, when you regenerate a reply with a direction. {{instruction}} is your direction. Never sent again.",
     needs: ["{{instruction}}"],
   },
+  {
+    key: "roll",
+    label: "Your dice rolls",
+    description:
+      "The line a d20 roll adds as your message, which every brain reads (framed like your messages). {{roll}} is the number the server rolled. Used from the next roll on: earlier rolls keep their words (edit those like any message).",
+    needs: ["{{roll}}"],
+    required: true,
+  },
 ];
 
 /**
- * The framing templates (conversation.update --templates.*). They are plain text that reaches the models,
- * so they are the user's to edit; the payload view shows the effect. Placeholders are literal, single pass.
+ * The templates (conversation.update --templates.*). They are plain text that reaches the models, so they are the
+ * user's to edit; the payload view shows the effect. Placeholders are literal, single pass. Four frame messages
+ * each time a request is built; the roll's (T09) is applied once, when the server rolls, and must have {{roll}}.
  */
 export function TemplatesEditor({ conv, onSaved }: { conv: Conversation; onSaved(c: Conversation): void }) {
   return (
@@ -49,8 +59,12 @@ export function TemplatesEditor({ conv, onSaved }: { conv: Conversation; onSaved
           maxPx={260}
           warn={(v) => {
             const missing = s.needs.filter((n) => !v.includes(n));
-            return missing.length ? `Without ${missing.join(" and ")}, the message itself isn't sent, only this text.` : null;
+            if (!missing.length) return null;
+            return s.required
+              ? `Needs ${missing.join(" and ")}: that is where the number goes, so a roll's line can't be made without it.`
+              : `Without ${missing.join(" and ")}, the message itself isn't sent, only this text.`;
           }}
+          validate={s.required ? (v) => (s.needs.every((n) => v.includes(n)) ? null : `Needs ${s.needs.join(" and ")}, where the number goes.`) : undefined}
           onSave={async (value) => onSaved(await api.call("conversation.update", { id: conv.id, templates: { [s.key]: value } }))}
         />
       ))}

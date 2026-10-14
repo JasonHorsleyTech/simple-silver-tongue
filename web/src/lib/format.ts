@@ -65,3 +65,13 @@ export function idleDuration(minutes: number): string {
   }
   return minutes === 1 ? "1 minute" : `${minutes} minutes`;
 }
+
+/**
+ * A turn's stop or break, said for the browser. The server's sentence ends with how to resend from the terminal
+ * ("…send again to Game Master with no new message and no new roll: turn --brain b_… without --content or
+ * --roll"). Here the words before the colon already say it (that brain's chip, nothing typed, the die off), so
+ * only the command is cut; the rest is the server's own sentence.
+ */
+export function forBrowser(message: string): string {
+  return message.replace(/: turn --brain \S+ without --content(?: or --roll)?/g, "");
+}

@@ -34,7 +34,9 @@ export function ChatView({ id }: { id: string }) {
   /** Bumped to open a tab's add form from outside it (the empty conversation's "Add a brain"). */
   const [addNonce, setAddNonce] = useState({ brain: 0, setup: 0 });
   /** The composer adds words as this brain (or you) instead of sending. */
-  const [writeAs, setWriteAs] = useState<string | null>(null);
+  const [writeAs, setWriteAsState] = useState<string | null>(null);
+  /** T09: the die is armed: the next send rolls a d20 after the composer's words, and then switches it off. */
+  const [roll, setRoll] = useState(false);
   const [payload, setPayload] = useState<{ kind: "turn"; brainId: string | null } | Extract<PayloadRequest, { kind: "regenerate" }> | null>(null);
   const previewRegenerate = useCallback((messageId: string, steer: string) => setPayload({ kind: "regenerate", messageId, steer }), []);
   const docked = useMediaQuery("(min-width: 1180px)");
@@ -70,9 +72,16 @@ export function ChatView({ id }: { id: string }) {
     [toggleSettings, setTab],
   );
 
-  // Another conversation: back to sending.
+  /** Writing as someone adds words with no roll: choosing to do so puts the die down. */
+  const setWriteAs = useCallback((as: string | null) => {
+    setWriteAsState(as);
+    if (as) setRoll(false);
+  }, []);
+
+  // Another conversation: back to sending, with no roll armed.
   useEffect(() => {
-    setWriteAs(null);
+    setWriteAsState(null);
+    setRoll(false);
   }, [id]);
 
   // Escape closes the drawer (not the docked panel, which is part of the layout).
@@ -85,9 +94,21 @@ export function ChatView({ id }: { id: string }) {
 
   async function send(brainId?: string) {
     const text = draft;
+    const withRoll = roll;
     setDraft("");
-    const back = await chat.send(text, brainId);
-    if (back !== null && !drafts.get(id)) setDraft(back); // not saved: give it back, unless you've typed on
+    setRoll(false); // the die is for one send
+    const back = await chat.send(text, brainId, { roll: withRoll });
+    // Nothing saved (refused up front, or stopped before Venice answered): give back the text, unless you've typed
+    // on, and the die. Once the roll is saved, it stays down: sending again must not roll twice (T09 QA-2).
+    if (back?.text && !drafts.get(id)) setDraft(back.text);
+    if (back?.roll) setRoll(true);
+  }
+
+  /** "Just roll": the die goes in as your message, no brain is asked (message.roll). The composer's words stay. */
+  async function justRoll(): Promise<string | null> {
+    const problem = await chat.roll();
+    if (!problem) setRoll(false);
+    return problem;
   }
 
   /** The composer's text, added as `writeAs` (message.add): back to sending once it is in. */
@@ -210,6 +231,9 @@ export function ChatView({ id }: { id: string }) {
           status={status}
           onStop={() => void chat.stop()}
           stopping={chat.stopping}
+          roll={roll}
+          onRoll={setRoll}
+          onJustRoll={justRoll}
           autoFocus
         />
       </div>
@@ -233,8 +257,9 @@ export function ChatView({ id }: { id: string }) {
           conversationId={conv.id}
           brains={conv.brains}
           brainId={payload.kind === "regenerate" ? brainOf(payload.messageId).id : (payload.brainId ?? brain.id)}
-          // In "write as" mode the composer's text isn't a message to anyone, so it isn't in the preview.
-          request={payload.kind === "regenerate" ? payload : { kind: "turn", draft: writeAs ? "" : draft }}
+          // In "write as" mode the composer's text isn't a message to anyone, so it isn't in the preview. An armed
+          // die is (T09): the preview then has the roll's line, with {{roll}} where the number will go.
+          request={payload.kind === "regenerate" ? payload : { kind: "turn", draft: writeAs ? "" : draft, roll: roll && !writeAs }}
           onClose={() => setPayload(null)}
         />
       )}
