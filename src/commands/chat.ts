@@ -111,13 +111,14 @@ refused only when its request would end with its own reply (a brain with a final
 answer). Your message is saved once Venice accepts the request. If the reply then fails, your message stays
 and no reply is saved: to retry, run turn again with the same --brain and no --content (the error says so).
 One reply at a time per conversation (409 if busy). The reply prints to stdout as it streams; reasoning and
-status lines go to stderr. Another terminal or a reloaded browser can watch it with generation.follow.
+status lines go to stderr. Hidden notes and reasoning fold to one line each; --reveal shows
+them. Another terminal or a reloaded browser can watch it with generation.follow.
 An image brain's prompt streams the same way; once it is saved the conversation is free (the next brain can
 take its turn) and this stream goes on until the image lands.`,
   args: turnArgs,
   examples: [
     './ss turn --conversation c_k3j9x0q2ma --content "Hello there"',
-    "./ss turn --conversation c_k3j9x0q2ma --content @message.md > reply.md",
+    "./ss turn --conversation c_k3j9x0q2ma --content @message.md --reveal > reply.md   # --reveal: notes unfolded",
     "./ss turn --conversation c_k3j9x0q2ma   # no message: the brain just responds",
     './ss turn --conversation c_k3j9x0q2ma --brain "Dice Master" --content "I swing at the goblin."',
   ],

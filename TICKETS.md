@@ -254,7 +254,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T08: Hidden notes · `triage`
+## T08: Hidden notes · `frontend`
 
 Jason, 2026-10-14: brains need a way to write text that every brain reads but the player only sees on purpose. The T10 Character Creator answers with nothing else: a full character sheet, secrets included, that the GM and the Character Actor work from and the player must not read by accident. Any brain may keep notes this way (a GM's plans, what a clue really means), and so may the player.
 
@@ -290,6 +290,13 @@ Why a fence: models write fences reliably, Markdown parses it without HTML, and 
   - **Engineer's calls:** `~~~hidden` counts (it is Markdown's other fence). **The fold doesn't show the label** after the word: live, a Character Creator told the label is shown to the player labelled its sheet with the character's real name, which the player hadn't learned. A note that needs code: a fenced block with a language (```` ```js ````) just works inside it (it nests); a bare ```` ``` ```` closes the note, so use ```` ````hidden ```` or `~~~hidden` around one.
   - **For Frontend:** `web/src/api/types.ts` re-exports the rule. Render a message from `splitHidden(content)`: text parts as Markdown, each note as the bar (`hiddenSummary(block)`; while `block.open` and the reply is streaming, `hiddenSummary(block, {writing: true})` = "Hidden · 3 lines so far"), and `<Markdown text={block.body}>` only once it is opened. The note's words then never reach the renderer, mid-stream either, and the browser folds exactly what the terminal folds. `isAllHidden(content)` is the Character Creator's "badge plus the bar". A note inside a list or quote splits that list or quote around the bar (`block.prefix` tells you it was in one; indenting the bar to match is a nicety). Backstop: fold a Markdown `code` node whose `lang` passes `isHiddenInfo` too. Image prompts are never folded (plain captions). The payload view and the editor stay raw. `MOCK_HIDDEN_ONLY` to a brain whose reminder is off shows the all-hidden case; `MOCK_SLOW MOCK_HIDDEN` (~40 s at `up:mock`'s 250 ms) to watch the bar grow and reload mid-note.
   - **For T10:** a brain that should keep notes needs the convention in its prompt (the live prompts in the report worked first time). Tell it the player's screen folds notes and every brain reads them; don't promise that a label is shown.
+
+- **From T08 triage** (report: `reports/T08-triage.md`):
+  - **The rule now leans to hiding** (design.md, "Hidden notes", rewritten). The API and the recipe are unchanged, but three behaviours differ from the engineer's notes above. **A quote or list item that ends no longer ends its note**: it runs to its closing fence or to the end of the message, so `block.open` is now always `!closed`. **A ```` ```hidden ```` line opens a note even inside another code block**, because the scanner no longer tracks other code blocks. **Backticks in the label are fine.** Guarantee: whatever remark + GFM would parse as a `hidden` code block, `splitHidden` hides too, so the `isHiddenInfo` backstop should never fire. Keep it anyway.
+  - **One rendering wrinkle, not a spill.** When an example of the convention sits inside a ```` ````md ```` block, the split cuts that block in two. The text part after the bar then starts with the outer block's closing fence, which Markdown reads as a new code block running to the end of that part. It is rare, it shows only text that was visible anyway, and nothing needs fixing.
+  - **Show the label when a note is opened (QA-5).** The fold never shows `block.label`, but an opened note should show it as a small caption above the rendered `block.body`, as `--reveal` shows the opening line in the terminal.
+  - **Reasoning folds in the terminal now (QA-3).** The browser already collapses it, so nothing changes there. Keep it collapsed by default, mid-stream too: a brain that reads a sheet reasons about its secrets.
+  - **For T10:** a brain's reasoning no longer prints in the terminal unless `--reveal`, so a reasoning-on Character Actor doesn't spill a sheet onto the screen. Whether to turn reasoning on is still T10's call, and the T07 trap still applies: Venice stops the reasoning at `<!-- from:` too. When a note needs code, the safe advice to put in prompts is still "use `~~~hidden`".
 
 **Deferred in:** *(none yet)*
 

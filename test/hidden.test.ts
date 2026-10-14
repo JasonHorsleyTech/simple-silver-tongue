@@ -61,16 +61,38 @@ describe("the hidden-note rule", () => {
     assert.deepEqual(bodies(text), ["a", "b1\nb2", "c"]);
   });
 
-  test("inside a list or a quote: folded in place, and it ends with its list item or quote, as in Markdown", () => {
+  test("inside a list or a quote: folded in place", () => {
     assert.equal(fold("1. Plans\n   ```hidden\n   secret\n   ```\n2. Next"), "1. Plans\n   [Hidden · 1 line]\n2. Next");
     assert.equal(fold("- ```hidden\n  secret\n\n  more\n  ```\n- next"), "- [Hidden · 3 lines]\n- next");
     assert.deepEqual(bodies("- ```hidden\n  secret\n\n  more\n  ```"), ["secret\n\nmore"], "the list indentation isn't part of the note");
     assert.equal(fold("> She says:\n> ```hidden\n> secret\n> ```\n> And leaves."), "> She says:\n> [Hidden · 1 line]\n> And leaves.");
     assert.deepEqual(bodies("> ```hidden\n> secret\n>\n> more\n> ```"), ["secret\n\nmore"]);
-    // Unclosed, it ends where its quote or list item does; what follows is shown.
-    assert.equal(fold("> ```hidden\n> secret\nOutside the quote."), "> [Hidden · 1 line]\nOutside the quote.");
-    assert.equal(fold("- ```hidden\n  secret\nNot in the item."), "- [Hidden · 1 line]\nNot in the item.");
-    assert.equal(fold("> - ```hidden\n>   deep\n> - next"), "> - [Hidden · 1 line]\n> - next", "a list in a quote");
+    assert.equal(fold("> - ```hidden\n>   deep\n>   ```\n> - next"), "> - [Hidden · 1 line]\n> - next", "a list in a quote");
+    assert.equal(fold("Text[^1]\n\n[^1]: ```hidden\n    secret\n    ```"), "Text[^1]\n\n[^1]: [Hidden · 1 line]", "a footnote");
+  });
+
+  test("a quote or list item that ends doesn't end its note: it runs to its closing fence or the end (T08 QA-2)", () => {
+    // Markdown would end these notes at their first line and show the rest; a careless note must not spill.
+    assert.equal(fold("Plans:\n- ```hidden\nSECRET\n```\n- The tavern is loud."), "Plans:\n- [Hidden · 1 line]\n- The tavern is loud.");
+    assert.equal(fold("> ```hidden\nSECRET\n```\nAfter."), "> [Hidden · 1 line]\nAfter.", "an unquoted body and closing fence");
+    assert.equal(fold("> ```hidden\n\n> SECRET\n> ```"), "> [Hidden · 2 lines]", "a blank unquoted line inside");
+    assert.equal(fold("- ```hidden\n\tSECRET\n\t```\nAfter."), "- [Hidden · 1 line]\nAfter.", "a tab counts as 4 columns (T08 QA-1)");
+    // Unclosed, it hides everything after it, the rest of its list or quote included: one click to open.
+    assert.equal(fold("> ```hidden\n> secret\nOutside the quote."), "> [Hidden · 2 lines]");
+    assert.equal(fold("- ```hidden\n  secret\nNot in the item."), "- [Hidden · 2 lines]");
+    // A closing fence may carry no more quote markers than the opening line.
+    assert.equal(fold("```hidden\nShe said:\n> ```\nSECRET\n```\nAfter."), "[Hidden · 3 lines]\nAfter.");
+  });
+
+  test("a note opens anywhere a line starts with its fence: after a stray or indented fence, inside another code block, with backticks in its label (T08 QA-1, QA-2)", () => {
+    // The scanner doesn't track other code blocks, so none can swallow a note.
+    assert.equal(fold("The door closes.\n\n~~~\n\nLater.\n```hidden\nSECRET\n```"), "The door closes.\n\n~~~\n\nLater.\n[Hidden · 1 line]", "a ~~~ scene break");
+    assert.equal(fold("    ```\n\n```hidden\nSECRET\n```"), "    ```\n\n[Hidden · 1 line]", "an indented fence");
+    assert.equal(fold("Map:\n```\nA--B\n\n```hidden\nSECRET\n```\nAfter."), "Map:\n```\nA--B\n\n[Hidden · 1 line]\nAfter.", "an unclosed code block");
+    // So an example of the convention inside a code block folds too: hiding too much costs one click.
+    assert.equal(fold("````md\n```hidden\nexample\n```\n````\n```hidden\nreal\n```"), "````md\n[Hidden · 1 line]\n````\n[Hidden · 1 line]");
+    assert.equal(fold("```hidden sheet for `Sera`\nSECRET\n```\nThe figure waits."), "[Hidden · 1 line]\nThe figure waits.", "Markdown refuses this fence");
+    assert.equal(fold("        ```hidden\n        SECRET\n        ```\nAfter."), "        [Hidden · 1 line]\nAfter.", "indented code in Markdown");
   });
 
   test("code inside a note: a fence with a language nests; a longer or tilde outer fence works as in Markdown", () => {
@@ -87,8 +109,6 @@ describe("the hidden-note rule", () => {
       "```hidden-notes\nshown\n```",
       "```hiddenx\nshown\n```",
       "```js hidden\nshown\n```",
-      "````md\n```hidden\nan example of the convention\n```\n````",
-      "~~~\n```hidden\nshown\n~~~",
       "Write ```hidden blocks for notes.",
       "```hidden`\nshown",
       "``hidden\nshown\n``",
@@ -96,13 +116,18 @@ describe("the hidden-note rule", () => {
       assert.deepEqual(findHidden(text), [], text);
       assert.equal(fold(text), text);
     }
-    assert.equal(fold("````md\n```hidden\nexample\n```\n````\n```hidden\nreal\n```"), "````md\n```hidden\nexample\n```\n````\n[Hidden · 1 line]");
   });
 
-  test("Windows line endings, indentation, and a closing fence indented too far", () => {
+  test("Windows and old Mac line endings, indentation, and a closing fence indented too far", () => {
     assert.equal(fold("```hidden\r\nsecret\r\n```\r\nshown"), "[Hidden · 1 line]\r\nshown");
+    assert.equal(fold("```hidden\rsecret\r```\rshown"), "[Hidden · 1 line]\rshown", "a lone \\r ends a line (T08 QA-1)");
     assert.equal(fold("   ```hidden\n   secret\n   ```"), "   [Hidden · 1 line]");
     assert.equal(fold("```hidden\nsecret\n    ```\nstill hidden"), "[Hidden · 3 lines]", "4 spaces in is note text, not a fence");
+    // A closing fence is never allowed further in than Markdown would allow, so a note can't end before Markdown's block does.
+    assert.equal(fold("   ```hidden\nA\n    ```\nSECRET\n```\nAfter."), "   [Hidden · 3 lines]\nAfter.");
+    // ...while a note on a list item's continuation lines still closes where it should.
+    assert.equal(fold("10. Plans\n    ```hidden\n    secret\n    ```\nAfter."), "10. Plans\n    [Hidden · 1 line]\nAfter.");
+    assert.equal(fold("- a\n  - b\n    ```hidden\n    secret\n    ```\nAfter."), "- a\n  - b\n    [Hidden · 1 line]\nAfter.");
   });
 
   test("isHiddenInfo (a Markdown code node's lang) and the summary's words", () => {
@@ -128,6 +153,15 @@ describe("folding a reply as it streams", () => {
     "```js\nconst x = 1;\n```\n~~~hidden\n```py\nSECRET6\n```\n~~~\nAfter ``` and ~~~ and `code`.",
     "- ```hidden\n  SECRET7\nNot in the item.\n``\n```\nplain code\n```",
     "Text with no notes at all, and a ```hidden mid-line.\n12 apples\n1. item\n``` \n",
+    // T08 QA-1 and QA-2: shapes the first scanner showed.
+    "- ```hidden\n\tSECRET8\n\t```\nshown",
+    "    ```\n\n```hidden\nSECRET9\n```",
+    "Text[^1]\n\n[^1]: ```hidden\n    SECRET0 one\n    ```",
+    "```hidden\rSECRET1 cr\r```\rshown\r\n",
+    "Plans:\n- ```hidden\nSECRET2 lazy\n```\n- The tavern is loud.",
+    "> ```hidden\n\n> SECRET3 quoted\n> ```",
+    "```hidden sheet for `Sera`\nSECRET4 tick\n```\nThe figure waits.",
+    "The door closes.\n\n~~~\n\nLater.\n```hidden\nSECRET5 break\n```",
   ];
   const secrets = /SECRET\d/;
 
@@ -140,6 +174,7 @@ describe("folding a reply as it streams", () => {
       assert.doesNotMatch(out, secrets, `printed a secret mid-stream: ${JSON.stringify(pieces)}`);
     }
     out += f.end();
+    assert.doesNotMatch(out, secrets, "the fold itself shows a secret");
     assert.equal(out, fold(text), `split ${JSON.stringify(pieces)}`);
     assert.equal(f.folded, findHidden(text).length);
   };
@@ -185,10 +220,10 @@ describe("folding a reply as it streams", () => {
   });
 
   test("couldOpenHidden holds every beginning of an opening line, and lets the rest go", () => {
-    for (const opener of ["```hidden", "~~~~HIDDEN character sheet", "> ```hidden", "  - ```hidden x", "12) ```hidden", ">> ~~~hidden"]) {
+    for (const opener of ["```hidden", "~~~~HIDDEN character sheet", "> ```hidden", "  - ```hidden x", "12) ```hidden", ">> ~~~hidden", "[^1]: ```hidden", "```hidden for `Sera`"]) {
       for (let i = 0; i <= opener.length; i++) assert.equal(couldOpenHidden(opener.slice(0, i)), true, JSON.stringify(opener.slice(0, i)));
     }
-    for (const no of ["The", "``x", "```js", "```hiddenx", "- item", "12 apples", "**bold", "~~strike", "```hidden`"]) {
+    for (const no of ["The", "``x", "```js", "```hiddenx", "- item", "12 apples", "**bold", "~~strike", "```hidden`", "[link]", "[^1] says"]) {
       assert.equal(couldOpenHidden(no), false, no);
     }
   });

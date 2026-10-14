@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
+import { REASONING_FOLDED } from "../src/cli/main.ts";
 import { REASONING_NOTE } from "../src/conversations/prompt.ts";
 import type { Conversation } from "../src/conversations/types.ts";
 import { FRAMING_STOP, STOP_REASONING_NOTE, stopNote } from "../src/conversations/wording.ts";
@@ -48,11 +49,13 @@ describe("streaming chat end to end: CLI → server → mock Venice", () => {
       assert.deepEqual(preview.notes, i === 0 ? [stopNote([FRAMING_STOP])] : [REASONING_NOTE, stopNote([FRAMING_STOP]), STOP_REASONING_NOTE]);
       assert.deepEqual(preview.body.stop, [FRAMING_STOP]);
       assert.equal(preview.body.reasoning_effort, i === 0 ? "none" : "low");
-      const r = await t.cli(["turn", "--conversation", conv.id, "--content", msg]);
+      // The last turn has --reveal: reasoning folds to one line in the terminal otherwise, as in the browser (T08 QA-3).
+      const r = await t.cli(["turn", "--conversation", conv.id, "--content", msg, ...(i === 2 ? ["--reveal"] : [])]);
       assert.equal(r.code, 0, r.stderr);
       assert.equal(r.stdout, `MOCK reply to brain "You answer only in haiku."; saw ${2 * i + 2} messages; last: "<!-- from: the user --> ${msg}"\n`);
       assert.match(r.stderr, /\[Assistant\]/);
-      assert.equal(/MOCK reasoning \(effort: low\)/.test(r.stderr), i > 0, r.stderr);
+      assert.equal(/MOCK reasoning \(effort: low\)/.test(r.stderr), i === 2, r.stderr);
+      assert.equal(r.stderr.includes(REASONING_FOLDED), i === 1, r.stderr);
       assert.match(r.stderr, /\[Assistant · \d+ in \/ \d+ out · \$/);
       assert.deepEqual(lastSent(), preview.body);
     }

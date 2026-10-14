@@ -252,13 +252,18 @@ async function printError(res: Response, saved: SavedSession | null, err: (s: st
   return EXIT.failed;
 }
 
+/** What a stream prints in place of a brain's reasoning, unless --reveal. */
+export const REASONING_FOLDED = "[Reasoning, folded: --reveal streams it; conversation.get --json has it]";
+
 type StreamOpts = { json: boolean; reveal: boolean; fromEnv: boolean; conversation?: string };
 
 /**
  * Stream events: text deltas go to stdout as they arrive; reasoning and status lines go to stderr.
  * T08: a reply's hidden notes are folded as they stream (createHiddenFolder): the marker is printed in their place,
  * never their text, however the fence is split across deltas. On a terminal, a "Hidden · 3 lines so far" line
- * counts up while a note is being written. --reveal prints the reply as it comes; --json prints the raw events.
+ * counts up while a note is being written. Reasoning folds to one line too (T08 triage): a brain that reads a
+ * character sheet reasons about its secrets, and the browser shows reasoning collapsed. --reveal prints the reply
+ * and its reasoning as they come; --json prints the raw events.
  */
 async function printStream(res: Response, opts: StreamOpts, io: Io, dim: (s: string) => string): Promise<number> {
   if (!res.body) return EXIT.failed;
@@ -266,6 +271,7 @@ async function printStream(res: Response, opts: StreamOpts, io: Io, dim: (s: str
   let code: number = EXIT.ok;
   let ended = false;
   let inReasoning = false;
+  let reasoningFolded = false;
   let buf = "";
   const decoder = new TextDecoder();
   const tty = io.stdout.isTTY === true;
@@ -324,8 +330,13 @@ async function printStream(res: Response, opts: StreamOpts, io: Io, dim: (s: str
         out(String(ev.delta ?? ""));
         break;
       case "reasoning":
-        errOut(dim(String(ev.delta ?? "")));
-        inReasoning = true;
+        if (opts.reveal) {
+          errOut(dim(String(ev.delta ?? "")));
+          inReasoning = true;
+        } else if (!reasoningFolded) {
+          errOut(dim(`${REASONING_FOLDED}\n`));
+          reasoningFolded = true;
+        }
         break;
       case "following":
         io.stderr.write(dim("(following a reply in progress: what has streamed so far, then the rest live)\n"));

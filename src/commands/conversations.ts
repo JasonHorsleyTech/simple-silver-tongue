@@ -71,7 +71,8 @@ A file that can't be read (bad JSON, wrong encryption, missing fields) is listed
 export const conversationGet = command({
   name: "conversation.get",
   description: `Show a whole conversation: settings, templates, brains and the full ledger.
-The text view prints each message's active version; --json gives the complete document (reasoning, versions, usage).`,
+The text view prints each message's active version, hidden notes folded to one line: --reveal
+shows them. --json gives the complete document (reasoning, versions, usage).`,
   args: z.object({ id: conversationId }),
   examples: ["./ss conversation.get --id c_k3j9x0q2ma", "./ss conversation.get --id c_k3j9x0q2ma --json"],
   handler: async (args, ctx): Promise<Conversation> => loadConversation(ctx.requireSession().vault, args.id),

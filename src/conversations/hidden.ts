@@ -14,21 +14,29 @@
  * This file is the one definition both clients use: the CLI folds with it and the browser imports it (as it imports
  * wording.ts), so they can't disagree about what is hidden. It is dependency-free on purpose.
  *
- * The rule, line by line (Markdown's fenced code blocks, plus one forgiving extra):
- * - **Opens:** a line that, after any quote markers (`>`), list markers (`-`, `*`, `+`, `1.`, `1)`) and indentation,
- *   is a fence of 3 or more backticks or tildes followed by the word `hidden`, in any case: ```` ```hidden ````,
- *   `~~~Hidden`, ```` ````hidden ````. Not inside another code block, and not ```` ```hidden-notes ````.
+ * The rule, line by line. It starts from Markdown's fenced code blocks but is deliberately more eager to hide (T08
+ * triage): a note that hides too much costs one click, a note that spills can't be unread.
+ * - **Opens:** a line that, after any quote markers (`>`), list markers (`-`, `*`, `+`, `1.`, `1)`), footnote labels
+ *   (`[^1]:`) and indentation, is a fence of 3 or more backticks or tildes followed by the word `hidden`, in any case:
+ *   ```` ```hidden ````, `~~~Hidden`, ```` ````hidden ````. Not ```` ```hidden-notes ````, not mid-line. Anywhere
+ *   else it opens: at any indentation, with backticks in its label, and even inside another code block. The scanner
+ *   doesn't track other code blocks at all, so a stray or unclosed fence before a note (a `~~~` scene break, an
+ *   indented ```` ``` ````) can't swallow it; an example of the convention inside a code block folds too.
  * - **Label:** the rest of the opening line (```` ```hidden character sheet ````) is part of the note, and the fold
  *   doesn't show it: live (T08), a Character Creator told "the label is shown to the player, never put a secret in it"
  *   labelled its sheet with the character's real name, which the player hadn't learned yet.
- * - **Closes:** a line with the same fence character, at least as many of them, and nothing else.
- * - **Unclosed:** it runs to the end of the message, or of the quote or list item it opened in (a line that doesn't
- *   continue that quote or item ends it, as in Markdown). A reply still streaming into a note looks just like this,
- *   so it is folded from its first line.
+ * - **Closes:** a line with the same fence character, at least as many of them, and nothing else. It may be indented
+ *   3 columns, or as far as the opening fence if that is further, or 3 past the fence when a list marker starts the
+ *   opening line (tabs count to the next multiple of 4). That is never further than Markdown allows, so a note never
+ *   ends before Markdown's code block would. It may carry up to as many quote markers as the opening line, or none.
+ * - **Unclosed:** it runs to the end of the message, whatever happens to the quote or list item it opened in (a lazy,
+ *   unquoted or unindented line doesn't end it). A reply still streaming into a note looks just like this, so it is
+ *   folded from its first line.
  * - **Code inside a note:** a fence with a word after it (```` ```js ````) inside a note opens a code block of its
  *   own, and only after that one closes can the note close. Markdown would end the note at the inner block's bare
  *   closing fence and show the rest; for a note, showing the rest would spill it. A longer outer fence
  *   (```` ````hidden ````) or tildes work too, as in Markdown. A bare ```` ``` ```` always closes the note.
+ * - **Lines** end at `\n`, `\r\n` or a lone `\r`.
  */
 
 /** The word after the fence that makes a code block a hidden note (compared case-insensitively). */
@@ -41,17 +49,17 @@ export type HiddenBlock = {
   start: number;
   /** Offset just past the block's last line: the closing fence, or the note's last non-blank line if unclosed. The newline after it isn't part of the block. */
   end: number;
-  /** The opening line up to the fence: "" at the top level, "> " in a quote, "- " in a list item. */
+  /** The opening line up to the fence: "" at the top level, "> " in a quote, "- " in a list item, "[^1]: " in a footnote. */
   prefix: string;
   /** The rest of the opening line after the word, trimmed ("character sheet"), or "". Part of the note: never shown on the fold. */
   label: string;
-  /** The note itself: the lines between the fences, without their quote markers or list indentation, trailing blank lines dropped. */
+  /** The note itself: the lines between the fences, without their quote markers or list indentation (where they have them), trailing blank lines dropped. */
   body: string;
   /** How many lines the body has (0 for an empty note). */
   lines: number;
   /** It has a closing fence. */
   closed: boolean;
-  /** Unclosed, and it runs to the end of the text: a reply still being written into it (or one cut off mid-note). */
+  /** Unclosed, so it runs to the end of the text: a reply still being written into it (or one cut off mid-note). Always `!closed` since T08 triage. */
   open: boolean;
 };
 
@@ -65,71 +73,48 @@ export function isHiddenInfo(info: string | null | undefined): boolean {
 /** Every hidden note in a text, in order. */
 export function findHidden(text: string): HiddenBlock[] {
   const blocks: HiddenBlock[] = [];
-  let open: OpenFence | null = null;
-  const finish = (f: OpenFence, closedAt: number | null, atEnd: boolean) => {
-    if (!f.hidden) return;
-    const body = f.body.slice(0, f.kept);
+  let note: OpenNote | null = null;
+  const finish = (n: OpenNote, closedAt: number | null) => {
+    const body = n.body.slice(0, n.kept);
     blocks.push({
-      start: f.start,
-      end: closedAt ?? f.lastEnd,
-      prefix: f.prefix,
-      label: f.label,
+      start: n.start,
+      end: closedAt ?? n.lastEnd,
+      prefix: n.prefix,
+      label: n.label,
       body: body.join("\n"),
       lines: body.length,
       closed: closedAt !== null,
-      open: closedAt === null && atEnd,
+      open: closedAt === null,
     });
   };
-  let pos = 0;
-  const lines = text.split("\n");
-  if (lines.length > 1 && lines.at(-1) === "") lines.pop(); // after a final newline there is no line yet
-  for (const raw of lines) {
-    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw; // a "\r\n" stays outside the block, like "\n"
-    const lineStart = pos;
-    const lineEnd = pos + line.length;
-    pos += raw.length + 1;
-    if (open) {
-      const rest = continueLine(line, open.containers);
-      if (rest !== null) {
-        if (!open.inner && closes(rest, open)) {
-          finish(open, lineEnd, false);
-          open = null;
-          continue;
-        }
-        if (open.hidden) {
-          if (open.inner) {
-            if (closes(rest, open.inner)) open.inner = null;
-          } else {
-            const inner = fenceIn(rest);
-            if (inner && inner.info !== "") open.inner = inner;
-          }
-          open.body.push(rest.slice(Math.min(open.indent, /^ */.exec(rest)![0].length)));
-          if (rest.trim() !== "") {
-            open.kept = open.body.length;
-            open.lastEnd = lineEnd;
-          }
-        }
-        continue;
+  for (const { line, start } of linesOf(text)) {
+    const end = start + line.length;
+    if (!note) {
+      const f = fenceAt(line);
+      if (f && isHiddenInfo(f.info)) {
+        const label = f.info.slice(HIDDEN_WORD.length).trim();
+        note = { ...f, prefix: line.slice(0, f.at), label, start, lastEnd: end, body: [], kept: 0, inner: null };
       }
-      finish(open, null, false); // the quote or list item it opened in has ended, and the block with it
-      open = null;
+      continue;
     }
-    const f = openingFence(line);
-    if (f) {
-      const hidden = isHiddenInfo(f.info);
-      open = {
-        ...f,
-        hidden,
-        label: hidden ? f.info.trim().slice(HIDDEN_WORD.length).trim() : "",
-        start: lineStart,
-        lastEnd: lineEnd,
-        body: [],
-        kept: 0,
-        inner: null,
-      };
+    if (note.inner) {
+      if (closes(line, note.inner)) note.inner = null;
+    } else if (closes(line, note)) {
+      finish(note, end);
+      note = null;
+      continue;
+    } else {
+      const inner = fenceAt(line);
+      if (inner && inner.info !== "") note.inner = inner;
+    }
+    const kept = dedent(unquote(line, note.quotes), note.col);
+    note.body.push(kept);
+    if (kept.trim() !== "") {
+      note.kept = note.body.length;
+      note.lastEnd = end;
     }
   }
-  if (open) finish(open, null, true);
+  if (note) finish(note, null);
   return blocks;
 }
 
@@ -204,7 +189,7 @@ export function createHiddenFolder(marker: (b: HiddenBlock) => string = hiddenMa
   const render = (final: boolean): string => {
     let upTo = text;
     if (!final) {
-      const nl = text.lastIndexOf("\n");
+      const nl = Math.max(text.lastIndexOf("\n"), text.lastIndexOf("\r"));
       if (couldOpenHidden(text.slice(nl + 1))) upTo = text.slice(0, nl + 1);
     }
     let out = "";
@@ -241,31 +226,35 @@ export function createHiddenFolder(marker: (b: HiddenBlock) => string = hiddenMa
 }
 
 /**
- * Could this unfinished line still turn into a hidden note's opening fence? `"> ``"`, `"- ```hid"` and `""` could;
- * `"The figure"` and `"```js"` can't, so they print as they arrive. Once false, it stays false as the line grows.
+ * Could this unfinished line still turn into a hidden note's opening fence? `"> ``"`, `"- ```hid"`, `"[^1"` and `""`
+ * could; `"The figure"` and `"```js"` can't, so they print as they arrive. Once false, it stays false as the line grows.
  */
 export function couldOpenHidden(partial: string): boolean {
-  const rest = stripContainers(partial).rest.replace(/^[ \t]+/, "");
-  if (rest === "" || /^(?:[-+*]|\d{1,9}[.)]?)$/.test(rest)) return true; // nothing yet, or a list marker arriving
+  const rest = stripPrefixes(partial).rest.replace(/^[ \t]+/, "");
+  // Nothing yet, or a list marker or footnote label still arriving.
+  if (rest === "" || /^(?:[-+*]|\d{1,9}[.)]?)$/.test(rest) || /^\[(?:\^[^\]]*(?:\]:?)?)?$/.test(rest)) return true;
   const m = /^(`+|~+)(.*)$/.exec(rest);
   if (!m) return false;
   if (m[1]!.length < 3) return m[2] === "";
-  const info = m[2]!.replace(/^[ \t]+/, "");
-  if (m[1]![0] === "`" && info.includes("`")) return false;
-  const word = info.toLowerCase();
+  const word = m[2]!.replace(/^[ \t]+/, "").toLowerCase();
   if (word.length <= HIDDEN_WORD.length) return HIDDEN_WORD.startsWith(word);
   return word.startsWith(HIDDEN_WORD) && /\s/.test(word[HIDDEN_WORD.length]!);
 }
 
 // ── The line scanner ─────────────────────────────────────────────────────────────────────────────────────────────
 
-/** A container the fence opened in: a quote marker, or a list item's indentation (its content column). */
-type Container = "quote" | number;
-type Fence = { char: string; len: number; indent: number; info: string };
-type OpenFence = Fence & {
-  containers: Container[];
+type Fence = {
+  char: string;
+  len: number;
+  /** The fence's column after the line's quote markers (list markers and indentation count): the note's lines lose that much indentation. */
+  col: number;
+  /** How far in a closing fence may be: Markdown's 3 past its container's column, where that column is known (a list marker on the opening line), else the least it could be. */
+  reach: number;
+  /** How many quote markers the opening line had: a closing line may carry up to that many, or none. */
+  quotes: number;
+};
+type OpenNote = Fence & {
   prefix: string;
-  hidden: boolean;
   label: string;
   start: number;
   /** End of the last non-blank line so far (the opening line while there is none). */
@@ -277,67 +266,87 @@ type OpenFence = Fence & {
   inner: Fence | null;
 };
 
-const QUOTE = /^ {0,3}>[ \t]?/;
+const QUOTE = /^[ \t]*>[ \t]?/;
 const LIST_ITEM = /^[ \t]*(?:[-+*]|\d{1,9}[.)])[ \t]+/;
-const FENCE = /^( *)(`{3,}|~{3,})(.*)$/;
+const FOOTNOTE = /^[ \t]*\[\^[^\]]+\]:[ \t]*/;
 
-function stripContainers(line: string): { containers: Container[]; rest: string } {
-  const containers: Container[] = [];
+/** The text's lines and where each starts, without their line endings (`\n`, `\r\n` or `\r`). After a final line ending there is no line yet. */
+function* linesOf(text: string): Generator<{ line: string; start: number }> {
+  let start = 0;
+  for (const m of text.matchAll(/\r\n|\r|\n/g)) {
+    yield { line: text.slice(start, m.index), start };
+    start = m.index + m[0].length;
+  }
+  if (start < text.length) yield { line: text.slice(start), start };
+}
+
+/** Width in columns, a tab reaching the next multiple of 4 (as Markdown counts indentation). */
+function cols(s: string): number {
+  let n = 0;
+  for (const ch of s) n = ch === "\t" ? n + 4 - (n % 4) : n + 1;
+  return n;
+}
+
+/** Take quote markers, list markers and footnote labels off the front of a line, in any order and nesting. */
+function stripPrefixes(line: string): { rest: string; quotes: number; afterQuotes: number; listed: boolean } {
   let rest = line;
+  let quotes = 0;
+  let afterQuotes = 0;
+  let listed = false; // a list marker since the last quote marker
   for (;;) {
     const q = QUOTE.exec(rest);
     if (q) {
-      containers.push("quote");
+      quotes++;
       rest = rest.slice(q[0].length);
+      afterQuotes = line.length - rest.length;
+      listed = false;
       continue;
     }
     const l = LIST_ITEM.exec(rest);
-    if (l) {
-      containers.push(l[0].length);
-      rest = rest.slice(l[0].length);
-      continue;
-    }
-    return { containers, rest };
+    const c = l ?? FOOTNOTE.exec(rest);
+    if (!c) return { rest, quotes, afterQuotes, listed };
+    if (l) listed = true;
+    rest = rest.slice(c[0].length);
   }
 }
 
-/** A fence at the start of `rest` (after up to any indentation), or null. Backtick fences can't have a backtick after them. */
-function fenceIn(rest: string): Fence | null {
-  const m = FENCE.exec(rest.replace(/\t/g, "    "));
+/** A fence starting the line (after its prefixes and indentation), with its info string, or null. */
+function fenceAt(line: string): (Fence & { at: number; info: string }) | null {
+  const { rest, quotes, afterQuotes, listed } = stripPrefixes(line);
+  const m = /^([ \t]*)(`{3,}|~{3,})(.*)$/.exec(rest);
   if (!m) return null;
-  const run = m[2]!;
-  const info = m[3]!.trim();
-  if (run[0] === "`" && info.includes("`")) return null;
-  return { char: run[0]!, len: run.length, indent: m[1]!.length, info };
+  const at = line.length - rest.length + m[1]!.length;
+  const col = cols(line.slice(afterQuotes, at));
+  // Markdown's container column is col after a list marker (a fence further in isn't a fence there), else anywhere
+  // from col - 3 to 0: allowing 3 past the least it could be never closes a note where Markdown wouldn't.
+  const reach = listed ? col + 3 : Math.max(3, col);
+  return { char: m[2]![0]!, len: m[2]!.length, col, reach, quotes, at, info: m[3]!.trim() };
 }
 
-function openingFence(line: string): (Fence & { containers: Container[]; prefix: string }) | null {
-  const { containers, rest } = stripContainers(line);
-  const f = fenceIn(rest);
-  if (!f) return null;
-  const ws = /^[ \t]*/.exec(rest)![0];
-  return { ...f, containers, prefix: line.slice(0, line.length - rest.length + ws.length) };
+/** Is this line a closing fence for `f`? The same character, at least as many, nothing after, not indented past f.reach. */
+function closes(line: string, f: Fence): boolean {
+  const m = /^([ \t]*)(`+|~+)[ \t]*$/.exec(unquote(line, f.quotes));
+  return m !== null && m[2]![0] === f.char && m[2]!.length >= f.len && cols(m[1]!) <= f.reach;
 }
 
-/** The line with the fence's containers taken off, or null when it doesn't continue them (the quote or item ended). */
-function continueLine(line: string, containers: Container[]): string | null {
+/** The line with up to `n` quote markers taken off its front. */
+function unquote(line: string, n: number): string {
   let rest = line;
-  for (const c of containers) {
-    if (c === "quote") {
-      const q = QUOTE.exec(rest);
-      if (!q) return null;
-      rest = rest.slice(q[0].length);
-    } else {
-      if (rest.trim() === "") return "";
-      if (/^ */.exec(rest)![0].length < c) return null;
-      rest = rest.slice(c);
-    }
+  for (let i = 0; i < n; i++) {
+    const q = QUOTE.exec(rest);
+    if (!q) break;
+    rest = rest.slice(q[0].length);
   }
   return rest;
 }
 
-/** A closing fence for `f`: the same character, at least as many, nothing after, indented at most 3 past the opener. */
-function closes(rest: string, f: Fence): boolean {
-  const m = /^( *)(`+|~+)[ \t]*$/.exec(rest);
-  return m !== null && m[1]!.length <= f.indent + 3 && m[2]![0] === f.char && m[2]!.length >= f.len;
+/** The line with up to `n` columns of indentation taken off (a tab that reaches past n leaves its remainder as spaces). */
+function dedent(line: string, n: number): string {
+  let col = 0;
+  let i = 0;
+  while (i < line.length && col < n && (line[i] === " " || line[i] === "\t")) {
+    col = line[i] === "\t" ? col + 4 - (col % 4) : col + 1;
+    i++;
+  }
+  return " ".repeat(Math.max(0, col - n)) + line.slice(i);
 }

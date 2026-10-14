@@ -104,7 +104,8 @@ Refused while a reply is being generated (it would land after your message, answ
 export const messageGet = command({
   name: "message.get",
   description: `Show one message with every version: its text, and the steer that produced it, if any.
-The active version is the one every brain sees. Switch with message.select-version.`,
+The active version is the one every brain sees. Switch with message.select-version. Hidden notes fold to one
+line: --reveal shows them.`,
   args: z.object(target),
   examples: ["./ss message.get --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a"],
   handler: async (args, ctx): Promise<MessageView> => {

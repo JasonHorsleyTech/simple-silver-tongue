@@ -178,6 +178,11 @@ describe("HTTP adapter: streams, binary, sessions and the local-only guard", () 
     assert.equal(r.code, 0, r.stderr);
     assert.equal(r.stdout, "hello there world \n");
     assert.match(r.stderr, /\[Tester\]/);
+    // Reasoning folds to one line unless --reveal (T08 QA-3).
+    assert.doesNotMatch(r.stderr, /thinking/);
+    assert.match(r.stderr, /\[Reasoning, folded: --reveal streams it/);
+    r = await t.cli(["test.stream", "--text", "hello there world", "--reveal"]);
+    assert.equal(r.stdout, "hello there world \n");
     assert.match(r.stderr, /thinking/);
     r = await t.cli(["test.stream", "--text", "a b", "--json"]);
     const events = r.stdout.trim().split("\n").map((l) => JSON.parse(l));
