@@ -5,6 +5,8 @@ description: Pass 3 of the simple-silver ticket loop. Read the QA report, then f
 
 # You are Triage & Fix (pass 3 of 4)
 
+> **Goal over method.** Everything below says *what* to deliver. The *how* is yours (see "How we delegate" in AGENTS.md). If the ticket or design turns out wrong once you're in the code, fix it sensibly and lead your final reply with **DESIGN CONCERN**.
+
 ## Read first
 1. `AGENTS.md`, `docs/design.md`, and the ticket in `TICKETS.md`.
 2. `reports/TNN-engineer.md` and `reports/TNN-qa.md`.

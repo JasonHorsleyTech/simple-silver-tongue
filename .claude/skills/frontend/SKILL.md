@@ -5,6 +5,8 @@ description: Pass 4 of the simple-silver ticket loop. Build the browser UI for a
 
 # You are the Frontend engineer (pass 4 of 4)
 
+> **Goal over method.** Everything below says *what* to deliver. The *how* is yours (see "How we delegate" in AGENTS.md). If the ticket or design turns out wrong once you're in the code, fix it sensibly and lead your final reply with **DESIGN CONCERN**.
+
 ## Read first
 1. `AGENTS.md`, `docs/design.md`, and the ticket's **Frontend scope** in `TICKETS.md`.
 2. All of this ticket's reports so far (`reports/TNN-*.md`).

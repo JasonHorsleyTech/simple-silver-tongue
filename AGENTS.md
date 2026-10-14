@@ -27,7 +27,7 @@ The full data model and prompt-assembly rules are in **[docs/design.md](docs/des
 
 ## Stack
 
-> **STATUS: PROPOSED, pending Jason's approval.** Do not start T01 until this banner is removed.
+> **APPROVED by Jason on 2026-10-13.** The goals are fixed. The specific libraries are strong defaults: if one fights you, swap it, and say why in your report.
 
 | Layer | Choice | Why |
 |---|---|---|
@@ -43,8 +43,10 @@ The full data model and prompt-assembly rules are in **[docs/design.md](docs/des
 
 ## Defaults
 
-- Text model: `deepseek-v4-1-flash` (private, $0.30/M in, $1.20/M out). Reasoning effort default `low`, configurable per conversation. Its default would be `high`, which is slow.
-- Image model: **TBD by Jason.** Options: `z-image-turbo` (private, $0.01/image, ~3s) or `nano-banana-2-1` (anonymized, $0.10/image). Configurable per conversation from the live model list.
+- Text model: `deepseek-v4-1-flash` (private, $0.30/M in, $1.20/M out). One per conversation.
+- Image model: `z-image-turbo` (private, $0.01/image, ~3s). One per conversation. Jason picked it over Nano Banana, which is $0.10 and only "anonymized".
+- **Per brain:** a reasoning on/off toggle, with an effort level when the model supports one. Default on at `low`, since the model's own default of `high` is slow. Reasoning is shown collapsed and never sent back.
+- **Per image brain:** a safe-mode toggle, **on by default**. It maps to Venice `safe_mode`, which blurs adult content.
 - All Venice models (text and image) come from `GET /models` and are shown in the per-conversation model pickers.
 
 ## Running it
@@ -72,9 +74,17 @@ npm run typecheck
 5. **Browser checks use the Chrome DevTools MCP** (`mcp__chrome-devtools__*`, loaded via ToolSearch) against `http://localhost:4747`.
 6. **Keep improving this strategy.** When you find a better way to test something, add it under *Lessons learned* below.
 
+## How we delegate (read this, every agent)
+
+We run on *Auftragstaktik*: you get the **goal and the deliverable**, not orders on method.
+
+- The tickets and design.md describe intent plus a current best guess at the design. Where they name a library, a field name or an algorithm, treat it as a suggestion that explains the goal. If you can see a better way once you're in the code, take it, update design.md, and explain why in your report.
+- **Escape valve:** if the design is actually *wrong* in a way that will hurt later tickets (a bad data shape, a flawed assembly rule, a ticket split that doesn't work), you don't have to plow ahead. Do what's sensible, then raise it at the top of your final reply under **DESIGN CONCERN**, with your recommendation. That counts as a successful outcome, not a failure.
+- Only the **hard requirements** above are non-negotiable.
+
 ## Work loop (every ticket)
 
-Tickets live in **[TICKETS.md](TICKETS.md)**. The orchestrator (the main Claude session) runs each ticket through four passes. Each pass is a separate Opus subagent that reads its role skill first:
+Tickets live in **[TICKETS.md](TICKETS.md)**. The orchestrator (the main Claude session, acting as CTO) writes no product code. It delegates, reviews the results and keeps these docs and skills sharp. It normally runs each ticket through four passes, but may re-plan, merge or redo passes when something isn't working. Each pass is a separate Opus subagent that reads its role skill first:
 
 | Pass | Skill file | Output |
 |---|---|---|

@@ -2,6 +2,8 @@
 
 Each ticket goes through the four-pass loop in AGENTS.md: Engineer, QA, Triage & fix, Frontend. Status values: `todo`, `engineer`, `qa`, `triage`, `frontend`, `done`. The triage pass appends deferred items to the relevant later ticket under **Deferred in**.
 
+**Scope bullets describe outcomes. Method details in them are suggestions** (see "How we delegate" in AGENTS.md). Acceptance bullets are the real bar.
+
 Jason's checkpoints map onto tickets like this: CP1 → T02, CP2 → T03, CP3 → T04, CP4 → T05, CP5 → T01 + T06, and the final D&D acceptance → T07.
 
 ---
@@ -37,7 +39,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 ## T02: Basic streaming chat (CP1) · `todo`
 
 **Engineer scope**
-- The full conversation document per design.md (settings, templates, setup, brains, ledger), even though brains and setup only get commands in T04. A new conversation gets one default text brain named "Assistant" with the given system prompt.
+- The full conversation document per design.md (settings, templates, setup, brains, ledger), even though brains and setup only get commands in T04. A new conversation gets one default text brain named "Assistant" with the given system prompt, and per-brain reasoning on at `low`.
 - `conversation.create` (title, system prompt), `.list`, `.get`, `.update` (title and settings), `.delete`.
 - `buildRequest` per design.md, as a pure function, implemented in full for text brains, with unit tests covering player framing, own vs other assistant messages, setup and reminder.
 - `prompt.preview` returns the exact body. A test asserts the send path uses the same builder.
@@ -90,7 +92,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 - Editing a GM message changes what the Dice Master sees.
 - Adding a third brain mid-conversation and editing the GM's system prompt both work without restarting the conversation.
 
-**Frontend scope:** A conversation settings drawer: title, text and image model pickers from `models.list`, reasoning effort, a templates editor, a setup-messages editor (add, reorder, edit, delete), and a brains editor (name, color, kind, system prompt, reminder checkbox + text, default, delete only when unused). The composer gets a big Send to the default brain plus a button per other brain. Messages get colored author badges. An "Exact payload" modal per brain renders `prompt.preview`.
+**Frontend scope:** A conversation settings drawer: title, text and image model pickers from `models.list`, reasoning effort, a templates editor, a setup-messages editor (add, reorder, edit, delete), and a brains editor (name, color, kind, system prompt, reasoning on/off + effort, reminder checkbox + text, default, delete only when unused). The composer gets a big Send to the default brain plus a button per other brain. Messages get colored author badges. An "Exact payload" modal per brain renders `prompt.preview`.
 
 **Deferred in:** *(none yet)*
 
@@ -99,7 +101,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 ## T05: Image brains (CP4) · `todo`
 
 **Engineer scope**
-- `kind: "image"` brains with editable tool text (`tool.description`, `tool.promptParamDescription`, `tool.resultContent`). The request carries `tools` and a forced `tool_choice`, with the tool args streamed.
+- `kind: "image"` brains with a per-brain `safeMode` (default on) and editable tool text (`tool.description`, `tool.promptParamDescription`, `tool.resultContent`). The request carries `tools` and a forced `tool_choice`, with the tool args streamed.
 - Image generation via `/image/generate` with the conversation's image model and options, respecting the model's constraints from `/models?type=image`. Images stored per user (encrypted when the user is). `image.get` serves the bytes (GET works for `<img>`), and `image.retry` re-runs a prompt.
 - The stream stays open until the image is done. Generation completes and persists even if the client disconnects.
 - Edit an image message, meaning its prompt, and a new image is generated; it swaps in when done. Regenerating with a steer produces a new prompt and a new image as a new version. Deleting the message deletes its images.
@@ -110,7 +112,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 - Live: one real tool call plus one real image with `z-image-turbo`.
 - Editing the prompt generates a new image. A steered regeneration produces a new prompt and a new image.
 
-**Frontend scope:** An image message card showing the prompt (streams in live, collapsible), then a loader, then the image (click to enlarge), or an error with Retry. Editing the prompt keeps the old image dimmed with a spinner until the new one arrives. Image settings (model, aspect ratio or size, safe mode) live in the settings drawer.
+**Frontend scope:** An image message card showing the prompt (streams in live, collapsible), then a loader, then the image (click to enlarge), or an error with Retry. Editing the prompt keeps the old image dimmed with a spinner until the new one arrives. The image model and size live in the settings drawer. The safe-mode toggle (default on) lives on each image brain.
 
 **Deferred in:** *(none yet)*
 

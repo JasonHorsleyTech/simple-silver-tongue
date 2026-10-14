@@ -1,7 +1,6 @@
 # Design spec
 
-This is the source of truth for the data model, the prompt-assembly rules and the command surface.
-If you change any of these, update this file in the same commit.
+This is the current best design for the data model, the prompt-assembly rules and the command surface. It is a living document, not a contract. The **hard rules** below are fixed. Field names, shapes and mechanics are suggestions that explain the intent. If implementation shows a better way, change it, update this file in the same commit, and say why in your report.
 
 ## Vocabulary
 
@@ -61,11 +60,10 @@ type Conversation = {
   id: string; title: string; createdAt: string; updatedAt: string;
   settings: {
     textModel: string;                 // default "deepseek-v4-1-flash"
-    reasoningEffort: string;           // "" = model default; else one of the model's options. Default "low"
     maxTokens?: number; temperature?: number;
-    imageModel: string;                // default: see AGENTS.md "Defaults"
+    imageModel: string;                // default "z-image-turbo"
     image: { width?: number; height?: number; aspectRatio?: string; resolution?: string;
-             format: "webp" | "png" | "jpeg"; safeMode: boolean; hideWatermark: boolean; negativePrompt?: string };
+             format: "webp" | "png" | "jpeg"; hideWatermark: boolean; negativePrompt?: string };
   };
   templates: {
     player: string;          // default "<!-- from: the user -->\n{{content}}"
@@ -82,6 +80,8 @@ type Brain = {
   id: string; name: string; color: string;
   kind: "text" | "image";              // cannot change once the brain has messages
   isDefault: boolean;                   // exactly one brain is the default
+  reasoning: { enabled: boolean; effort: string };  // default { enabled: true, effort: "low" }. Disabled → reasoning_effort "none".
+  safeMode?: boolean;                   // image brains only, default true → Venice safe_mode
   systemPrompt: string;                 // empty = no system message sent
   finalReminder: { enabled: boolean; content: string };  // default enabled=false for the default brain, true for others
   tool?: {                              // image brains only. All of this text reaches the model.
@@ -141,7 +141,7 @@ Request body:
   "stream": true,
   "stream_options": { "include_usage": true },
   "venice_parameters": { "include_venice_system_prompt": false, "enable_web_search": "off" },
-  "reasoning_effort": settings.reasoningEffort,   // omitted when ""
+  "reasoning_effort": "none" | B.reasoning.effort,  // from the brain's toggle; omitted if the model has no reasoning
   "max_tokens": ..., "temperature": ...,          // omitted when unset
   // image brains only:
   "tools": [{ "type": "function", "function": { "name": B.tool.name, "description": B.tool.description,
@@ -160,9 +160,9 @@ Verified against the live Venice API (2026-10-13), using `deepseek-v4-1-flash`:
 
 ## Turns, regeneration and edits
 
-- **turn** `(conversation, brain = default, content?)`. If `content` is not empty, append a player message and save. Then generate a response from `brain` and append it as a new brain message. With empty content, it just asks the brain to respond (e.g. "paint the current scene").
+- **turn** `(conversation, brain = default, content?)`. If `content` is not empty, append a player message and save. Then generate a response from `brain` and append it as a new brain message. With empty content, it just asks the brain to respond. Example: a Character Portraitist whose system prompt says "unless the player asks for someone specific, paint the most recently introduced character". With empty content it does exactly that; with "(paint the barkeep, give him a leather apron)" it follows the note. No special code is needed. The player message is simply framed like any other, and the brain's prompt decides.
 - **regenerate** `(messageId, steer?)`. Only allowed when `messageId` is the **last** ledger message and has a brain author. Build the request for that message's brain, excluding the message itself, plus the steer. The result becomes a **new version** of the message and the active one. The steer text is stored on that version for display. It is never sent again.
-- **select-version.** Switching the active version changes what every brain sees from then on.
+- **select-version.** Go back to version 2 of 10, decide it's the good one, and keep playing from it. Switching the active version changes what every brain sees from then on.
 - **edit** `(messageId, content)`. Edits the active version in place (`edited: true`). Any message can be edited, player or brain, at any depth. For an image message, saving a new prompt starts a new image generation. The old image stays on screen until the new one is ready.
 - **delete** `(messageId)`. Any message. Deleting an image message deletes its image files.
 - **add** `(author = player | brain, content)`. Appends an authored message without generating anything. This is how you put words in the GM's mouth for the opening scene. Authoring an image-brain message starts image generation for that prompt.
@@ -172,7 +172,7 @@ Verified against the live Venice API (2026-10-13), using `deepseek-v4-1-flash`:
 
 1. The image brain streams a forced `generate_image` tool call. Stream the argument fragments to the client so the prompt shows up live.
 2. Parse `{prompt}` and save the message with `image.status = "pending"`.
-3. `POST {VENICE_BASE_URL}/image/generate` with `{ model: settings.imageModel, prompt, ...settings.image }`, mapped to the Venice field names (`aspect_ratio`, `resolution`, `safe_mode`, `hide_watermark`, `negative_prompt`, `format`). Only send fields the chosen model supports; model constraints come from `/models?type=image`.
+3. `POST {VENICE_BASE_URL}/image/generate` with `{ model: settings.imageModel, prompt, safe_mode: B.safeMode, ...settings.image }`, mapped to the Venice field names (`aspect_ratio`, `resolution`, `safe_mode`, `hide_watermark`, `negative_prompt`, `format`). Only send fields the chosen model supports; model constraints come from `/models?type=image`. For example, z-image-turbo takes width and height; Nano Banana takes resolution and aspect_ratio.
 4. Decode `images[0]` (base64). Store it under `images/<imageId>.<ext>`, encrypted for encrypted users. Set the status to `done`, or to `error` with the message.
 5. The stream stays open until the image is done, so the CLI and browser can show a loader. The server must finish and persist even if the client disconnects. `image.retry` regenerates the image for the active version from the same prompt.
 

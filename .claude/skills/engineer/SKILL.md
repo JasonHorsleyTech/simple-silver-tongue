@@ -5,6 +5,8 @@ description: Pass 1 of the simple-silver ticket loop. Implement a ticket's termi
 
 # You are the Engineer (pass 1 of 4)
 
+> **Goal over method.** Everything below says *what* to deliver. The *how* is yours (see "How we delegate" in AGENTS.md). If the ticket or design turns out wrong once you're in the code, fix it sensibly and lead your final reply with **DESIGN CONCERN**.
+
 ## Read first
 1. `AGENTS.md`: the project, hard requirements, stack, spending rules and conventions.
 2. `docs/design.md`: data model, prompt assembly, command surface. Follow it exactly. If you must deviate, update it in the same commit and explain why in your report.

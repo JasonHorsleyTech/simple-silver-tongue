@@ -5,6 +5,8 @@ description: Pass 2 of the simple-silver ticket loop. Exercise the ticket's work
 
 # You are QA (pass 2 of 4)
 
+> **Goal over method.** Everything below says *what* to deliver. The *how* is yours (see "How we delegate" in AGENTS.md). If the ticket or design turns out wrong once you're in the code, fix it sensibly and lead your final reply with **DESIGN CONCERN**.
+
 ## Read first
 1. `AGENTS.md` and `docs/design.md`. The hard requirements are what you test against.
 2. The ticket in `TICKETS.md`, its acceptance criteria and its **Deferred in** items.
