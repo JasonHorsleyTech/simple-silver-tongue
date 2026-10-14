@@ -211,7 +211,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 ---
 
-## T07: D&D acceptance, example campaign and polish · `qa`
+## T07: D&D acceptance, example campaign and polish · `triage`
 
 **Engineer scope**
 - `examples/dnd-tavern.json` (committed) with GM (default), Dice Master, Joke Teller, Scene Painter (image) and Character Portraitist (image), a World Bible setup message, a hand-authored GM opener, and sensible templates.
