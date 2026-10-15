@@ -484,3 +484,40 @@ Jason, 2026-10-15, done directly (no four-pass loop, at his request). A steer as
 - **Template:** `templates.thought` (default a ```` ```hidden ```` block with `{{thought}}` and "That sounds good, I'll respond next."), editable everywhere, schema 5. **Commands:** `message.regenerate --thought [--wrap]`, `prompt.preview --regenerate --thought [--wrap]`. **Browser:** the regenerate box has two tabs, Revise and Fresh take (pre-filled, caret at the marker, ⌘ Enter), Payload on both.
 - **Models:** GLM parked (thinking-only: Venice refuses reasoning off; with it on, a prefill leaked `</think>` and came back empty); warnings beside Grok 4.7 (twice the prompt tokens: a system prompt we don't send?) and Gemma 4 31B (empty on a prefill with reasoning off). 17 text, 7 image.
 - Live: two calls through the app on `deepseek-v4-1-flash` (the preset GM with its reminder, a plain Assistant ending on the thought), both clean; $0.00035.
+
+---
+
+## T16: Brains that make brains: one brain per character, its sheet pinned · `todo`
+
+Jason, 2026-10-15. Today one Character Actor plays every character. By message 50 its history holds Alice, Bob, Charlie and Dave, all as its own `assistant` lines, and Alice's sheet is 45 messages back behind three rival sheets. Going back to talk to Alice confuses it. The fix: **every character gets a brain of their own, made automatically when the Character Creator writes their sheet, with that sheet pinned at the top of their view.** Alice's own lines are then her `assistant` turns, Bob's are framed `<!-- from: Bob -->`, and her sheet is always right under her instructions.
+
+**Nothing in the app may know what a character is.** These are generic brain features; characters are just what the Tabletop RPG preset uses them for. A Place Creator whose replies make "Place {{n}}" brains (ask the Gilded Goat "what's going on here tonight?") must work the same way with no code change.
+
+### The three pieces
+
+1. **Pinned messages (a live link).** A brain can have ledger messages pinned to it. When the app builds *that brain's* request, each pinned message is sent right after the setup messages, and not at its place in the ledger; every other brain still sees it where it is. It is a link, not a copy: editing the message, re-rolling it or picking another version changes what the brain gets. Start with "sent exactly as it would appear in the ledger from that brain's point of view, just moved up" (no new wording). Probe live whether the brain holds its character better with the pin sent as `system` (DeepSeek seems to fold system messages into the system prompt, T13) or as the brain's own `assistant` words (Jason's planted-thought finding, see T15), and pick on evidence. Whatever is sent shows in `prompt.preview`, as always.
+2. **A brain can make brains ("Each new message makes a new brain").** An optional per-brain setting holding a **name pattern** (`Character {{n}}`) and a **blueprint**: the new brain's system prompt, final reminder, reasoning and stop sequences (everything `brain.add` takes). When that brain gets a **new message** in the ledger (a generated reply, including a stopped one, or one written with `message.add --as`), a new brain is created in the same write: a copy of the blueprint, named from the pattern, that message pinned to it. New *versions* of the message (regenerate, steer, fresh take, edit) never make another brain: the pin follows the active version, so the same character just changes. A failed reply saves nothing and makes nothing. Numbers come from a counter on the maker, so renaming "Character 1" to "Alice" doesn't make the next one "Character 1" again. The maker's payload view says what will happen ("This reply will make a new brain, Character 4"), since it is a side effect of sending.
+   - **Making one by hand from an existing message** (same result: that author's blueprint, the message pinned, the next name). This is how Jason moves his current campaigns over, whose sheets were written before the setting existed.
+   - **Deleting a message that made a brain** deletes that brain too if it has never spoken. If it has spoken, or the message is pinned to other brains, the delete goes through, the pins go, and the answer says which brain lost what.
+3. **Change who said a message.** Any message's author can be moved to another brain of the same kind, or to/from the player where that makes sense (not while generating, like any ledger edit). An edit like any other: history "always was" that way. Jason uses it to move the old Character Actor's lines onto the new characters' brains.
+
+### The preset
+
+- `presets/tabletop-rpg.json` drops the **Character Actor** brain. The **Character Creator** gets the setting: pattern `Character {{n}}`, and a blueprint made from today's Actor prompt, reworded for one specific person whose sheet is pinned right after the instructions (reasoning on, low, as the Actor had, on its live evidence). The other brains' "At this table" lines change to match (each character with a sheet may have a brain of their own, named for them, speaking as them). Every changed prompt is tuned live, as the T10 prompts were, and the T10 lessons on leaks and names still apply. The Creator's sheet format can stay as it is.
+- The README and design.md say how to play this way.
+
+### Engineer scope
+Data (a schema bump; old files load with no pins and no setting), prompt assembly, the commands (pin and unpin, the maker setting on `brain.add`/`brain.update`/`brain.list`, make-a-brain-from-a-message, change-author, and whatever the stream needs to tell a client a brain was just made), campaign files (pins and the setting import, export, clone and `brain.import` sensibly, pins re-pointed to the fresh message ids), the preset, tests, and design.md. Live: the preset end to end at the tavern (Creator writes the hooded figure → Character 1 exists → it answers in character with its sheet at the top; a second character; back to the first), plus the pin-role probes.
+
+### Frontend scope
+- The maker setting and its blueprint in the brain card, every word editable. A brain's pins in its card (which message, jump to it, unpin), and a way to pin a message to a brain from the message itself.
+- When a reply makes a brain, its button appears at once, and renaming it is easy and obvious (the name will often be "Character 3" until the story says who she is).
+- "Make a brain from this" on a message whose author has the setting; "Said by" (change author) on a message.
+- **Many brains.** A campaign can reach a dozen brains or more. The composer must stay one click to any of them without wrapping into a block (T12's one row), and Settings → Brains must stay usable.
+
+### Acceptance
+- With the Tabletop RPG preset: the Creator writes a sheet for the hooded figure and a brain "Character 1" exists with no other click; `prompt.preview --brain "Character 1"` shows its sheet right after the setup, not at its ledger position, and its own earlier lines as `assistant`. A second character works the same; going back to the first, its view still has its own sheet at the top and the second character's lines framed as another speaker.
+- Editing the sheet changes what the pinned brain gets on its next request. Re-rolling the Creator's reply makes no new brain. Renaming the brain changes the framing every other brain sees.
+- `message.add --as "Character Creator"` with a hand-written sheet makes a brain. Make-a-brain-by-hand on an old sheet works. Change-author moves a line into the new brain's own `assistant` history.
+- A generic, non-character case works from the CLI (a scratch "Place Creator" with `Place {{n}}`).
+- Every word sent stays visible in `prompt.preview` and editable. `npm test` and `npm run typecheck` pass.
