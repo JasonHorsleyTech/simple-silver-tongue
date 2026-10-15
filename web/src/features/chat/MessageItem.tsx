@@ -1,10 +1,11 @@
 import { BrainCircuit, ImagePlus, Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { memo, useEffect, useState } from "react";
-import type { Brain, LedgerMessage, MessageVersion, PinRole } from "../../api/types.ts";
+import { isMuse, type Brain, type LedgerMessage, type MessageVersion, type PinRole } from "../../api/types.ts";
 import { cx } from "../../lib/cx.ts";
 import { activeVersion, clockTime, fullTime } from "../../lib/format.ts";
 import { rollView } from "../../lib/rolls.ts";
 import { readLocal, writeLocal } from "../../lib/storage.ts";
+import { mergedThought, type FreshTakeTarget } from "../../lib/thought.ts";
 import { expectedAspect, ImageBody } from "./ImageCard.tsx";
 import { LiveReply } from "./LiveReply.tsx";
 import { MessageEditor } from "./MessageEditor.tsx";
@@ -31,8 +32,10 @@ const REGEN_MODE_KEY = "ss.regenerateMode";
  * One ledger message, showing its active version, with its actions:
  *   any message   edit (raw Markdown in place), delete (confirmed inline), copy
  *   brain message the ‹ 2/3 › pager when it has versions, and the steer behind the version shown
- *   last reply    Regenerate…: Revise (an optional steer) or Fresh take (a thought as the brain's own words, T15);
- *                 the new version streams into this same slot (`live`)
+ *   last reply    Regenerate…: Revise (an optional steer) or Fresh take (your idea as a note from the Muse, right
+ *                 before it, T17); the new version streams into this same slot (`live`)
+ *   Muse's note   T17: a message by the Muse (the brain called Muse) has a look of its own (MessageFrame's `muse`):
+ *                 a note, not a speaker, saying whose reply it is for; its actions are any message's
  *   image message the picture and its prompt (ImageCard); edit changes the prompt and paints it again, and
  *                 "Paint again" makes another image of a finished one, as a new version (both are kept)
  * A text message's hidden notes (T08) show folded (MessageText); the editor and Copy have the raw text.
@@ -55,6 +58,9 @@ export const MessageItem = memo(function MessageItem({
   onPreviewRegenerate,
   onDismissLive,
   thoughtTemplate,
+  freshTarget,
+  noteFor,
+  thoughtBeside,
   brains,
   made,
   pins,
@@ -85,6 +91,12 @@ export const MessageItem = memo(function MessageItem({
   onDismissLive(): void;
   /** The conversation's templates.thought, for the last message's Fresh take box (T15). */
   thoughtTemplate?: string;
+  /** T17, the last message: what a fresh take on it does with the Muse's note (freshTakeTarget). */
+  freshTarget?: FreshTakeTarget;
+  /** T17, a Muse's note: the brain whose message comes right after it, whose reply the idea is for. */
+  noteFor?: Brain | null;
+  /** T17, an image version made by a fresh take: its idea is in no message above it (T15, or its note is gone), so it shows above the picture. */
+  thoughtBeside?: boolean;
 }) {
   const v = activeVersion(message);
   const [mode, setMode] = useState<Mode>("view");
@@ -130,7 +142,8 @@ export const MessageItem = memo(function MessageItem({
         live={live}
         brain={brain}
         slot={{ nextVersion: message.versions.length + 1, fromVersion: live.steer ? message.activeVersion + 1 : null }}
-        onRetry={() => void actions.regenerate(message.id, live.thought !== null ? { thought: live.thought } : { steer: live.steer ?? "" })}
+        // A fresh take's retry is a plain re-roll (T17): its note is in the ledger now, and the re-roll answers it.
+        onRetry={() => void actions.regenerate(message.id, { steer: live.steer ?? "" })}
         onDismiss={onDismissLive}
       />
     );
@@ -263,6 +276,9 @@ export const MessageItem = memo(function MessageItem({
 
   const count = message.versions.length;
   const shownImage = v.image;
+  /** T17: the Muse's message (a note), which a fresh take can't be taken on. */
+  const muse = !!brain && isMuse(brain);
+  const regenTab: RegenerateMode = freshTarget?.kind === "own" ? "revise" : regenMode;
   const canPaintAgain = image && shownImage?.status === "done" && !shownImage.blurred && !shownImage.contentViolation;
   const paintAgain = async () => {
     if (paintingShown) return setHint(IMAGE_BUSY);
@@ -272,11 +288,11 @@ export const MessageItem = memo(function MessageItem({
     if (problem) setHint(problem);
   };
   /** What the box asks for: Revise sends the steer (blank: a re-roll), Fresh take the thought exactly as it stands. */
-  const ask = (): RegenerateAsk => (regenMode === "fresh" ? { thought } : { steer });
+  const ask = (): RegenerateAsk => (regenTab === "fresh" ? { thought } : { steer });
   const regenerate = async () => {
     if (regenerating) return;
     if (busy) return setSteerError(BUSY_HINT);
-    if (regenMode === "fresh" && !thought.trim()) return;
+    if (regenTab === "fresh" && !thought.trim()) return;
     setSteerError(null);
     setRegenerating(true);
     const problem = await actions.regenerate(message.id, ask());
@@ -294,15 +310,17 @@ export const MessageItem = memo(function MessageItem({
         color={brain?.color ?? "#9aa3b0"}
         time={v.createdAt}
         authored={v.source === "authored"}
+        muse={muse ? { for: noteFor ?? null } : undefined}
         origin={
           count > 1 ? (
             <SteerNote
               steer={v.steer}
               fromVersion={v.steeredFrom !== undefined ? v.steeredFrom + 1 : null}
               repaintOf={v.repaintOf !== undefined ? v.repaintOf + 1 : null}
-              freshTake={v.thought !== undefined}
+              freshTake={v.thought === undefined ? undefined : image ? (thoughtBeside ? "beside" : "note") : mergedThought(v) ? "merged" : "note"}
               image={image}
-              reroll={message.activeVersion > 0 && v.steer === undefined && v.repaintOf === undefined && v.thought === undefined}
+              // A version you wrote (T17: a fresh take's next idea for the Muse's note) was never rolled.
+              reroll={message.activeVersion > 0 && v.source === "generated" && v.steer === undefined && v.repaintOf === undefined && v.thought === undefined}
             />
           ) : null
         }
@@ -338,7 +356,13 @@ export const MessageItem = memo(function MessageItem({
                       type="button"
                       aria-expanded={mode === "steer"}
                       onClick={() => setMode((m) => (m === "steer" ? "view" : "steer"))}
-                      title={image ? "A new prompt and a new image, as a new version: revise it with a steer, or a fresh take" : "Write this reply again: revise it with a steer, or a fresh take from a thought you plant"}
+                      title={
+                        muse
+                          ? "Write this note again, as a new version: revise it with a steer, or re-roll it"
+                          : image
+                            ? "A new prompt and a new image, as a new version: revise it with a steer, or a fresh take from an idea of yours (a note from the Muse)"
+                            : "Write this reply again: revise it with a steer, or a fresh take from an idea of yours (a note from the Muse)"
+                      }
                       className={cx(
                         "mr-0.5 inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] transition-colors",
                         mode === "steer" ? "bg-hover text-fg" : "text-muted hover:bg-hover hover:text-fg",
@@ -380,9 +404,11 @@ export const MessageItem = memo(function MessageItem({
       >
         {image ? (
           <>
-            {/* T15: a fresh take's thought isn't in an image prompt (that goes to the image model word for word): it is kept beside it. */}
-            {v.thought !== undefined && mode !== "edit" && (
+            {/* T15: a fresh take's thought isn't in an image prompt (that goes to the image model word for word): it was kept
+                beside it. T17: it is the Muse's note right above, so it shows here only when no note above has it. */}
+            {thoughtBeside && v.thought !== undefined && mode !== "edit" && (
               <div key={message.activeVersion} className="mb-3">
+                <p className="mb-1.5 text-[11.5px] text-faint">The fresh take's idea (display only: it is in no message above)</p>
                 <MessageText text={v.thought} color={brain?.color} />
               </div>
             )}
@@ -410,7 +436,7 @@ export const MessageItem = memo(function MessageItem({
       {hintLine}
       {mode === "steer" && canRegenerate && (
         <SteerBox
-          mode={regenMode}
+          mode={regenTab}
           onMode={(m) => {
             setRegenMode(m);
             setSteerError(null);
@@ -435,7 +461,7 @@ export const MessageItem = memo(function MessageItem({
           error={steerError}
           image={image}
           brainName={brain?.name ?? "The brain"}
-          reminder={!!brain?.finalReminder.enabled && brain.finalReminder.content.trim() !== ""}
+          target={freshTarget ?? { kind: "new", muse: null }}
           nextVersion={count + 1}
           fromVersion={count > 1 ? message.activeVersion + 1 : null}
           pending={regenerating}

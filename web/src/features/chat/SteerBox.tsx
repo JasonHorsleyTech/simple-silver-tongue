@@ -3,11 +3,11 @@ import { useEffect, useRef } from "react";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { cx } from "../../lib/cx.ts";
-import { prefillThought } from "../../lib/thought.ts";
+import { prefillThought, type FreshTakeTarget } from "../../lib/thought.ts";
 import { useAutosize } from "../../lib/useAutosize.ts";
 import { Kbd } from "./MessageEditor.tsx";
 
-/** The two ways to regenerate (T15): revise the version on screen with a steer, or a fresh take from a planted thought. */
+/** The two ways to regenerate (T15): revise the version on screen with a steer, or a fresh take from an idea of yours. */
 export type RegenerateMode = "revise" | "fresh";
 
 /**
@@ -16,10 +16,13 @@ export type RegenerateMode = "revise" | "fresh";
  * **Revise** (T03): an optional steer. With one, the brain sees the version on screen and the steer, last, in this
  * one request only. Empty, it is a plain re-roll of the messages before it. Enter regenerates, Shift+Enter adds a line.
  *
- * **Fresh take** (T15): the brain never sees the version on screen. What the box holds goes in as the brain's own
- * words, after the messages before it and before its final reminder, sent exactly as written; the new version is
- * that text, a blank line, then the reply. The box starts with the conversation's thought template, the caret
- * where its {{thought}} was. ⌘ Enter sends (Enter is a new line: the text is usually a code fence).
+ * **Fresh take** (T15, T17): what the box holds is the Muse's note, sent exactly as written. It goes into the ledger
+ * right before the reply (a message of its own: every helper reads it, the player sees it folded), and the brain
+ * answers it, never seeing the version on screen; the new version is the reply alone. `target` says what happens to
+ * the note (a new one, the Muse's own idea left above it, a new version of the note you wrote above, and whether the
+ * Muse is added). The box starts with the conversation's thought template, the caret where its {{thought}} was; when
+ * a note you wrote is right above, it can start from that note instead. ⌘ Enter sends (Enter is a new line: the text
+ * is usually a code fence). No Fresh take for the Muse's own message, nor while the Muse is an image brain.
  *
  * Escape closes. "Payload" shows the exact request first (prompt.preview with regenerate), for either tab.
  */
@@ -40,7 +43,7 @@ export function SteerBox({
   pending,
   image,
   brainName,
-  reminder,
+  target,
 }: {
   mode: RegenerateMode;
   onMode(m: RegenerateMode): void;
@@ -62,8 +65,8 @@ export function SteerBox({
   /** An image brain's message: a new prompt, then a new image. */
   image?: boolean;
   brainName: string;
-  /** The brain has a final reminder (on, with text): it comes after the thought. Without one, the request ends on it. */
-  reminder: boolean;
+  /** T17: what a fresh take does with the Muse's note (freshTakeTarget). */
+  target: FreshTakeTarget;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const fresh = mode === "fresh";
@@ -100,10 +103,31 @@ export function SteerBox({
 
   const steered = steer.trim() !== "";
   const blank = fresh && !thought.trim();
+  /** The Muse's own message, or a Muse that can't write (an image brain): no fresh take here. */
+  const noFresh = target.kind === "own" ? `This is ${target.muse}'s own note: edit it, or re-roll it.` : null;
+  const blocked = fresh && target.kind === "image";
   const tabs: { id: RegenerateMode; label: string; title: string }[] = [
     { id: "revise", label: "Revise", title: "Keep the version on screen and give a direction, or re-roll" },
-    { id: "fresh", label: "Fresh take", title: `Plant a thought as ${brainName}'s own words; it never sees the version on screen` },
+    {
+      id: "fresh",
+      label: "Fresh take",
+      title: noFresh ?? `Give ${brainName} an idea, as a hidden note from the Muse right before the reply; ${brainName} never sees the version on screen`,
+    },
   ];
+  /** Start from the note you wrote above (a second fresh take on the same idea), rather than the template. */
+  const startFrom = fresh && target.kind === "version" && thought !== target.text ? target.text : null;
+  const situation =
+    target.kind === "new"
+      ? target.muse
+        ? null
+        : "The first fresh take adds a brain called Muse, who writes these notes (in Settings → Brains, like any brain)."
+      : target.kind === "after"
+        ? `${target.muse}'s own idea above stays as it is; yours goes in after it, as a note of its own.`
+        : target.kind === "version"
+          ? thought === target.text
+            ? `${target.muse}'s note above already says this, so it stays as it is: only the reply is written again.`
+            : `${target.muse}'s note above gets this as version ${target.version} (its own ‹ › pager), rather than a second note.`
+          : null;
 
   return (
     <div className="mt-2 rounded-xl border border-line-strong bg-raised/70 p-3 shadow-lg shadow-black/20">
@@ -121,9 +145,12 @@ export function SteerBox({
               role="tab"
               aria-selected={mode === t.id}
               title={t.title}
-              disabled={pending}
+              disabled={pending || (t.id === "fresh" && !!noFresh)}
               onClick={() => onMode(t.id)}
-              className={cx("h-6 rounded-md px-2 text-[12px] transition-colors", mode === t.id ? "bg-hover text-fg" : "text-faint hover:text-muted")}
+              className={cx(
+                "h-6 rounded-md px-2 text-[12px] transition-colors disabled:cursor-not-allowed",
+                mode === t.id ? "bg-hover text-fg" : "text-faint enabled:hover:text-muted disabled:opacity-45",
+              )}
             >
               {t.label}
             </button>
@@ -137,8 +164,8 @@ export function SteerBox({
         rows={1}
         value={value}
         name={fresh ? "thought" : "steer"}
-        aria-label={fresh ? `Thought, as ${brainName}'s own words` : "Steer (optional)"}
-        placeholder={fresh ? `${brainName}'s own thought, sent word for word` : image ? "Steer it, optionally: “Night now, rain on the windows.”" : "Steer it, optionally: “Say it's blue.”"}
+        aria-label={fresh ? `The Muse's note for ${brainName}` : "Steer (optional)"}
+        placeholder={fresh ? `The Muse's note for ${brainName}: your idea, sent word for word` : image ? "Steer it, optionally: “Night now, rain on the windows.”" : "Steer it, optionally: “Say it's blue.”"}
         disabled={pending}
         spellCheck
         onChange={(e) => (fresh ? onThought : onSteer)(e.target.value)}
@@ -153,7 +180,7 @@ export function SteerBox({
           const send = fresh ? e.metaKey || e.ctrlKey : !e.shiftKey && !e.altKey;
           if (send) {
             e.preventDefault();
-            if (!blank) onSubmit();
+            if (!blank && !blocked) onSubmit();
           }
         }}
         className={cx(
@@ -164,9 +191,8 @@ export function SteerBox({
       <p className="mt-1.5 text-[12px] leading-5 text-faint">
         {fresh ? (
           <>
-            {brainName} never sees the version on screen: this goes in as its own words, word for word, after the messages before it
-            {reminder ? ", then its final reminder" : ", and it carries on from them (it has no final reminder)"}.{" "}
-            {image ? "The new prompt is saved alone; this is kept beside it." : "The new version is this, then the reply: edit it like any message."}
+            This goes in as a note from the Muse, word for word, right before the reply: every helper reads it, the player doesn't (it's folded).{" "}
+            {brainName} answers it without seeing the version on screen{image ? ", with a new prompt and then a new image" : "; the new version is the reply alone"}.
           </>
         ) : steered ? (
           "Sent once, last, with this request only. Later requests see just the version it writes."
@@ -179,6 +205,31 @@ export function SteerBox({
           {fresh ? <Kbd>⌘ Enter</Kbd> : <Kbd>Enter</Kbd>} regenerates · <Kbd>Esc</Kbd> closes
         </span>
       </p>
+      {fresh && (startFrom !== null || situation || blocked) && (
+        <p className={cx("mt-1.5 flex flex-wrap items-baseline gap-x-2 text-[12px] leading-5", blocked ? "text-amber-200/85" : "text-muted")}>
+          {blocked ? (
+            <span>
+              {target.muse} is an image brain, so it can't write the note. Rename it in Settings → Brains, and the next fresh take adds a text Muse.
+            </span>
+          ) : (
+            situation && <span>{situation}</span>
+          )}
+          {startFrom !== null && (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                caret.current = { text: startFrom, at: startFrom.length };
+                onThought(startFrom);
+              }}
+              title="Put the note above in the box, to change its idea rather than start again"
+              className="rounded text-muted underline decoration-line-strong underline-offset-4 hover:text-fg"
+            >
+              Start from the note above
+            </button>
+          )}
+        </p>
+      )}
       {error && (
         <Notice tone="error" className="mt-2">
           {error}
@@ -196,8 +247,8 @@ export function SteerBox({
           variant="primary"
           className="h-7 px-3 text-[12.5px]"
           loading={pending}
-          disabled={blank}
-          title={blank ? "Write the thought first: it is sent as the brain's own words" : undefined}
+          disabled={blank || blocked}
+          title={blank ? `Write the idea first: it is the Muse's note ${brainName} answers` : undefined}
           onClick={onSubmit}
         >
           {!pending && (fresh ? <Sparkles aria-hidden className="size-3.5" /> : <RefreshCw aria-hidden className="size-3.5" />)}

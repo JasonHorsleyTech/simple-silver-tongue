@@ -1,8 +1,8 @@
-import { Braces, BrainCircuit, LocateFixed, Plus, Star, Trash2 } from "lucide-react";
+import { Braces, BrainCircuit, LocateFixed, Plus, Sparkles, Star, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import { BRAIN_COLORS, type Brain, type BrainFields, type LedgerMessage, type ModelInfo } from "../../api/types.ts";
+import { BRAIN_COLORS, isMuse, MUSE_NAME, type Brain, type BrainFields, type LedgerMessage, type ModelInfo } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { SavedLine } from "../../components/SavedLine.tsx";
@@ -69,6 +69,8 @@ export function BrainEditor({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  /** T17: the last rename made this brain the Muse, or made it stop being the Muse (said under the name). */
+  const [museChange, setMuseChange] = useState<"left" | "became" | null>(null);
 
   /** brain.update. Text fields (no `what`) show their own error inline; clicks show it at the bottom. */
   async function update(patch: BrainFields, what?: string) {
@@ -115,6 +117,19 @@ export function BrainEditor({
 
   return (
     <div className="space-y-6">
+      {isMuse(brain) && (
+        <div className="rounded-lg border border-line bg-canvas/40 px-3 py-2.5 text-[12.5px] leading-5 text-faint">
+          <p className="flex items-center gap-1.5 font-medium text-muted">
+            <Sparkles aria-hidden className="size-3.5 shrink-0" style={{ color: brain.color }} /> The Muse
+          </p>
+          <p className="mt-1">
+            {brain.kind === "image"
+              ? `A fresh take's note is written by the brain called ${MUSE_NAME}, and this one is an image brain, so fresh takes are refused until you rename it (the next one then adds a text ${MUSE_NAME}).`
+              : `Regenerate's Fresh take puts your idea in the ledger as ${brain.name}'s note, right before the reply: every brain reads it, the player sees it folded. Its prompt and reminder below are used only when you ask ${brain.name} for a turn (its ✦ button in the composer): it then writes an idea of its own.`}{" "}
+            It is the Muse by its name: renamed, it is just another brain.
+          </p>
+        </div>
+      )}
       {madeFrom && (
         <div className="rounded-lg border border-line bg-canvas/40 px-3 py-2.5 text-[12.5px] leading-5 text-faint">
           <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
@@ -154,9 +169,21 @@ export function BrainEditor({
         }
         saved={brain.name}
         validate={(v) => (v.trim() ? null : "A brain needs a name.")}
+        warn={(v) => museRename(brain, v, brains)}
         inputProps={{ maxLength: 60 }}
-        onSave={(name) => update({ name: name.trim() })}
+        onSave={async (name) => {
+          const was = isMuse(brain);
+          await update({ name: name.trim() });
+          setMuseChange(was === isMuse({ name }) ? null : was ? "left" : "became");
+        }}
       />
+      {museChange && (
+        <p role="status" className="-mt-4 text-[12.5px] leading-5 text-muted">
+          {museChange === "left"
+            ? `${brain.name} is no longer the Muse: its notes stay, framed with its new name, and the next fresh take adds a new Muse.`
+            : `${brain.name} is the Muse now: the next fresh take's note is written by it.`}
+        </p>
+      )}
 
       <div>
         <div className="mb-2 flex items-center gap-2">
@@ -382,4 +409,21 @@ function NativeColor({ value, onPick, disabled }: { value: string; onPick(c: str
       className="absolute inset-0 cursor-pointer opacity-0"
     />
   );
+}
+
+/**
+ * T17: what renaming this brain to `name` does to the Muse, said before you save it: the Muse is the brain called
+ * Muse, so a rename can end it (the next fresh take adds a new one) or make another brain it.
+ */
+function museRename(brain: Brain, name: string, brains: Brain[]): string | null {
+  const was = isMuse(brain);
+  const will = isMuse({ name });
+  if (was && !will) return `Renamed, ${brain.name} is no longer the Muse: its notes stay (framed with the new name), and the next fresh take adds a new Muse.`;
+  if (!was && will) {
+    if (brains.some((b) => b.id !== brain.id && isMuse(b))) return null; // the server refuses a second Muse, and says why
+    return brain.kind === "image"
+      ? `Called ${MUSE_NAME}, an image brain stops every fresh take (its note must be text): pick another name.`
+      : `Called ${MUSE_NAME}, this brain becomes the Muse: the next fresh take's note is written by it, and every brain reads its lines as the Muse's.`;
+  }
+  return null;
 }

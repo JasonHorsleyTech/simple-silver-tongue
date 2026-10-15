@@ -1,7 +1,9 @@
 import { ArrowDown, ArrowUp, ImageIcon, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Brain, Conversation, PinRole } from "../../api/types.ts";
+import { isMuse, type Brain, type Conversation, type PinRole } from "../../api/types.ts";
 import { madeFromIndex, pinsByMessage } from "../../lib/cast.ts";
+import { cx } from "../../lib/cx.ts";
+import { freshTakeTarget, thoughtBesideImage } from "../../lib/thought.ts";
 import { GalleryContext, type GalleryItem } from "./ImageCard.tsx";
 import { LiveReply } from "./LiveReply.tsx";
 import { MessageItem } from "./MessageItem.tsx";
@@ -145,6 +147,12 @@ export function Scrollback({
   const atBottom = live && !inSlot ? live : null;
   const waiting = pendingPlayer !== null || pendingRoll;
   const canRegenerate = !!last && last.author.type === "brain" && !atBottom && !waiting;
+  /** T17: what a fresh take on the last message does with the Muse's note (its Regenerate box says so). */
+  const freshTarget = useMemo(() => (last ? freshTakeTarget(conv, last.id) : undefined), [conv, last]);
+  const authorOf = (i: number) => {
+    const a = conv.messages[i]?.author;
+    return a?.type === "brain" ? brains.get(a.brainId) : undefined;
+  };
 
   return (
     <div className="relative min-h-0 flex-1">
@@ -155,11 +163,17 @@ export function Scrollback({
           ) : (
             <GalleryContext value={gallery}>
                 <ol className="space-y-7">
-                  {conv.messages.map((m) => (
-                    <li key={m.id} id={m.id}>
+                  {conv.messages.map((m, i) => {
+                    const brain = authorOf(i);
+                    // T17: a Muse's note sits close above the reply it is for (the next message, a brain's).
+                    const muse = !!brain && isMuse(brain);
+                    const next = muse ? authorOf(i + 1) : undefined;
+                    const v = m.versions[m.activeVersion];
+                    return (
+                    <li key={m.id} id={m.id} className={cx(muse && next && !isMuse(next) && "!mb-1")}>
                       <MessageItem
                         message={m}
-                        brain={m.author.type === "brain" ? brains.get(m.author.brainId) : undefined}
+                        brain={brain}
                         isLast={m === last && !atBottom && !waiting}
                         canRegenerate={m === last && canRegenerate}
                         live={m.id === inSlot ? live! : undefined}
@@ -168,6 +182,9 @@ export function Scrollback({
                         onPreviewRegenerate={onPreviewRegenerate}
                         onDismissLive={chat.dismissLive}
                         thoughtTemplate={m === last ? conv.templates.thought : undefined}
+                        freshTarget={m === last ? freshTarget : undefined}
+                        noteFor={muse ? (next && !isMuse(next) ? next : null) : undefined}
+                        thoughtBeside={m.kind === "image" && v?.thought !== undefined && thoughtBesideImage(v, conv.messages[i - 1], conv.brains)}
                         brains={conv.brains}
                         made={made.get(m.id) ?? null}
                         pins={pins.get(m.id) ?? NO_PINS}
@@ -175,7 +192,8 @@ export function Scrollback({
                         onOpenBrain={onOpenBrain}
                       />
                     </li>
-                  ))}
+                    );
+                  })}
                   {pendingPlayer !== null && (
                     <li>
                       <PlayerBubble pending>

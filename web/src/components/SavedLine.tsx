@@ -18,6 +18,7 @@ export function SavedLine({
   onSave,
   mono,
   validate,
+  warn,
   placeholder,
   inputProps,
   className,
@@ -30,6 +31,8 @@ export function SavedLine({
   mono?: boolean;
   /** A reason the value can't be saved, or null. */
   validate?(value: string): string | null;
+  /** What saving this value would also do, said under the field while it is unsaved (it can still be saved). */
+  warn?(value: string): ReactNode;
   placeholder?: string;
   inputProps?: Omit<ComponentProps<"input">, "id" | "value" | "onChange" | "onKeyDown" | "placeholder">;
   className?: string;
@@ -134,6 +137,7 @@ export function SavedLine({
         )}
         {!label && justSaved && !dirty && <Check aria-label="Saved" className="size-4 shrink-0 text-emerald-300/90" />}
       </div>
+      {dirty && !error && warn?.(draft) ? <p className="mt-1.5 text-[12.5px] leading-5 text-amber-200/85">{warn(draft)}</p> : null}
       {error && (
         <Notice tone="error" className="mt-2">
           {error}

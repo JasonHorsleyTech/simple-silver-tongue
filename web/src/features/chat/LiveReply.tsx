@@ -1,5 +1,5 @@
 import { RotateCw, X } from "lucide-react";
-import type { Brain } from "../../api/types.ts";
+import { isMuse, type Brain } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { expectedAspect, LiveImage } from "./ImageCard.tsx";
 import { BrainMessageFrame, SteerNote } from "./MessageFrame.tsx";
@@ -14,7 +14,10 @@ import type { LiveReply as Live } from "./useChat.ts";
  * opened once the reply is saved. Failed: the partial text (not saved), the server's error, Retry and Dismiss.
  *
  * A regenerate renders in the regenerated message's own slot (`slot`): its header says which version is
- * being written and with what steer, and a failure leaves the message's saved versions as they were.
+ * being written and with what steer (or "fresh take": T17, the Muse's note it answers is already in its place
+ * above), and a failure leaves the message's saved versions as they were.
+ *
+ * The Muse's own turn (T17) is written in the Muse's note frame, as it will be saved.
  *
  * An image brain's reply (`live.image`) is its prompt: the frame the picture will fill, and the prompt
  * streaming in under it as plain text. It ends when the prompt is saved; the saved message then shows the
@@ -54,6 +57,7 @@ export function LiveReply({
         name={brain?.name ?? live.brainName ?? "Reply"}
         color={brain?.color ?? "#9aa3b0"}
         status={status}
+        muse={brain && isMuse(brain) ? { for: null } : undefined}
         origin={
           slot && live.thought !== null ? (
             <SteerNote freshTake image={live.image} />
@@ -65,15 +69,7 @@ export function LiveReply({
         footer={failed ? null : FOOTER_SPACE}
       >
         {live.image ? (
-          <>
-            {/* T15: an image fresh take's thought sits above the picture, as it will once saved. */}
-            {live.thought !== null && (
-              <div className="mb-3">
-                <MessageText text={live.thought} color={brain?.color} />
-              </div>
-            )}
-            <LiveImage prompt={live.content} aspect={expectedAspect(brain)} color={brain?.color} failed={failed} />
-          </>
+          <LiveImage prompt={live.content} aspect={expectedAspect(brain)} color={brain?.color} failed={failed} />
         ) : live.content ? (
           <div className={failed ? "opacity-55" : "ss-caret"}>
             <MessageText text={live.content} writing={!failed} empty={<TypingDots />} color={brain?.color} />

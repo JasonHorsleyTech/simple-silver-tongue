@@ -1,6 +1,6 @@
-import { ArrowUp, Check, ImageIcon, PenLine, Plus, Search, Square, X } from "lucide-react";
+import { ArrowUp, Check, ImageIcon, PenLine, Plus, Search, Sparkles, Square, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject, type SyntheticEvent } from "react";
-import { STOP_BILL_NOTE, type Brain } from "../../api/types.ts";
+import { isMuse, STOP_BILL_NOTE, type Brain } from "../../api/types.ts";
 import { D20Icon } from "../../components/D20.tsx";
 import { Spinner } from "../../components/Spinner.tsx";
 import { cx } from "../../lib/cx.ts";
@@ -28,6 +28,8 @@ export const AS_PLAYER = "player";
  * as it stands (also how a failed reply is retried); the server explains when there is nothing to answer.
  * An image brain's chip (with a small picture icon) asks it for a picture: your text, if any, is its note.
  * Once its prompt is saved the composer is free again, while the image is painted in the scrollback.
+ * The Muse's chip (T17, a sparkle) asks it for an idea of its own: a hidden note for the next reply, which every
+ * brain reads (a fresh take, from Regenerate, is the other way to give it words: yours).
  *
  * "Write as…" (the pen) switches to adding words without generating anything: in a brain's mouth (the GM's
  * opening scene) or as your own message. The brain sees them as its own past reply; everyone else, framed
@@ -102,6 +104,8 @@ export function Composer({
   const writing = writeAs !== null && (writeAs === AS_PLAYER || author !== null);
   /** Writing as an image brain: the words are a prompt, and they are painted. */
   const paints = author?.kind === "image";
+  /** T17: writing as the Muse: the words are a note every brain reads (an idea for the next reply). */
+  const noting = !!author && !paints && isMuse(author);
   const empty = value.trim() === "";
   const several = brains.length > 1;
   /** The die is armed and this is a send (writing as someone adds words, with no roll). */
@@ -271,12 +275,14 @@ export function Composer({
               title={
                 paints && author
                   ? `Your words become ${author.name}'s image prompt, word for word: the image model paints them, and every other brain sees them framed as ${author.name}'s prompt. No brain is asked to write anything.`
-                  : author
+                  : noting && author
+                    ? `A note from ${author.name}, in your words: every brain reads it framed as ${author.name}'s, and the next reply carries it out. In a \`\`\`hidden block it stays folded for you. Nothing is generated.`
+                    : author
                     ? `${author.name} sees these words as its own past reply; every other brain sees them framed with its name. Nothing is generated.`
                     : "Added as your own message. No brain is asked to reply."
               }
             >
-              {paints ? "· your words are its prompt, painted as written" : "· nothing is generated"}
+              {paints ? "· your words are its prompt, painted as written" : noting ? "· a note every brain reads; nothing is generated" : "· nothing is generated"}
             </span>
             <button
               type="button"
@@ -342,7 +348,9 @@ export function Composer({
             writing
               ? paints
                 ? `${author!.name}'s image prompt… (what the picture shows, in detail)`
-                : author
+                : noting
+                  ? `${author!.name}'s note… (an idea for the next reply; in a \`\`\`hidden block it stays folded)`
+                  : author
                   ? `${author.name}'s words… (the opening scene, a line you'd rather write yourself)`
                   : "Your message, added without asking anyone to reply…"
               : rolling
@@ -498,6 +506,9 @@ const LONG_SEND_MAX = 8;
 /** The chip's title: what a click does. Shared by the row and the "+N" list. */
 function chipTitle(b: Brain, empty: boolean, roll: boolean, key = ""): string {
   const image = b.kind === "image";
+  if (isMuse(b) && !image && !roll) {
+    return `${empty ? `Ask ${b.name} for an idea` : `Send to ${b.name}`}: it answers with a hidden note, an idea for the next reply, which every brain reads${key}`;
+  }
   return roll
     ? `${empty ? "Roll a d20 and send it" : "Send your words and a d20 roll"} to ${b.name}${image ? ": it paints a picture, with the roll as its note" : ""}${key}`
     : image
@@ -522,11 +533,11 @@ function ChipMeasurer({ measurer, brains, labels, roll }: { measurer: RefObject<
           <span key={b.id} className="contents">
             <span data-measure="full" className={cx(base, "gap-1.5 px-2", roll ? "max-w-[13rem]" : "max-w-[11rem]")}>
               {roll && <D20Icon className="size-3.5 shrink-0" strokeWidth={1.9} />}
-              {b.kind === "image" ? <ImageIcon className="size-3.5 shrink-0" /> : roll ? null : <span className="size-1.5 shrink-0" />}
+              {b.kind === "image" || isMuse(b) ? <ImageIcon className="size-3.5 shrink-0" /> : roll ? null : <span className="size-1.5 shrink-0" />}
               <span className="truncate">{b.name}</span>
             </span>
             <span data-measure="initials" className={cx(base, "gap-1 px-1.5")}>
-              {b.kind === "image" && <ImageIcon className="size-3.5 shrink-0" />}
+              {(b.kind === "image" || isMuse(b)) && <ImageIcon className="size-3.5 shrink-0" />}
               <span className="tracking-[0.03em]">{labels[i]}</span>
             </span>
           </span>
@@ -648,6 +659,7 @@ function MoreBrains({
               >
                 <BrainBadge name={b.name} color={b.color} className="min-w-0" />
                 {b.kind === "image" && <ImageIcon aria-label="(paints)" className="size-3.5 shrink-0 text-faint" />}
+                {isMuse(b) && b.kind === "text" && <Sparkles aria-label="(writes ideas)" className="size-3.5 shrink-0 text-faint" />}
                 {fresh.has(b.id) && <span className="ml-auto shrink-0 text-[11px] text-faint">new</span>}
               </button>
             ))}
@@ -692,14 +704,21 @@ function BrainChip({
   onClick(): void;
 }) {
   const image = b.kind === "image";
+  /** T17: the Muse writes ideas (hidden notes), not lines of the story: a sparkle where a speaker has its dot. */
+  const muse = !image && isMuse(b);
   const key = index < 9 ? ` (⌥${index + 1})` : "";
   const title = chipTitle(b, empty, roll, key);
   const ink = `color-mix(in oklab, ${b.color} 55%, white)`;
+  const icon = image ? (
+    <ImageIcon aria-hidden className="size-3.5 shrink-0" style={{ color: b.color }} />
+  ) : muse ? (
+    <Sparkles aria-hidden className="size-3.5 shrink-0" style={{ color: b.color }} />
+  ) : null;
   const whole = (
     <>
       {roll && <D20Icon className="size-3.5 shrink-0" strokeWidth={1.9} />}
-      {image ? (
-        <ImageIcon aria-hidden className="size-3.5 shrink-0" style={{ color: b.color }} />
+      {icon ? (
+        icon
       ) : roll ? null : (
         <span aria-hidden className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: b.color }} />
       )}
@@ -723,9 +742,13 @@ function BrainChip({
             ? empty
               ? `Ask ${b.name} for a picture`
               : `Send to ${b.name} for a picture`
-            : empty
-              ? `Ask ${b.name} to respond`
-              : `Send to ${b.name}`
+            : muse
+              ? empty
+                ? `Ask ${b.name} for an idea`
+                : `Send to ${b.name} for an idea`
+              : empty
+                ? `Ask ${b.name} to respond`
+                : `Send to ${b.name}`
       }
       className={cx(
         "relative inline-flex h-7 items-center rounded-md border text-[12.5px] font-medium transition-colors enabled:hover:brightness-125 disabled:cursor-not-allowed disabled:opacity-40",
@@ -742,7 +765,7 @@ function BrainChip({
     >
       {compact ? (
         <>
-          {image && <ImageIcon aria-hidden className="size-3.5 shrink-0" style={{ color: b.color }} />}
+          {icon}
           <span aria-hidden className="tracking-[0.03em]">
             {label}
           </span>
@@ -849,12 +872,19 @@ function WriteAsMenu({
               type="button"
               role="menuitemradio"
               aria-checked={current === b.id}
-              title={b.kind === "image" ? `Your words become ${b.name}'s image prompt, and are painted as written` : `${b.name} sees it as its own past reply`}
+              title={
+                b.kind === "image"
+                  ? `Your words become ${b.name}'s image prompt, and are painted as written`
+                  : isMuse(b)
+                    ? `A note from ${b.name}, in your words: every brain reads it, and the next reply carries it out. Put it in a \`\`\`hidden block to keep it folded (Regenerate's Fresh take writes one for you).`
+                    : `${b.name} sees it as its own past reply`
+              }
               onClick={() => onPick(b.id)}
               className={item}
             >
               <BrainBadge name={b.name} color={b.color} className="min-w-0" />
               {b.kind === "image" && <span className="shrink-0 text-[11.5px] text-faint">image prompt</span>}
+              {b.kind === "text" && isMuse(b) && <span className="shrink-0 text-[11.5px] text-faint">a note</span>}
               {current === b.id && <Check aria-hidden className="ml-auto size-3.5 text-muted" />}
             </button>
           ))}

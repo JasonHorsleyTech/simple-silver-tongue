@@ -45,8 +45,8 @@ export type LiveReply = {
   /** A regenerate's steer, trimmed; null for a plain re-roll or a turn. Display only. */
   steer: string | null;
   /**
-   * T15: a fresh take's thought, as sent; null otherwise. The server streams it as the reply's first delta (the
-   * thought and a blank line), so `content` already shows it, folded, as it will be saved.
+   * A fresh take's thought (T15), as sent; null otherwise. Display only: since T17 it is the Muse's note, saved in the
+   * ledger right before the message (`muse_note`, before `start`), and `content` is the reply alone.
    */
   thought: string | null;
   content: string;
@@ -72,7 +72,7 @@ export type Unsent = { text: string; roll: boolean };
 /** A line above the composer: an up-front send failure (error), or what a stop did and didn't save (info). */
 export type ChatNotice = { tone: "error" | "info"; message: string; note?: string };
 
-/** How a regenerate is asked: a steer (Revise; blank = a plain re-roll), or a fresh take's thought (T15), sent as typed. */
+/** How a regenerate is asked: a steer (Revise; blank = a plain re-roll), or a fresh take's thought (T15: the Muse's note, T17), sent as typed. */
 export type RegenerateAsk = { steer?: string; thought?: string };
 
 /** Ledger commands resolve to null when done, or to a message to show where the action was taken. */
@@ -365,8 +365,10 @@ export function useChat(id: string): Chat {
           addMadeBrain(ev.brain);
           break;
         case "muse_note":
-          // T17: a fresh take's note, saved right before the message being regenerated (and the Muse, if just added).
+          // T17: a fresh take's note, saved right before the message being regenerated (and the Muse, if just added:
+          // its button glows once, as a made brain's does).
           flush();
+          if (ev.brainCreated) setFresh((f) => new Set(f).add(ev.brain.id));
           setConv((c) => {
             if (!c) return c;
             const known = c.brains.some((b) => b.id === ev.brain.id);

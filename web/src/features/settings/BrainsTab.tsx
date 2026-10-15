@@ -2,7 +2,7 @@ import { Braces, BrainCircuit, ChevronDown, Plus, Search, X } from "lucide-react
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import { DEFAULT_SHAPE, MAKES_NUMBER, type Brain, type BrainImport, type Conversation, type ImageShape, type ModelInfo } from "../../api/types.ts";
+import { DEFAULT_SHAPE, isMuse, MAKES_NUMBER, type Brain, type BrainImport, type Conversation, type ImageShape, type ModelInfo } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { Segmented } from "../../components/Segmented.tsx";
@@ -263,6 +263,8 @@ function BrainCard({
   // T16 first: what a dozen look-alike cards need told apart (which makes brains, which has pins), before what they share.
   const tags = [
     isDefault && "default",
+    // T17: the brain called Muse writes the fresh takes' notes (an image brain called Muse stops them: its editor says why).
+    isMuse(brain) && (brain.kind === "text" ? "writes fresh takes' notes" : "can't write fresh takes' notes"),
     brain.makes && `makes ${brain.makes.name.replace(MAKES_NUMBER, "N")}${brain.makes.enabled ? "" : " (off)"}`,
     // A made brain always has the message it was made from pinned: only more than that is news.
     extraPins > 0 && `${extraPins} pinned${brain.madeFrom ? " more" : ""}`,
@@ -296,7 +298,7 @@ function BrainCard({
             <BrainBadge name={brain.name} color={brain.color} className="max-w-[60%] shrink-0" />
             <span className="flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap">
               {tags.map((t) => (
-                <span key={t} className={cx("shrink-0 text-[11.5px]", t === "default" ? "text-muted" : t === "safe mode off" || t === "no stop sequence" ? "text-amber-200/75" : "text-faint")}>
+                <span key={t} className={cx("shrink-0 text-[11.5px]", t === "default" ? "text-muted" : t === "safe mode off" || t === "no stop sequence" || t === "can't write fresh takes' notes" ? "text-amber-200/75" : "text-faint")}>
                   {t}
                 </span>
               ))}

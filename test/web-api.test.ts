@@ -10,7 +10,9 @@ import { readNdjson } from "../web/src/api/ndjson.ts";
 import { forBrowser } from "../web/src/lib/format.ts";
 import { brainActivity, fitRow, madeFromIndex, makerOf, pinsByMessage } from "../web/src/lib/cast.ts";
 import { brainInitials } from "../web/src/lib/initials.ts";
-import { prefillThought } from "../web/src/lib/thought.ts";
+import { freshTakeTarget, mergedThought, prefillThought, thoughtBesideImage } from "../web/src/lib/thought.ts";
+import { newBrain, newConversation, newMuse } from "../src/conversations/defaults.ts";
+import { newMessage, planMuseNote } from "../src/conversations/turn.ts";
 import { rollLineIndex, rollView } from "../web/src/lib/rolls.ts";
 import { STOP_BILL_NOTE as SERVER_STOP_NOTE } from "../src/commands/chat.ts";
 import { BRAIN_COLORS as SERVER_COLORS, DEFAULT_TEMPLATES } from "../src/conversations/defaults.ts";
@@ -501,4 +503,83 @@ test("the Fresh take box starts with the thought template, the marker gone, the 
   assert.deepEqual(prefillThought("{{brain}}: {{thought}}", "{{thought}}"), { text: "{{thought}}: ", caret: 13 }, "a name is never taken for the marker");
   assert.deepEqual(prefillThought("a {{thought}} b {{thought}}"), { text: "a  b ", caret: 2 }, "no marker is left to be sent");
   assert.deepEqual(prefillThought("no marker"), { text: "no marker", caret: 9 });
+});
+
+test("the Fresh take box says what the server will do with the Muse's note (T17 frontend: freshTakeTarget agrees with planMuseNote)", () => {
+  const at = "2026-10-15T12:00:00.000Z";
+  const text = (content: string, source: "authored" | "generated" = "generated") => ({ content, source, createdAt: at });
+  const scene = (muse: "none" | "text" | "image") => {
+    const conv = newConversation({ title: "t", systemPrompt: "You help." });
+    const gm = conv.brains[0]!;
+    if (muse === "text") conv.brains.push(newMuse(conv));
+    if (muse === "image") conv.brains.push(newBrain({ name: "Muse", systemPrompt: "paint", isDefault: false, kind: "image" }));
+    return { conv, gm, muse: conv.brains[1] };
+  };
+  const server = (conv: Conversation, messageId: string) => {
+    const m = conv.messages.find((x) => x.id === messageId)!;
+    const brain = conv.brains.find((b) => m.author.type === "brain" && b.id === m.author.brainId)!;
+    try {
+      const { note } = planMuseNote(conv, m, brain, "An idea.");
+      return note.isNew ? (note.museCreated ? "new, adds a Muse" : "new") : note.same ? "same" : `version ${note.version + 1}`;
+    } catch (err) {
+      return `refused: ${(err as { code: string }).code}`;
+    }
+  };
+  const browser = (conv: Conversation, messageId: string, typed = "An idea.") => {
+    const t = freshTakeTarget(conv, messageId);
+    if (t.kind === "new") return t.muse ? "new" : "new, adds a Muse";
+    if (t.kind === "after") return "new";
+    if (t.kind === "version") return t.text === typed ? "same" : `version ${t.version}`;
+    return t.kind === "own" ? "refused: bad_request" : "refused: bad_brain";
+  };
+  const check = (label: string, conv: Conversation, messageId: string, want: string) => {
+    assert.equal(server(conv, messageId), want, `${label}: the server`);
+    assert.equal(browser(conv, messageId), want, `${label}: the browser`);
+  };
+
+  { // No Muse yet: the first fresh take adds one.
+    const { conv, gm } = scene("none");
+    const reply = newMessage({ type: "brain", brainId: gm.id }, "text", text("Hello."));
+    conv.messages.push(newMessage({ type: "player" }, "text", text("hi", "authored")), reply);
+    check("no Muse", conv, reply.id, "new, adds a Muse");
+  }
+  { // A note you wrote, right before: a new version (or the same note, for the same words).
+    const { conv, gm, muse } = scene("text");
+    const note = newMessage({ type: "brain", brainId: muse!.id }, "text", text("Old idea.", "authored"));
+    const reply = newMessage({ type: "brain", brainId: gm.id }, "text", text("Hello."));
+    conv.messages.push(newMessage({ type: "player" }, "text", text("hi", "authored")), note, reply);
+    check("a note you wrote", conv, reply.id, "version 2");
+    note.versions[0]!.content = "An idea.";
+    check("the same words", conv, reply.id, "same");
+  }
+  { // The Muse's own idea, right before: it stays, and the note goes in after it (T17 QA-1).
+    const { conv, gm, muse } = scene("text");
+    const own = newMessage({ type: "brain", brainId: muse!.id }, "text", text("Its own idea."));
+    const reply = newMessage({ type: "brain", brainId: gm.id }, "text", text("Hello."));
+    conv.messages.push(own, reply);
+    check("the Muse's own idea", conv, reply.id, "new");
+    check("the Muse's own message", conv, own.id, "refused: bad_request");
+  }
+  { // An image brain called Muse: refused (rename it).
+    const { conv, gm } = scene("image");
+    const reply = newMessage({ type: "brain", brainId: gm.id }, "text", text("Hello."));
+    conv.messages.push(newMessage({ type: "player" }, "text", text("hi", "authored")), reply);
+    check("an image Muse", conv, reply.id, "refused: bad_brain");
+  }
+});
+
+test("an image fresh take's idea shows above its picture only when no note above has it, and T15 text versions are told apart (T17 frontend)", () => {
+  const at = "2026-10-15T12:00:00.000Z";
+  const conv = newConversation({ title: "t", systemPrompt: "You help." });
+  const muse = newMuse(conv);
+  const idea = "```hidden\nSix small boots.\n```";
+  const note = newMessage({ type: "brain", brainId: muse.id }, "text", { content: idea, source: "authored", createdAt: at });
+  const player = newMessage({ type: "player" }, "text", { content: "hi", source: "authored", createdAt: at });
+  assert.equal(thoughtBesideImage({ thought: idea }, note, [...conv.brains, muse]), false, "the note right above has it");
+  note.versions[0]!.content = "edited since";
+  assert.equal(thoughtBesideImage({ thought: idea }, note, [...conv.brains, muse]), false, "still the Muse's note, edited");
+  assert.equal(thoughtBesideImage({ thought: idea }, player, [...conv.brains, muse]), true, "a T15 version, or its note deleted");
+  assert.equal(thoughtBesideImage({}, player, conv.brains), false, "no fresh take");
+  assert.equal(mergedThought({ thought: idea, content: `${idea}\n\nThe reply.` }), true, "T15: saved merged");
+  assert.equal(mergedThought({ thought: idea, content: "The reply." }), false, "T17: the reply alone");
 });

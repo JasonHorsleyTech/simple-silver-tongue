@@ -1,8 +1,8 @@
-import { Check, Copy, Pin, RotateCw } from "lucide-react";
+import { Check, Copy, Pin, RotateCw, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import { PIN_AS_WORDS, ROLL_PREVIEW_NOTE, stopNote, type Brain, type ChatMessage, type PinRole, type Preview } from "../../api/types.ts";
+import { isAllHidden, PIN_AS_WORDS, ROLL_PREVIEW_NOTE, stopNote, type Brain, type ChatMessage, type PinRole, type Preview } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { D20Icon } from "../../components/D20.tsx";
 import { Dialog } from "../../components/Dialog.tsx";
@@ -15,7 +15,7 @@ import { BrainBadge } from "../chat/BrainBadge.tsx";
 
 /**
  * Which request to show: the next Send (with the unsent composer text, and a roll when the die is armed), or a
- * Regenerate with its steer, or (T15) a fresh take with its thought, exactly as the box holds it.
+ * Regenerate with its steer, or (T15) a fresh take with its thought (T17: the Muse's note), exactly as the box holds it.
  */
 export type PayloadRequest = { kind: "turn"; draft: string; roll?: boolean } | { kind: "regenerate"; messageId: string; steer: string; thought?: string };
 
@@ -85,6 +85,10 @@ export function PayloadDialog({
   const body = preview?.body;
   const { messages = [], ...params } = body ?? {};
   const rollAt = preview?.notes.includes(ROLL_PREVIEW_NOTE) ? rollLineIndex(messages, brain.finalReminder) : -1;
+  /** T17: a fresh take's request: where the Muse's note is in it (the last message that carries its text). */
+  const note = preview?.regenerate?.note;
+  const noteText = preview?.regenerate?.thought;
+  const noteAt = note && noteText !== undefined ? messages.findLastIndex((m) => typeof m.content === "string" && m.content.includes(noteText)) : -1;
 
   return (
     <Dialog
@@ -100,7 +104,7 @@ export function PayloadDialog({
             <code className="font-mono text-[11.5px] text-muted">POST /chat/completions</code>, exactly as Regenerate would make it
             {preview?.regenerate ? ` (version ${preview.regenerate.newVersion})` : ""}, minus the API key.{" "}
             {thought !== undefined
-              ? `A fresh take: the messages before this one, without it, then your thought as ${brain.name}'s own words, word for word${body?.messages.at(-1)?.role === "assistant" ? ", last" : ", then its final reminder"}.`
+              ? `A fresh take: the messages before this one, without it, ending on the Muse's note (framed like any helper's)${noteAt !== -1 && noteAt < messages.length - 1 ? ", then the final reminder" : ""}. ${brain.name} answers the note, which is saved when you send.`
               : steer
                 ? "The version on screen stays in, and your steer goes last. Only this one request carries the steer."
                 : "A plain re-roll: the messages before this one, without it."}
@@ -184,7 +188,19 @@ export function PayloadDialog({
           {preview.notes.map((n) => (
             // The stop note says what a visible setting does; the rest warn of something we can't see or that will fail.
             // T16: the pin and maker notes say what a visible setting does, too.
-            <Notice key={n} tone={(body.stop?.length && n === stopNote(body.stop)) || n === ROLL_PREVIEW_NOTE || isT16Note(n, preview.brainName) ? "info" : "warn"}>
+            // T17: a fresh take's note (the first) says what it does, unless the note isn't hidden: the player would read it.
+            <Notice
+              key={n}
+              tone={
+                (body.stop?.length && n === stopNote(body.stop)) ||
+                n === ROLL_PREVIEW_NOTE ||
+                isT16Note(n, preview.brainName) ||
+                (note && n === preview.notes[0] && noteText !== undefined && isAllHidden(noteText)) ||
+                (note && n.startsWith(`${note.muse} makes a brain`))
+                  ? "info"
+                  : "warn"
+              }
+            >
               {n}
             </Notice>
           ))}
@@ -214,7 +230,14 @@ export function PayloadDialog({
                 </h3>
                 <ol className="space-y-2">
                   {messages.map((m, i) => (
-                    <PayloadMessage key={i} index={i} message={m} rollLine={i === rollAt} pinned={preview.pinned?.find((p) => p.index === i)} />
+                    <PayloadMessage
+                      key={i}
+                      index={i}
+                      message={m}
+                      rollLine={i === rollAt}
+                      pinned={preview.pinned?.find((p) => p.index === i)}
+                      museNote={i === noteAt && note ? { muse: note.muse, isNew: note.isNew, version: note.version, same: note.same } : undefined}
+                    />
                   ))}
                 </ol>
               </section>
@@ -323,10 +346,13 @@ function PayloadMessage({
   message: m,
   rollLine,
   pinned,
+  museNote,
 }: {
   index: number;
   message: ChatMessage;
   rollLine?: boolean;
+  /** T17: the Muse's note a fresh take saves when you send (a new message, or a new version of the note there). */
+  museNote?: { muse: string; isNew: boolean; version: number; same: boolean } | undefined;
   pinned?: { messageId: string; as: PinRole } | undefined;
 }) {
   return (
@@ -338,6 +364,17 @@ function PayloadMessage({
         {pinned && (
           <span title={`Pinned: sent here, right after the setup, ${PIN_AS_WORDS[pinned.as]}, and not at its place in the story`} className="inline-flex min-w-0 items-center gap-1 text-[11px] text-muted">
             <Pin aria-hidden className="size-3 shrink-0" /> <span className="truncate">pinned {pinned.messageId}</span>
+          </span>
+        )}
+        {museNote && (
+          <span
+            title="Your idea: a message of its own in the ledger from now on, which every brain reads at this place. Edit or delete it like any message."
+            className="inline-flex min-w-0 items-center gap-1 text-[11px] text-muted"
+          >
+            <Sparkles aria-hidden className="size-3 shrink-0" />
+            <span className="truncate">
+              {museNote.muse}'s note, {museNote.isNew ? "saved when you send" : museNote.same ? `as it is (v${museNote.version})` : `its version ${museNote.version}, saved when you send`}
+            </span>
           </span>
         )}
         {rollLine && (

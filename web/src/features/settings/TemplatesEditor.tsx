@@ -15,7 +15,8 @@ const SPECS: Spec[] = [
   {
     key: "otherBrainText",
     label: "Another brain's messages",
-    description: "How a brain sees what another brain said: {{brain}} is its name, {{content}} its message. Used once there is more than one brain.",
+    description:
+      "How a brain sees what another brain said: {{brain}} is its name, {{content}} its message. Used once there is more than one brain. The Muse's notes are framed with it too (<!-- from: Muse -->), which is how every brain knows an idea is the Muse's.",
     needs: ["{{content}}"],
   },
   {
@@ -40,9 +41,9 @@ const SPECS: Spec[] = [
   },
   {
     key: "thought",
-    label: "Fresh take",
+    label: "Fresh take: the Muse's note",
     description:
-      "What Regenerate's Fresh take box starts with: a thought you plant as the brain's own words. {{thought}} is where the caret goes. Whatever the box holds when you send is sent word for word, so you can change it there each time.",
+      "What Regenerate's Fresh take box starts with: the Muse's note, which goes into the ledger right before the reply for every brain to read, and which the brain then answers. {{brain}} is the brain it is for, {{thought}} where the caret goes (and where ./ss --wrap puts your words). Whatever the box holds when you send is sent word for word, so you can change it there each time. Inside a ```hidden block it stays folded for the player.",
     needs: ["{{thought}}"],
     required: true,
   },
@@ -52,7 +53,8 @@ const SPECS: Spec[] = [
  * The templates (conversation.update --templates.*). They are plain text that reaches the models, so they are the
  * user's to edit; the payload view shows the effect. Placeholders are literal, single pass. Four frame messages
  * each time a request is built; the roll's (T09) is applied once, when the server rolls, and must have {{roll}}.
- * The thought's (T15) is the Fresh take box's starting text, and must have {{thought}}, where the caret goes.
+ * The thought's (T15) is the Fresh take box's starting text, the Muse's note (T17), and must have {{thought}}, where the
+ * caret goes; {{brain}} in it is the brain the note is for.
  */
 export function TemplatesEditor({ conv, onSaved }: { conv: Conversation; onSaved(c: Conversation): void }) {
   return (
@@ -70,13 +72,13 @@ export function TemplatesEditor({ conv, onSaved }: { conv: Conversation; onSaved
             const missing = s.needs.filter((n) => !v.includes(n));
             if (!missing.length) return null;
             return s.key === "thought"
-              ? `Needs ${missing.join(" and ")}: that is where the caret goes, and where ./ss puts your words (--wrap).`
+              ? `Needs ${missing.join(" and ")}: that is where the caret goes, and where ./ss puts your idea (--wrap).`
               : s.required
                 ? `Needs ${missing.join(" and ")}: that is where the number goes, so a roll's line can't be made without it.`
                 : `Without ${missing.join(" and ")}, the message itself isn't sent, only this text.`;
           }}
           validate={
-            s.required ? (v) => (s.needs.every((n) => v.includes(n)) ? null : `Needs ${s.needs.join(" and ")}, ${s.key === "thought" ? "where your thought goes" : "where the number goes"}.`) : undefined
+            s.required ? (v) => (s.needs.every((n) => v.includes(n)) ? null : `Needs ${s.needs.join(" and ")}, ${s.key === "thought" ? "where your idea goes" : "where the number goes"}.`) : undefined
           }
           onSave={async (value) => onSaved(await api.call("conversation.update", { id: conv.id, templates: { [s.key]: value } }))}
         />
