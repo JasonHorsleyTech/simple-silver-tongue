@@ -540,7 +540,7 @@ Data (a schema bump; old files load with no pins and no setting), prompt assembl
 
 ---
 
-## T17: Fresh take as a note from the Muse · `qa`
+## T17: Fresh take as a note from the Muse · `triage`
 
 Jason, 2026-10-15. T15's fresh take plants the thought as the brain's **own** `assistant` message. Live, Jason sees it fall apart: replies that start mid-word, or that talk about "the previous GM reply". The orchestrator probed it on the hooded-figure scene (74 calls, $0.37, scripts and raw replies in `/private/tmp/claude-502/-Users-jasonhorsley-code-simple-silver/658ab683-3735-4f11-931d-a0df4d516808/scratchpad/plan-probe/`, `probe3.mjs` being the winning shape):
 - **What breaks is a request that ends on the brain's own words** (a brain with no final reminder). The API treats that as a prefill, whatever the label or the message split: DeepSeek started `"s first, then the hooded figure…"`, and with a stronger system sentence ("you are sometimes asked twice") it went 0 in 3 (a reply in Chinese, a React app, a visible `<plan>`). Mistral came back empty, GLM leaked `</think>`, Qwen ran away. A `plan` label and a "plans" system sentence did no better than today's ```` ```hidden ````, even with the reminder after it.
