@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, ImageIcon, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Conversation } from "../../api/types.ts";
+import type { Brain, Conversation, PinRole } from "../../api/types.ts";
+import { madeFromIndex, pinsByMessage } from "../../lib/cast.ts";
 import { GalleryContext, type GalleryItem } from "./ImageCard.tsx";
 import { LiveReply } from "./LiveReply.tsx";
 import { MessageItem } from "./MessageItem.tsx";
@@ -25,12 +26,15 @@ export function Scrollback({
   chat,
   onRetry,
   onPreviewRegenerate,
+  onOpenBrain,
   empty,
 }: {
   conv: Conversation;
   chat: Chat;
   onRetry(): void;
   onPreviewRegenerate(messageId: string, ask: RegenerateAsk): void;
+  /** T16: open a brain's card in Settings → Brains (a message's made brain, or a brain it is pinned to). */
+  onOpenBrain(brainId: string): void;
   empty: ReactNode;
 }) {
   const box = useRef<HTMLDivElement>(null);
@@ -38,6 +42,9 @@ export function Scrollback({
   const brains = new Map(conv.brains.map((b) => [b.id, b]));
   const { live, pendingPlayer, pendingRoll } = chat;
   const gallery = useMemo(() => galleryOf(conv), [conv]);
+  // T16: which brain each message made, and the brains each is pinned to (stable while the brains don't change).
+  const made = useMemo(() => madeFromIndex(conv.brains), [conv.brains]);
+  const pins = useMemo(() => pinsByMessage(conv.brains), [conv.brains]);
   /** T07: an image that landed while its card was out of view, until you look at it. */
   const [landed, setLanded] = useState<{ messageId: string; brainName: string; failed: boolean; above: boolean } | null>(null);
   const imageStates = useRef<Map<string, string> | null>(null);
@@ -141,7 +148,7 @@ export function Scrollback({
 
   return (
     <div className="relative min-h-0 flex-1">
-      <div ref={box} onScroll={onScroll} className="relative h-full overflow-y-auto overscroll-contain">
+      <div ref={box} data-scrollback onScroll={onScroll} className="relative h-full overflow-y-auto overscroll-contain">
         <div className="mx-auto w-full max-w-3xl px-4 pt-8 pb-10 sm:px-6">
           {nothing ? (
             empty
@@ -161,6 +168,11 @@ export function Scrollback({
                         onPreviewRegenerate={onPreviewRegenerate}
                         onDismissLive={chat.dismissLive}
                         thoughtTemplate={m === last ? conv.templates.thought : undefined}
+                        brains={conv.brains}
+                        made={made.get(m.id) ?? null}
+                        pins={pins.get(m.id) ?? NO_PINS}
+                        freshMade={chat.fresh.has(made.get(m.id)?.id ?? "")}
+                        onOpenBrain={onOpenBrain}
                       />
                     </li>
                   ))}
@@ -232,6 +244,8 @@ export function Scrollback({
     </div>
   );
 }
+
+const NO_PINS: Array<{ brain: Brain; as: PinRole }> = [];
 
 /** Where a message is, seen from the scroll box: at least partly on screen, or above or below it. */
 function whereIs(box: HTMLElement | null, id: string): "in view" | "above" | "below" {

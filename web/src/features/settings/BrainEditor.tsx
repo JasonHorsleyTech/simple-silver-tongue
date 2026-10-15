@@ -1,23 +1,25 @@
-import { Braces, Plus, Star, Trash2 } from "lucide-react";
+import { Braces, BrainCircuit, LocateFixed, Plus, Star, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import { BRAIN_COLORS, DEFAULT_SHAPE, REASONING_NOTE, STOP_REASONING_NOTE, type Brain, type BrainFields, type ModelInfo } from "../../api/types.ts";
+import { BRAIN_COLORS, type Brain, type BrainFields, type LedgerMessage, type ModelInfo } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { SavedLine } from "../../components/SavedLine.tsx";
-import { SavedText } from "../../components/SavedText.tsx";
 import { Segmented } from "../../components/Segmented.tsx";
 import { Spinner } from "../../components/Spinner.tsx";
-import { Switch } from "../../components/Switch.tsx";
 import { cx } from "../../lib/cx.ts";
-import { ShapePicker } from "./ShapePicker.tsx";
-import { StopSequences } from "./StopSequences.tsx";
+import { BrainBadge } from "../chat/BrainBadge.tsx";
+import { MakerSettings } from "./MakerSettings.tsx";
+import { messageSnippet, PinnedMessages } from "./PinnedMessages.tsx";
+import { PromptFields } from "./PromptFields.tsx";
 
 /**
  * One brain, in full: who it is (name, color, kind, default), then every text that shapes what it is sent
- * (system prompt, reasoning, final reminder, stop sequences, and an image brain's safe mode and tool text), then delete.
- * Long texts save on purpose (Save / ⌘ Enter); switches, colors and kind save on click.
+ * (system prompt, its pinned messages, reasoning, final reminder, stop sequences, and an image brain's safe mode and
+ * tool text), then (T16) whether it makes brains and their blueprint, then delete. A brain made by another says so at
+ * the top: its words are its own copy of that blueprint. Long texts save on purpose (Save / ⌘ Enter); switches,
+ * colors and kind save on click.
  */
 export function BrainEditor({
   conversationId,
@@ -32,9 +34,23 @@ export function BrainEditor({
   onDeleted,
   onPayload,
   onImageSettings,
+  messages,
+  brains,
+  maker,
+  made,
+  onJumpTo,
+  onOpenBrain,
 }: {
   conversationId: string;
   brain: Brain;
+  /** T16: the ledger (its pinned messages), every brain (whose they are), the brain that made it, and the ones it made. */
+  messages: LedgerMessage[];
+  brains: Brain[];
+  maker: Brain | null;
+  made: Brain[];
+  /** T16: show a message in the scrollback; open another brain's card. */
+  onJumpTo(messageId: string): void;
+  onOpenBrain(brainId: string): void;
   isDefault: boolean;
   /** Its messages in the ledger: with any, it can't be deleted or change kind. */
   messageCount: number;
@@ -92,15 +108,42 @@ export function BrainEditor({
     }
   }
 
-  const r = model?.reasoning;
-  const canReason = model === undefined ? true : !!r?.supported; // unknown while loading: don't block
-  const efforts = (r?.effortOptions ?? []).filter((e) => e !== "none");
-  const effortChoices = efforts.includes(brain.reasoning.effort) || efforts.length === 0 ? efforts : [brain.reasoning.effort, ...efforts];
   const kindLocked = messageCount > 0 || writing;
   const id = (k: string) => `${k}-${brain.id}`;
 
+  const madeFrom = brain.madeFrom ? messages.find((m) => m.id === brain.madeFrom) : undefined;
+
   return (
     <div className="space-y-6">
+      {madeFrom && (
+        <div className="rounded-lg border border-line bg-canvas/40 px-3 py-2.5 text-[12.5px] leading-5 text-faint">
+          <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+            <BrainCircuit aria-hidden className="size-3.5 shrink-0" />
+            <span>Made by</span>
+            {maker ? (
+              <button type="button" onClick={() => onOpenBrain(maker.id)} title={`Open ${maker.name}'s card`} className="rounded-full">
+                <BrainBadge name={maker.name} color={maker.color} />
+              </button>
+            ) : (
+              <span>a brain</span>
+            )}
+            <span>{brain.pins.some((p) => p.messageId === madeFrom.id) ? "from a message, pinned below:" : "from a message (no longer pinned to it):"}</span>
+            <button
+              type="button"
+              onClick={() => onJumpTo(madeFrom.id)}
+              className="inline-flex items-center gap-1 rounded px-1 text-muted underline decoration-line-strong underline-offset-4 hover:text-fg"
+            >
+              <LocateFixed aria-hidden className="size-3" /> Jump to it
+            </button>
+          </p>
+          <p className="mt-1 truncate font-mono text-[12px] text-muted">{messageSnippet(madeFrom)}</p>
+          <p className="mt-1">
+            Its prompt, reminder, reasoning and stop sequences are its own copy of {maker ? `${maker.name}'s` : "its maker's"} blueprint: change them here for{" "}
+            {brain.name} alone. The blueprint{maker ? ` (in ${maker.name}'s card)` : ""} shapes only brains still to come.
+          </p>
+        </div>
+      )}
+
       <SavedLine
         id={id("name")}
         label="Name"
@@ -152,143 +195,39 @@ export function BrainEditor({
         </p>
       </div>
 
-      <SavedText
-        id={id("sp")}
-        label="System prompt"
-        description="Sent verbatim as the first message of every request to this brain. Nothing else is added."
-        saved={brain.systemPrompt}
-        maxPx={420}
-        validate={(v) => (v.trim() ? null : "The system prompt can't be empty: some Venice models inject their own when there is none.")}
-        onSave={(systemPrompt) => update({ systemPrompt })}
+      {/* T16: its own words and how it is asked; its pinned messages right after the system prompt, as they are sent. */}
+      <PromptFields
+        idBase={brain.id}
+        value={brain}
+        name={brain.name}
+        busy={busy}
+        model={model}
+        imagePlan={imagePlan}
+        onImageSettings={onImageSettings}
+        save={update}
+        afterSystemPrompt={
+          <PinnedMessages
+            brain={brain}
+            messages={messages}
+            brains={brains}
+            onPin={async (message, as) => onSaved((await api.call("brain.pin", { conversation: conversationId, brain: brain.id, message, as })).brain)}
+            onUnpin={async (message) => onSaved((await api.call("brain.unpin", { conversation: conversationId, brain: brain.id, message })).brain)}
+            onJumpTo={onJumpTo}
+          />
+        }
       />
 
-      <div className="space-y-3">
-        <Switch
-          id={id("rs")}
-          label="Reasoning"
-          description={
-            canReason
-              ? "Off by default. The reasoning is shown collapsed above the reply and never sent back."
-              : `${model?.name ?? "This model"} doesn't reason, so this setting sends nothing.`
-          }
-          checked={brain.reasoning.enabled}
-          disabled={!canReason}
-          busy={busy === "reasoning"}
-          onChange={(enabled) => void update({ reasoning: { enabled } }, "reasoning")}
-        />
-        {brain.reasoning.enabled && canReason && (
-          <>
-            {effortChoices.length > 0 && (
-              <div className="flex items-center gap-3">
-                <label htmlFor={id("re")} className="text-[13px] text-muted">
-                  Effort
-                </label>
-                <select
-                  id={id("re")}
-                  value={brain.reasoning.effort}
-                  disabled={busy === "effort"}
-                  onChange={(e) => void update({ reasoning: { effort: e.target.value } }, "effort")}
-                  className="h-8 rounded-md border border-line-strong bg-raised px-2 text-[13px] text-fg outline-none focus:border-focus/60"
-                >
-                  {effortChoices.map((e) => (
-                    <option key={e} value={e}>
-                      {e}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            <Notice tone="warn">{REASONING_NOTE}</Notice>
-            {brain.stop.length > 0 && <Notice tone="warn">{STOP_REASONING_NOTE}</Notice>}
-          </>
-        )}
-      </div>
-
-      <div className="space-y-3">
-        <Switch
-          id={id("fr")}
-          label="Final reminder"
-          description="Sent verbatim as the very last message of every request to this brain, after the conversation."
-          checked={brain.finalReminder.enabled}
-          busy={busy === "reminder"}
-          onChange={(enabled) => void update({ finalReminder: { enabled } }, "reminder")}
-        />
-        {brain.finalReminder.enabled && (
-          <SavedText
-            id={id("frt")}
-            saved={brain.finalReminder.content}
-            mono
-            maxPx={260}
-            placeholder="<!-- System reminder: … -->"
-            warn={(v) => (v.trim() ? null : "A blank reminder is skipped: nothing extra is sent.")}
-            onSave={(content) => update({ finalReminder: { content } })}
-          />
-        )}
-      </div>
-
-      <StopSequences brain={brain} busy={busy === "stop"} onSave={(stop) => void update({ stop }, "stop")} />
-
-      {brain.kind === "image" && (
-        <div className="space-y-5 rounded-lg border border-line bg-canvas/40 p-3.5">
-          <Switch
-            id={id("safe")}
-            label="Safe mode"
-            description="On by default: Venice blurs adult content in this brain's images (sent as safe_mode). A blurred image says so, with a way to paint it again with safe mode off."
-            checked={brain.safeMode !== false}
-            busy={busy === "safe"}
-            onChange={(safeMode) => void update({ safeMode }, "safe")}
-          />
-          <ShapePicker value={brain.shape ?? DEFAULT_SHAPE} disabled={busy === "shape"} busy={busy === "shape"} onChange={(shape) => void update({ shape }, "shape")} />
-          <p className="-mt-2 text-[12.5px] leading-5 text-faint">
-            Painted with <span className="text-muted">{imagePlan}</span>, like every image brain here.{" "}
-            <button type="button" onClick={onImageSettings} className="text-muted underline decoration-line-strong underline-offset-4 hover:text-fg">
-              Image model and price
-            </button>
-          </p>
-          <div>
-            <h4 className="text-[13px] font-medium text-fg">Tool text</h4>
-            <p className="mt-0.5 text-[12.5px] leading-5 text-faint">
-              All of it reaches the model: the tool's name and descriptions in the request, and the result after each of its own images.
-            </p>
-          </div>
-          <SavedLine
-            id={id("tn")}
-            label="Tool name"
-            saved={brain.tool?.name ?? ""}
-            mono
-            validate={(v) => (/^[A-Za-z0-9_-]{1,64}$/.test(v) ? null : "A tool name is 1-64 letters, digits, _ or -.")}
-            onSave={(name) => update({ tool: { name } })}
-          />
-          <SavedText
-            id={id("td")}
-            label="Description"
-            saved={brain.tool?.description ?? ""}
-            mono
-            maxPx={200}
-            validate={(v) => (v.trim() ? null : "The tool description can't be blank.")}
-            onSave={(description) => update({ tool: { description } })}
-          />
-          <SavedText
-            id={id("tp")}
-            label="Prompt parameter"
-            saved={brain.tool?.promptParamDescription ?? ""}
-            mono
-            maxPx={200}
-            validate={(v) => (v.trim() ? null : "The prompt description can't be blank.")}
-            onSave={(promptParamDescription) => update({ tool: { promptParamDescription } })}
-          />
-          <SavedText
-            id={id("tr")}
-            label="Tool result"
-            description="What the brain sees after each of its own images."
-            saved={brain.tool?.resultContent ?? ""}
-            mono
-            maxPx={200}
-            validate={(v) => (v.trim() ? null : "The tool result can't be blank.")}
-            onSave={(resultContent) => update({ tool: { resultContent } })}
-          />
-        </div>
-      )}
+      <MakerSettings
+        brain={brain}
+        brains={brains}
+        made={made}
+        model={model}
+        imagePlan={imagePlan}
+        onImageSettings={onImageSettings}
+        busy={busy}
+        update={(makes, what) => update({ makes }, what)}
+        onOpenBrain={onOpenBrain}
+      />
 
       {error && <Notice tone="error">{error}</Notice>}
 

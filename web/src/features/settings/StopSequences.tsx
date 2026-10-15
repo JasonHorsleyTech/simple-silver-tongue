@@ -16,7 +16,8 @@ export function StopSequences({
   busy,
   onSave,
 }: {
-  brain: Brain;
+  /** A brain, or (T16) a maker's blueprint for the brains it makes: what it is called, its kind and its list. */
+  brain: Pick<Brain, "id" | "name" | "kind" | "stop">;
   busy: boolean;
   /** Saves the whole list. Its error is shown by the editor. */
   onSave(stop: string[]): void;

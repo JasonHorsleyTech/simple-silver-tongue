@@ -1,15 +1,24 @@
-import { ImageIcon } from "lucide-react";
+import { BrainCircuit, ImageIcon } from "lucide-react";
 import { useState } from "react";
-import { BRAIN_COLORS, type LibraryBrain } from "../../api/types.ts";
+import { BRAIN_COLORS, MAKES_NUMBER, type LibraryBrain } from "../../api/types.ts";
 import { BrainBadge } from "../chat/BrainBadge.tsx";
 
 /**
  * What a badge can't say: an image brain answers with a picture, and reasoning is on (a labeled opt-in, AGENTS.md:
  * the provider adds a small hidden instruction, so every list of brains says so; T10's Character Actor ships with it).
+ * T16: a brain that makes brains ("makes Character N"), with its name pattern.
  */
-export function BrainTags({ kind, reasoning }: { kind: LibraryBrain["kind"]; reasoning?: string | null }) {
+export function BrainTags({ kind, reasoning, makes }: { kind: LibraryBrain["kind"]; reasoning?: string | null; makes?: string | null }) {
   return (
     <>
+      {makes && (
+        <span
+          className="inline-flex shrink-0 items-center gap-1 text-[11.5px] whitespace-nowrap text-faint"
+          title={`Each new message it writes makes a new brain, named “${makes}”, with that message pinned to it.`}
+        >
+          <BrainCircuit aria-hidden className="size-3" /> makes {makes.replace(MAKES_NUMBER, "N")}
+        </span>
+      )}
       {kind === "image" && <ImageIcon aria-label="(image)" className="size-3.5 shrink-0 text-faint" />}
       {reasoning && (
         <span className="shrink-0 text-[11.5px] whitespace-nowrap text-faint" title="Reasoning is on: it thinks before it answers (the provider adds a small hidden instruction).">
@@ -38,7 +47,7 @@ export function Cast({ brains }: { brains: LibraryBrain[] }) {
             <li key={b.name} className="text-[13px] leading-5">
               <span className="flex items-center gap-1.5">
                 <BrainBadge name={b.name} color={colorOf(b, i)} />
-                <BrainTags kind={b.kind} reasoning={b.reasoning} />
+                <BrainTags kind={b.kind} reasoning={b.reasoning} makes={b.makes} />
               </span>
               {b.about && <p className="mt-1 pl-0.5 text-muted">{b.about}</p>}
             </li>
@@ -49,7 +58,7 @@ export function Cast({ brains }: { brains: LibraryBrain[] }) {
           {brains.map((b, i) => (
             <li key={b.name} className="inline-flex max-w-full items-center gap-1" title={b.about}>
               <BrainBadge name={b.name} color={colorOf(b, i)} />
-              <BrainTags kind={b.kind} reasoning={b.reasoning} />
+              <BrainTags kind={b.kind} reasoning={b.reasoning} makes={b.makes} />
             </li>
           ))}
         </ul>

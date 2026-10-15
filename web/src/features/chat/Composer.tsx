@@ -1,9 +1,10 @@
-import { ArrowUp, Check, ImageIcon, PenLine, Plus, Square, X } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type SyntheticEvent } from "react";
+import { ArrowUp, Check, ImageIcon, PenLine, Plus, Search, Square, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject, type SyntheticEvent } from "react";
 import { STOP_BILL_NOTE, type Brain } from "../../api/types.ts";
 import { D20Icon } from "../../components/D20.tsx";
 import { Spinner } from "../../components/Spinner.tsx";
 import { cx } from "../../lib/cx.ts";
+import { fitRow } from "../../lib/cast.ts";
 import { brainInitials } from "../../lib/initials.ts";
 import { useAutosize } from "../../lib/useAutosize.ts";
 import { useMediaQuery } from "../../lib/useMediaQuery.ts";
@@ -20,7 +21,10 @@ export const AS_PLAYER = "player";
  * color (and ⌥1…⌥9, in chip order). T12: the chips stay on one row. When their full names don't fit (a Tabletop RPG
  * table has six), each shows its initials ("Show Me the Odds" → SMTO) and grows to its full name over its
  * neighbours on hover or keyboard focus, without moving them. With no hover (touch), the names stay whole, on one
- * row that scrolls sideways. With nothing typed, a chip asks that brain to just respond to the table
+ * row that scrolls sideways. T16: a brain per character can make a dozen or more; when even the initials don't fit,
+ * the row shows the most recently active brains (a brain just made counts as just now, so its button appears at
+ * once), each in its place, and a "+N" button lists the rest, one click each. A brain made while you watch glows
+ * for a moment. With nothing typed, a chip asks that brain to just respond to the table
  * as it stands (also how a failed reply is retried); the server explains when there is nothing to answer.
  * An image brain's chip (with a small picture icon) asks it for a picture: your text, if any, is its note.
  * Once its prompt is saved the composer is free again, while the image is painted in the scrollback.
@@ -48,6 +52,8 @@ export function Composer({
   onWriteAs,
   brains,
   defaultBrainId,
+  activity,
+  fresh,
   busy,
   status,
   onStop,
@@ -67,6 +73,10 @@ export function Composer({
   onWriteAs(as: string | null): void;
   brains: Brain[];
   defaultBrainId: string;
+  /** T16: how recently each brain took part (brainActivity): who keeps a place on the row when not all fit. */
+  activity: ReadonlyMap<string, number>;
+  /** T16: brains made while this view was open: their buttons glow once. */
+  fresh: ReadonlySet<string>;
   busy: boolean;
   /** What is being written, while busy ("Assistant is writing version 3"). */
   status?: string;
@@ -97,31 +107,59 @@ export function Composer({
   /** The die is armed and this is a send (writing as someone adds words, with no roll). */
   const rolling = roll && !writing;
   const chipsRow = useRef<HTMLDivElement>(null);
+  const measurer = useRef<HTMLDivElement>(null);
   const labels = brainInitials(others.map((b) => b.name));
   const canHover = useMediaQuery("(hover: hover) and (pointer: fine)");
-  /** The chips' full names fit on one row (measured from their hidden full-name flags). */
-  const [namesFit, setNamesFit] = useState(true);
-  const compact = canHover && !namesFit;
+  /**
+   * What fits on the row: whole names, or initials; and when even the initials don't all fit (T16), the ids of the
+   * brains shown (null: all of them).
+   */
+  const [fit, setFit] = useState<{ names: boolean; shown: string[] | null }>({ names: true, shown: null });
+  const compact = canHover && !fit.names;
   /** No hover to show a name (touch): whole names on one row that scrolls sideways, rather than a block of them. */
-  const strip = !canHover && !namesFit;
-  const chipsKey = others.map((b) => `${b.kind}:${b.name}`).join("\n");
+  const strip = !canHover && !fit.names;
+  const shownIds = compact && fit.shown ? new Set(fit.shown) : null;
+  const shown = shownIds ? others.filter((b) => shownIds.has(b.id)) : others;
+  const hidden = shownIds ? others.filter((b) => !shownIds.has(b.id)) : [];
+  const chipsKey = others.map((b) => `${b.id}:${b.kind}:${b.name}`).join("\n");
+  const activityKey = others.map((b) => activity.get(b.id) ?? -1).join(",");
 
-  // Whole names when they fit beside Send, initials when they don't. The row's width never depends on the chips
-  // (flex-1, basis 0), and the measure uses the full-name gap, so the choice can't flip back and forth.
+  // Whole names when they fit beside Send, initials when they don't, and when even those don't all fit, the most
+  // recently active brains and "+N". Measured on an invisible copy of every chip, both ways, so the row's own
+  // width never depends on the chips (flex-1, basis 0) and the choice can't flip back and forth.
   useLayoutEffect(() => {
     const row = chipsRow.current;
-    if (!row) return;
+    const box = measurer.current;
+    if (!row || !box) return;
     const measure = () => {
-      const flags = [...row.querySelectorAll<HTMLElement>("[data-full-name]")];
-      if (flags.length === 0) return;
-      const need = flags.reduce((w, f) => w + f.offsetWidth, 0) + CHIP_GAP_PX * (flags.length - 1);
-      setNamesFit(need <= row.clientWidth);
+      const widths = (sel: string) => [...box.querySelectorAll<HTMLElement>(sel)].map((e) => e.offsetWidth);
+      const full = widths("[data-measure=full]");
+      if (full.length === 0) return;
+      const room = row.clientWidth;
+      const names = full.reduce((a, b) => a + b, 0) + CHIP_GAP_PX * (full.length - 1) <= room;
+      let ids: string[] | null = null;
+      if (!names) {
+        const initials = widths("[data-measure=initials]");
+        const more = box.querySelector<HTMLElement>("[data-measure=more]")?.offsetWidth ?? 40;
+        const picked = fitRow(initials, others.map((b) => activity.get(b.id) ?? -1), room, COMPACT_GAP_PX, more);
+        if (picked.length < others.length) ids = picked.map((i) => others[i]!.id);
+      }
+      setFit((f) => (f.names === names && (f.shown?.join() ?? "") === (ids?.join() ?? "") && (f.shown === null) === (ids === null) ? f : { names, shown: ids }));
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(row);
     return () => ro.disconnect();
-  }, [chipsKey, busy, writing, rolling]);
+  }, [chipsKey, activityKey, busy, writing, rolling]);
+
+  // A brain made just now, on a sideways strip (touch): bring its button into view (the strip itself, never the page).
+  const freshKey = [...fresh].join();
+  useEffect(() => {
+    const row = chipsRow.current;
+    if (!strip || !row || !freshKey) return;
+    const chip = row.querySelector<HTMLElement>(`[data-brain-id="${freshKey.split(",").at(-1)}"]`);
+    if (chip) row.scrollTo({ left: chip.offsetLeft - row.clientWidth / 2 + chip.offsetWidth / 2, behavior: "smooth" });
+  }, [strip, freshKey]);
 
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
@@ -174,7 +212,7 @@ export function Composer({
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.altKey && !e.metaKey && !e.ctrlKey && /^Digit[1-9]$/.test(e.code) && !writing) {
-      const b = others[Number(e.code.slice(5)) - 1];
+      const b = shown[Number(e.code.slice(5)) - 1];
       if (b) {
         e.preventDefault(); // Option+digit would otherwise type ¡™£…
         sendTo(b);
@@ -349,7 +387,11 @@ export function Composer({
             </button>
           )}
           {/* Who else can answer, in their colors; while a reply runs, who is writing (the chips would be off anyway). */}
-          <div ref={chipsRow} className={cx("flex min-h-8 min-w-0 flex-1 items-center", compact ? "gap-1" : "gap-1.5", strip ? "overflow-x-auto" : "flex-wrap")}>
+          <div
+            ref={chipsRow}
+            className={cx("relative flex min-h-8 min-w-0 flex-1 items-center", compact ? "gap-1" : "gap-1.5", strip ? "overflow-x-auto" : "flex-wrap")}
+          >
+            {several && <ChipMeasurer measurer={measurer} brains={others} labels={labels} roll={rolling} />}
             {busy ? (
               <p className="min-w-0 truncate text-[11.5px] text-faint" title={STOP_BILL_NOTE}>
                 {status ?? `${main?.name ?? "The brain"} is replying`} · <span className="text-muted">{STOP_CAPTION}</span>
@@ -359,9 +401,23 @@ export function Composer({
                 <Kbd>Enter</Kbd> {paints ? "paints it" : "adds it"} · <Kbd>Esc</Kbd> back to sending
               </p>
             ) : several ? (
-              others.map((b, i) => (
-                <BrainChip key={b.id} brain={b} label={labels[i]!} compact={compact} strip={strip} index={i} empty={empty} roll={rolling} onClick={() => sendTo(b)} />
-              ))
+              <>
+                {shown.map((b, i) => (
+                  <BrainChip
+                    key={b.id}
+                    brain={b}
+                    label={labels[others.indexOf(b)]!}
+                    compact={compact}
+                    strip={strip}
+                    index={i}
+                    empty={empty}
+                    roll={rolling}
+                    fresh={fresh.has(b.id)}
+                    onClick={() => sendTo(b)}
+                  />
+                ))}
+                {hidden.length > 0 && <MoreBrains brains={hidden} empty={empty} roll={rolling} fresh={fresh} onPick={sendTo} />}
+              </>
             ) : rolling ? (
               <p className="hidden min-w-0 truncate text-[11.5px] text-faint sm:block">
                 <Kbd>Enter</Kbd> rolls and sends · <Kbd>Esc</Kbd> no roll
@@ -416,7 +472,8 @@ export function Composer({
                 {rolling ? <D20Icon className="size-4 shrink-0" strokeWidth={2} /> : <ArrowUp aria-hidden className="size-4 shrink-0" strokeWidth={2.25} />}
                 <span className="truncate">
                   {rolling ? "Roll & send" : "Send"}
-                  {several && <span className="hidden @2xl:inline"> to {main?.name}</span>}
+                  {/* T16: with a big table, the row needs the room more (the placeholder already names who Send talks to). */}
+                  {several && others.length <= LONG_SEND_MAX && <span className="hidden @2xl:inline"> to {main?.name}</span>}
                 </span>
               </button>
             )}
@@ -432,8 +489,175 @@ export function Composer({
   );
 }
 
-/** The gap between chips showing whole names (gap-1.5); the fit measure uses it whatever the current mode. */
+/** The gap between chips showing whole names (gap-1.5), and between initials (gap-1). */
 const CHIP_GAP_PX = 6;
+const COMPACT_GAP_PX = 4;
+/** Up to this many other brains, Send says whom it sends to ("Send to Game Master"); past it, just "Send". */
+const LONG_SEND_MAX = 8;
+
+/** The chip's title: what a click does. Shared by the row and the "+N" list. */
+function chipTitle(b: Brain, empty: boolean, roll: boolean, key = ""): string {
+  const image = b.kind === "image";
+  return roll
+    ? `${empty ? "Roll a d20 and send it" : "Send your words and a d20 roll"} to ${b.name}${image ? ": it paints a picture, with the roll as its note" : ""}${key}`
+    : image
+      ? empty
+        ? `Ask ${b.name} for a picture of the scene as it stands${key}`
+        : `Send to ${b.name}: it paints a picture, with your message as its note${key}`
+      : empty
+        ? `Ask ${b.name} to respond, with no new message${key}`
+        : `Send to ${b.name}${key}`;
+}
+
+/**
+ * Every brain's chip, both ways (whole name, initials), plus a "+N", drawn invisibly in a 0×0 box that clips them,
+ * so the composer can measure what fits without the measure ever taking room or scrolling anything (T12 lesson).
+ */
+function ChipMeasurer({ measurer, brains, labels, roll }: { measurer: RefObject<HTMLDivElement | null>; brains: Brain[]; labels: string[]; roll: boolean }) {
+  const base = "inline-flex h-7 shrink-0 items-center rounded-md border text-[12.5px] font-medium whitespace-nowrap";
+  return (
+    <div aria-hidden className="invisible absolute top-0 left-0 size-0 overflow-hidden">
+      <div ref={measurer} className="flex w-max">
+        {brains.map((b, i) => (
+          <span key={b.id} className="contents">
+            <span data-measure="full" className={cx(base, "gap-1.5 px-2", roll ? "max-w-[13rem]" : "max-w-[11rem]")}>
+              {roll && <D20Icon className="size-3.5 shrink-0" strokeWidth={1.9} />}
+              {b.kind === "image" ? <ImageIcon className="size-3.5 shrink-0" /> : roll ? null : <span className="size-1.5 shrink-0" />}
+              <span className="truncate">{b.name}</span>
+            </span>
+            <span data-measure="initials" className={cx(base, "gap-1 px-1.5")}>
+              {b.kind === "image" && <ImageIcon className="size-3.5 shrink-0" />}
+              <span className="tracking-[0.03em]">{labels[i]}</span>
+            </span>
+          </span>
+        ))}
+        <span data-measure="more" className={cx(base, "gap-1 px-1.5")}>
+          +{brains.length}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * T16: the brains that don't fit on the row, one click each: a list above the composer, in the row's order, each
+ * with its whole name. Many of them: a filter at the top (Enter picks the first match).
+ */
+function MoreBrains({
+  brains,
+  empty,
+  roll,
+  fresh,
+  onPick,
+}: {
+  brains: Brain[];
+  empty: boolean;
+  roll: boolean;
+  fresh: ReadonlySet<string>;
+  onPick(b: Brain): void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const box = useRef<HTMLDivElement>(null);
+  const filter = brains.length > 6;
+  const list = query.trim() ? brains.filter((b) => b.name.toLowerCase().includes(query.trim().toLowerCase())) : brains;
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => !box.current?.contains(e.target as Node) && setOpen(false);
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("keydown", onKey, true);
+    box.current?.querySelector<HTMLElement>(filter ? "input" : "[role=menuitem]")?.focus();
+    return () => {
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [open, filter]);
+  useEffect(() => {
+    if (!open) setQuery("");
+  }, [open]);
+  const pick = (b: Brain) => {
+    setOpen(false);
+    onPick(b);
+  };
+  const glow = brains.some((b) => fresh.has(b.id));
+  return (
+    <div ref={box} className="relative shrink-0">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        title={`${brains.length} more brain${brains.length === 1 ? "" : "s"}: ${brains.map((b) => b.name).join(", ")}`}
+        aria-label={`${brains.length} more brain${brains.length === 1 ? "" : "s"}`}
+        data-fresh={glow ? "" : undefined}
+        className={cx(
+          "inline-flex h-7 items-center gap-1 rounded-md border border-line-strong px-1.5 text-[12.5px] font-medium text-muted transition-colors hover:bg-hover hover:text-fg",
+          open && "bg-hover text-fg",
+        )}
+      >
+        +{brains.length}
+      </button>
+      {open && (
+        <div
+          role="menu"
+          aria-label="More brains"
+          onKeyDown={(e) => {
+            if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+            e.preventDefault();
+            const items = [...(box.current?.querySelectorAll<HTMLElement>("[role=menuitem]") ?? [])];
+            const i = items.indexOf(document.activeElement as HTMLElement);
+            items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length]?.focus();
+          }}
+          className="absolute right-0 bottom-full z-30 mb-2 flex max-h-[min(26rem,60vh)] w-64 flex-col rounded-xl border border-line-strong bg-panel p-1.5 shadow-2xl shadow-black/60"
+        >
+          <p className="shrink-0 px-2 pt-1 pb-1.5 text-[11.5px] leading-4 text-faint">
+            {roll ? "Roll a d20 and send to…" : empty ? "Ask to respond…" : "Send to…"} The row keeps whoever spoke, or was made, most recently.
+          </p>
+          {filter && (
+            <label className="mx-1 mb-1 flex shrink-0 items-center gap-2 rounded-md border border-line-strong bg-raised px-2">
+              <Search aria-hidden className="size-3.5 shrink-0 text-faint" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && list[0]) {
+                    e.preventDefault();
+                    pick(list[0]);
+                  }
+                }}
+                placeholder="Find a brain"
+                aria-label="Find a brain"
+                className="h-7 min-w-0 flex-1 bg-transparent text-[13px] text-fg outline-none placeholder:text-faint"
+              />
+            </label>
+          )}
+          <div className="min-h-0 overflow-y-auto">
+            {list.map((b) => (
+              <button
+                key={b.id}
+                type="button"
+                role="menuitem"
+                title={chipTitle(b, empty, roll)}
+                onClick={() => pick(b)}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-hover focus:bg-hover focus:outline-none"
+              >
+                <BrainBadge name={b.name} color={b.color} className="min-w-0" />
+                {b.kind === "image" && <ImageIcon aria-label="(paints)" className="size-3.5 shrink-0 text-faint" />}
+                {fresh.has(b.id) && <span className="ml-auto shrink-0 text-[11px] text-faint">new</span>}
+              </button>
+            ))}
+            {list.length === 0 && <p className="px-2 py-1.5 text-[12.5px] text-faint">No brain by that name.</p>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /**
  * A small send button in a brain's own color. An image brain's has a picture icon: it answers with an image.
@@ -452,6 +676,7 @@ function BrainChip({
   index,
   empty,
   roll,
+  fresh,
   onClick,
 }: {
   brain: Brain;
@@ -462,19 +687,13 @@ function BrainChip({
   index: number;
   empty: boolean;
   roll: boolean;
+  /** T16: made while you watched: it glows once, so you see it arrive. */
+  fresh?: boolean;
   onClick(): void;
 }) {
   const image = b.kind === "image";
   const key = index < 9 ? ` (⌥${index + 1})` : "";
-  const title = roll
-    ? `${empty ? "Roll a d20 and send it" : "Send your words and a d20 roll"} to ${b.name}${image ? ": it paints a picture, with the roll as its note" : ""}${key}`
-    : image
-      ? empty
-        ? `Ask ${b.name} for a picture of the scene as it stands${key}`
-        : `Send to ${b.name}: it paints a picture, with your message as its note${key}`
-      : empty
-        ? `Ask ${b.name} to respond, with no new message${key}`
-        : `Send to ${b.name}${key}`;
+  const title = chipTitle(b, empty, roll, key);
   const ink = `color-mix(in oklab, ${b.color} 55%, white)`;
   const whole = (
     <>
@@ -494,7 +713,9 @@ function BrainChip({
       onPointerEnter={compact ? placeFlag : undefined}
       onFocus={compact ? placeFlag : undefined}
       data-compact={compact ? "" : undefined}
-      title={title}
+      data-brain-id={b.id}
+      data-fresh={fresh ? "" : undefined}
+      title={fresh ? `New brain. ${title}` : title}
       aria-label={
         roll
           ? `Roll a d20 and send to ${b.name}${image ? " for a picture" : ""}`
@@ -516,6 +737,7 @@ function BrainChip({
         color: ink,
         borderColor: `color-mix(in oklab, ${b.color} 30%, transparent)`,
         backgroundColor: `color-mix(in oklab, ${b.color} 9%, transparent)`,
+        ["--glow" as string]: b.color,
       }}
     >
       {compact ? (
@@ -618,7 +840,7 @@ function WriteAsMenu({
             const i = items.indexOf(document.activeElement as HTMLButtonElement);
             items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length]?.focus();
           }}
-          className="absolute bottom-full left-0 z-30 mb-2 w-72 rounded-xl border border-line-strong bg-panel p-1.5 shadow-2xl shadow-black/60"
+          className="absolute bottom-full left-0 z-30 mb-2 max-h-[min(30rem,65vh)] w-72 overflow-y-auto rounded-xl border border-line-strong bg-panel p-1.5 shadow-2xl shadow-black/60"
         >
           <p className="px-2 pt-1 pb-1.5 text-[11.5px] leading-4 text-faint">Write as… Added to the ledger as written. No brain writes anything; an image prompt is painted.</p>
           {brains.map((b) => (

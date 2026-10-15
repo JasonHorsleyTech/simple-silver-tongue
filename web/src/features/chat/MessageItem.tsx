@@ -1,6 +1,6 @@
-import { ImagePlus, Pencil, RefreshCw, Trash2 } from "lucide-react";
+import { BrainCircuit, ImagePlus, Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { memo, useEffect, useState } from "react";
-import type { Brain, LedgerMessage, MessageVersion } from "../../api/types.ts";
+import type { Brain, LedgerMessage, MessageVersion, PinRole } from "../../api/types.ts";
 import { cx } from "../../lib/cx.ts";
 import { activeVersion, clockTime, fullTime } from "../../lib/format.ts";
 import { rollView } from "../../lib/rolls.ts";
@@ -10,6 +10,7 @@ import { LiveReply } from "./LiveReply.tsx";
 import { MessageEditor } from "./MessageEditor.tsx";
 import { BrainMessageFrame, PlayerBubble, SteerNote } from "./MessageFrame.tsx";
 import { CopyAction, DeleteConfirm, IconAction, MessageFooter, VersionMeta, VersionPager } from "./MessageFooter.tsx";
+import { AuthorMenu, LinksBand, PinMenu } from "./MessageLinks.tsx";
 import { MessageText } from "./MessageText.tsx";
 import { Reasoning } from "./Reasoning.tsx";
 import { RollBubble } from "./RollCard.tsx";
@@ -37,6 +38,8 @@ const REGEN_MODE_KEY = "ss.regenerateMode";
  * A text message's hidden notes (T08) show folded (MessageText); the editor and Copy have the raw text.
  * A roll (T09) is the player's message with the die beside its line (RollBubble); edited, its line is the roll,
  * and the die's own number is only history in the footer ("🎲 d20 said 12").
+ * T16: under the body, the brain this message made (Rename) and the brains it is pinned to (Unpin) (LinksBand); in
+ * the footer, Pin to a brain, Said by… (change who said it), and "Make a brain" on a maker's message that has none.
  * Actions show on hover or keyboard focus, and stay shown on the last message. During a reply they explain
  * why they can't run instead of failing with the server's 409, and so do those that would replace or remove
  * an image still being made (its prompt edit, its retry, the message's delete).
@@ -52,9 +55,24 @@ export const MessageItem = memo(function MessageItem({
   onPreviewRegenerate,
   onDismissLive,
   thoughtTemplate,
+  brains,
+  made,
+  pins,
+  freshMade,
+  onOpenBrain,
 }: {
   message: LedgerMessage;
   brain?: Brain;
+  /** T16: every brain (Pin to, Said by). */
+  brains: Brain[];
+  /** T16: the brain made from this message, if it is still here. */
+  made: Brain | null;
+  /** T16: the brains this message is pinned to. */
+  pins: Array<{ brain: Brain; as: PinRole }>;
+  /** T16: `made` was made while you watched: its name field opens. */
+  freshMade: boolean;
+  /** T16: open a brain's card in Settings → Brains. */
+  onOpenBrain(brainId: string): void;
   /** The last thing in the scrollback: its footer stays shown. */
   isLast: boolean;
   /** The last ledger message, a brain's text: it can be regenerated. */
@@ -83,6 +101,10 @@ export const MessageItem = memo(function MessageItem({
   /** "Paint again" is on its way (image.retry of a finished image). */
   const [painting, setPainting] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
+  /** T16: a footer menu (Pin to, Said by) is open: the footer stays shown. */
+  const [menuOpen, setMenuOpen] = useState(false);
+  /** T16: "Make a brain from this" is open under the body. */
+  const [making, setMaking] = useState(false);
 
   useEffect(() => {
     if (!hint) return;
@@ -148,7 +170,41 @@ export const MessageItem = memo(function MessageItem({
     setMode("view");
     setHint(problem);
   };
-  const pinned = isLast || mode === "delete" || mode === "steer";
+  const pinned = isLast || mode === "delete" || mode === "steer" || menuOpen;
+  const pinnedTo = new Map(pins.map((p) => [p.brain.id, p.as]));
+  const pinMenu = (
+    <PinMenu
+      brains={brains}
+      pinnedTo={pinnedTo}
+      onPin={(b) => actions.pin(message.id, b)}
+      onUnpin={(b) => actions.unpin(message.id, b)}
+      onOpenChange={setMenuOpen}
+    />
+  );
+  const authorMenu = (
+    <AuthorMenu message={message} brains={brains} busy={busy} busyHint={BUSY_HINT} onSet={(as) => actions.setAuthor(message.id, as)} onOpenChange={setMenuOpen} />
+  );
+  /** A maker's message with no brain of its own (written before the setting, or with it off): "Make a brain". */
+  const canMake = !!brain?.makes && !made;
+  const links = (
+    <LinksBand
+      made={made}
+      maker={brain?.makes ? brain : null}
+      pins={pins}
+      fresh={freshMade}
+      making={making && canMake}
+      brains={brains}
+      onOpenBrain={onOpenBrain}
+      onRename={actions.renameBrain}
+      onUnpin={(b) => actions.unpin(message.id, b)}
+      onMake={async (name) => {
+        const p = await actions.make(message.id, name);
+        if (!p) setMaking(false);
+        return p;
+      }}
+      onCancelMake={() => setMaking(false)}
+    />
+  );
   const hintLine = hint && (
     <p role="status" className={cx("text-[12.5px] leading-5 text-amber-200/85", message.author.type === "player" ? "mt-7 text-right" : "mt-1")}>
       {hint}
@@ -158,7 +214,7 @@ export const MessageItem = memo(function MessageItem({
   if (message.author.type === "player") {
     const roll = rollView(v);
     const footer = (
-      <MessageFooter align="end" pinned={mode === "delete"}>
+      <MessageFooter align="end" pinned={mode === "delete" || menuOpen}>
         {mode === "delete" ? (
           <DeleteConfirm versions={1} pending={pending} onConfirm={() => void remove()} onCancel={() => setMode("view")} />
         ) : (
@@ -167,6 +223,8 @@ export const MessageItem = memo(function MessageItem({
             <IconAction label={roll ? "Edit the roll's line" : "Edit"} onClick={() => setMode("edit")}>
               <Pencil aria-hidden className="size-3.5" />
             </IconAction>
+            {pinMenu}
+            {!roll && authorMenu}
             <IconAction label={roll ? "Delete the roll" : "Delete"} blocked={busy} onClick={unlessBusy(() => setMode("delete"))}>
               <Trash2 aria-hidden className="size-3.5" />
             </IconAction>
@@ -195,6 +253,7 @@ export const MessageItem = memo(function MessageItem({
         ) : (
           <PlayerBubble footer={footer}>
             <MessageText key={message.activeVersion} text={v.content} />
+            {pins.length > 0 && <div className="border-t border-line pt-1 [&_[data-links]]:mt-1.5">{links}</div>}
           </PlayerBubble>
         )}
         {hintLine}
@@ -288,6 +347,16 @@ export const MessageItem = memo(function MessageItem({
                       <RefreshCw aria-hidden className="size-3.5" /> Regenerate
                     </button>
                   )}
+                  {canMake && !making && (
+                    <button
+                      type="button"
+                      onClick={() => setMaking(true)}
+                      title={`Make a brain from this message with ${brain!.name}'s blueprint, this message pinned to it (as a new message from ${brain!.name} would)`}
+                      className="mr-0.5 inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg"
+                    >
+                      <BrainCircuit aria-hidden className="size-3.5" /> Make a brain
+                    </button>
+                  )}
                   {canPaintAgain && (
                     <IconAction label="Paint this prompt again, as a new version (both images are kept)" blocked={paintingShown || painting} onClick={() => void paintAgain()}>
                       <ImagePlus aria-hidden className="size-3.5" />
@@ -297,6 +366,8 @@ export const MessageItem = memo(function MessageItem({
                   <IconAction label={image ? "Edit the prompt" : "Edit"} blocked={image && paintingShown} onClick={image ? unlessPainting(paintingShown, () => setMode("edit")) : () => setMode("edit")}>
                     <Pencil aria-hidden className="size-3.5" />
                   </IconAction>
+                  {pinMenu}
+                  {authorMenu}
                   <IconAction label="Delete" blocked={busy || paintingAny} onClick={unlessBusy(unlessPainting(paintingAny, () => setMode("delete")))}>
                     <Trash2 aria-hidden className="size-3.5" />
                   </IconAction>
@@ -324,12 +395,16 @@ export const MessageItem = memo(function MessageItem({
             onRepaint={(o) => actions.repaint(message.id, o)}
             onEdit={unlessPainting(paintingShown, () => setMode("edit"))}
           />
+          {mode !== "edit" && links}
           </>
         ) : mode === "edit" ? (
           editor()
         ) : (
-          // Keyed by version: another version's notes start folded.
-          <BrainBody key={message.activeVersion} version={v} color={brain?.color} />
+          <>
+            {/* Keyed by version: another version's notes start folded. */}
+            <BrainBody key={message.activeVersion} version={v} color={brain?.color} />
+            {links}
+          </>
         )}
       </BrainMessageFrame>
       {hintLine}

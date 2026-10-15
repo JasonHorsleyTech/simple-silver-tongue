@@ -8,6 +8,7 @@ import { createClient } from "../web/src/api/client.ts";
 import { ApiError, errorMessage, retryOf } from "../web/src/api/errors.ts";
 import { readNdjson } from "../web/src/api/ndjson.ts";
 import { forBrowser } from "../web/src/lib/format.ts";
+import { brainActivity, fitRow, madeFromIndex, makerOf, pinsByMessage } from "../web/src/lib/cast.ts";
 import { brainInitials } from "../web/src/lib/initials.ts";
 import { prefillThought } from "../web/src/lib/thought.ts";
 import { rollLineIndex, rollView } from "../web/src/lib/rolls.ts";
@@ -15,10 +16,12 @@ import { STOP_BILL_NOTE as SERVER_STOP_NOTE } from "../src/commands/chat.ts";
 import { BRAIN_COLORS as SERVER_COLORS, DEFAULT_TEMPLATES } from "../src/conversations/defaults.ts";
 import { REASONING_NOTE as SERVER_REASONING_NOTE } from "../src/conversations/prompt.ts";
 import { IMAGE_STOP_NOTE as SERVER_IMAGE_STOP_NOTE } from "../src/conversations/wording.ts";
-import type { LedgerMessage } from "../src/conversations/types.ts";
+import type { Brain, Conversation, LedgerMessage } from "../src/conversations/types.ts";
 import {
   BRAIN_COLORS,
+  freeMadeName,
   IMAGE_STOP_NOTE,
+  isPatternName,
   REASONING_NOTE,
   ROLL_PREVIEW_NOTE,
   STOP_BILL_NOTE,
@@ -449,6 +452,45 @@ test("brain initials for the composer's buttons are short and never clash (T12)"
   assert.deepEqual(brainInitials(["Character Actor", "Character Artist", "GM", "Narrator", "DiceMaster"]), ["CAc", "CAr", "GM", "Na", "DM"]);
   const same = brainInitials(["Bob", "bob", "Dice Master", "Dice Mister"]);
   assert.equal(new Set(same.map((l) => l.toLowerCase())).size, same.length);
+});
+
+test("a brain per character: initials keep numbers whole, and clashes still part (T16)", () => {
+  assert.deepEqual(brainInitials(["Character 1", "Character 2", "Character 10", "Character 12", "Cargo 12", "Hooded Figure"]), ["C1", "C2", "C10", "Ch12", "Ca12", "HF"]);
+});
+
+test("the composer's row keeps the most recently active brains in their places, and '+N' the rest (T16)", () => {
+  const brain = (id: string, madeFrom?: string) => ({ id, name: id, pins: [], ...(madeFrom ? { madeFrom } : {}) }) as unknown as Brain;
+  const msg = (id: string, author: string | null) => ({ id, author: author ? { type: "brain", brainId: author } : { type: "player" } }) as unknown as LedgerMessage;
+  const conv = {
+    brains: [brain("gm"), brain("odds"), brain("creator"), brain("c1", "m2"), brain("c2", "m4")],
+    messages: [msg("m1", "gm"), msg("m2", "creator"), msg("m3", "c1"), msg("m4", "creator"), msg("m5", null)],
+  } as unknown as Conversation;
+  const act = brainActivity(conv);
+  assert.deepEqual(Object.fromEntries(act), { gm: 0, odds: -1, creator: 3, c1: 2, c2: 3 }, "spoke last, or was made (its message's place)");
+  // All fit: everyone, in order.
+  assert.deepEqual(fitRow([30, 30, 30], [0, 1, 2], 100, 4, 30), [0, 1, 2]);
+  // Room for two beside "+N": the two most recent, in their own order (ties by order).
+  assert.deepEqual(fitRow([30, 30, 30, 30], [5, -1, 9, 9], 100, 4, 30), [2, 3]);
+  assert.deepEqual(fitRow([30, 30, 30, 30], [1, 1, 1, 1], 100, 4, 30), [0, 1]);
+  assert.deepEqual(fitRow([30, 30], [1, 1], 20, 4, 30), [], "nothing fits: only '+N'");
+  assert.equal(madeFromIndex(conv.brains).get("m4")?.id, "c2");
+  assert.equal(makerOf(conv, conv.brains[3]!)?.id, "creator");
+  assert.equal(makerOf(conv, conv.brains[0]!), null);
+  const pinned = { ...conv.brains[0]!, pins: [{ messageId: "m2", as: "system" }] } as Brain;
+  assert.deepEqual(
+    pinsByMessage([pinned]).get("m2")?.map((p) => [p.brain.id, p.as]),
+    [["gm", "system"]],
+  );
+});
+
+test("the browser names a maker's next brain by the server's own rule (T16)", () => {
+  const maker = { name: "Character {{n}}", next: 3 };
+  assert.deepEqual(freeMadeName([], maker), { name: "Character 3", n: 3 });
+  assert.deepEqual(freeMadeName([{ name: "character 3" }, { name: "Character 4" }], maker), { name: "Character 5", n: 5 }, "a taken name is skipped");
+  assert.equal(isPatternName("Character {{n}}", "Character 12"), true);
+  assert.equal(isPatternName("Character {{n}}", "Hooded Figure"), false);
+  assert.equal(isPatternName("Place ({{n}})", "Place (2)"), true, "regex characters in a pattern are literal");
+  assert.equal(isPatternName("Place ({{n}})", "Place 2"), false);
 });
 
 test("the Fresh take box starts with the thought template, the marker gone and the caret where it was (T15)", () => {

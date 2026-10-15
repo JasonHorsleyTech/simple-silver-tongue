@@ -1,13 +1,14 @@
-import { Braces, ChevronDown, Plus } from "lucide-react";
+import { Braces, BrainCircuit, ChevronDown, Plus, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import { DEFAULT_SHAPE, type Brain, type BrainImport, type Conversation, type ImageShape, type ModelInfo } from "../../api/types.ts";
+import { DEFAULT_SHAPE, MAKES_NUMBER, type Brain, type BrainImport, type Conversation, type ImageShape, type ModelInfo } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { Segmented } from "../../components/Segmented.tsx";
 import { TextArea } from "../../components/TextArea.tsx";
 import { TextField } from "../../components/TextField.tsx";
+import { makerOf } from "../../lib/cast.ts";
 import { cx } from "../../lib/cx.ts";
 import { readLocal, writeLocal } from "../../lib/storage.ts";
 import { BrainBadge } from "../chat/BrainBadge.tsx";
@@ -19,6 +20,10 @@ import { ShapePicker } from "./ShapePicker.tsx";
  * The brains: one quiet card each (badge, what is on, how much it has said, its prompt's first line), opened
  * one at a time into the full editor. Each card's braces show that brain's exact payload. A conversation with
  * a single brain opens it straight away, as T02 did.
+ *
+ * T16, many brains (a brain per character): brains made by a maker are listed after the others, under "Made by
+ * <maker>", each card saying so instead of repeating the blueprint's first line; past eight brains a filter finds
+ * one by name. A message's made brain or pin opens its card here (`focusBrain`).
  */
 export function BrainsTab({
   conv,
@@ -29,6 +34,9 @@ export function BrainsTab({
   onPatch,
   onPayload,
   onImageSettings,
+  focusBrain,
+  onBrainFocused,
+  onJumpTo,
 }: {
   conv: Conversation;
   model: ModelInfo | null | undefined;
@@ -40,6 +48,11 @@ export function BrainsTab({
   onPatch(fn: (c: Conversation) => Conversation): void;
   onPayload(brainId: string): void;
   onImageSettings(): void;
+  /** T16: open this brain's card (the nonce re-opens it after you closed it). */
+  focusBrain: { id: string; nonce: number } | null;
+  onBrainFocused?(): void;
+  /** T16: show a message in the scrollback. */
+  onJumpTo(messageId: string): void;
 }) {
   const resolution = conv.settings.image.resolution;
   const imagePlan = `${conv.settings.imageModel}${resolution ? ` at ${resolution}` : ""}`;
@@ -57,43 +70,131 @@ export function BrainsTab({
     if (addNonce) setAdding(true);
   }, [addNonce]);
 
+  const [query, setQuery] = useState("");
+  const [focusNonce, setFocusNonce] = useState(0);
+  useEffect(() => {
+    if (!focusBrain) return;
+    setOpenId(focusBrain.id);
+    setQuery("");
+    setFocusNonce(focusBrain.nonce);
+    onBrainFocused?.();
+  }, [focusBrain, onBrainFocused]);
+
+  // T16: who made whom. A made brain is listed under its maker; the maker's card lists what it made.
+  const makers = useMemo(() => {
+    const of = new Map<string, Brain>();
+    for (const b of conv.brains) {
+      const m = makerOf(conv, b);
+      if (m) of.set(b.id, m);
+    }
+    return of;
+  }, [conv]);
+  const madeBy = (makerId: string) => conv.brains.filter((b) => makers.get(b.id)?.id === makerId);
+  const q = query.trim().toLowerCase();
+  const visible = q ? conv.brains.filter((b) => b.name.toLowerCase().includes(q)) : conv.brains;
+  const groups: Array<{ maker: Brain | null; brains: Brain[] }> = [{ maker: null, brains: visible.filter((b) => !makers.has(b.id)) }];
+  for (const b of visible) {
+    const m = makers.get(b.id);
+    if (!m) continue;
+    const g = groups.find((x) => x.maker?.id === m.id);
+    if (g) g.brains.push(b);
+    else groups.push({ maker: m, brains: [b] });
+  }
+
   return (
     <div className="px-5 pt-4 pb-8">
       <p className="mb-4 text-[12.5px] leading-5 text-faint">
         Each brain is a persona with its own system prompt. All of them share the ledger: a brain sees its own lines as its replies, and everyone else's framed
         with their name.
       </p>
-      <div className="space-y-2.5">
-        {conv.brains.map((b) => (
-          <BrainCard
-            key={b.id}
-            brain={b}
-            open={openId === b.id}
-            onToggle={() => setOpenId((o) => (o === b.id ? null : b.id))}
-            fromImport={imported?.brain.id === b.id}
-            isDefault={b.id === conv.defaultBrainId}
-            messageCount={counts.get(b.id) ?? 0}
-            writing={writingBrainId === b.id}
-            onPayload={() => onPayload(b.id)}
-          >
-            {imported?.brain.id === b.id && <ImportedNotes imported={imported} onDismiss={() => setImported(null)} />}
-            <BrainEditor
-              conversationId={conv.id}
-              brain={b}
-              isDefault={b.id === conv.defaultBrainId}
-              messageCount={counts.get(b.id) ?? 0}
-              writing={writingBrainId === b.id}
-              model={model}
-              imagePlan={imagePlan}
-              onImageSettings={onImageSettings}
-              onSaved={onBrain}
-              onDefault={(id) => onPatch((c) => ({ ...c, defaultBrainId: id }))}
-              onDeleted={(id) => onPatch((c) => ({ ...c, brains: c.brains.filter((x) => x.id !== id) }))}
-              onPayload={() => onPayload(b.id)}
-            />
-          </BrainCard>
-        ))}
-      </div>
+      {conv.brains.length > 8 && (
+        <label className="mb-3 flex items-center gap-2 rounded-lg border border-line-strong bg-raised px-2.5">
+          <Search aria-hidden className="size-3.5 shrink-0 text-faint" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && query) {
+                e.stopPropagation();
+                setQuery("");
+              }
+            }}
+            placeholder={`Find one of ${conv.brains.length} brains`}
+            aria-label="Find a brain"
+            className="h-8 min-w-0 flex-1 bg-transparent text-[13px] text-fg outline-none placeholder:text-faint"
+          />
+          {query && (
+            <button type="button" onClick={() => setQuery("")} aria-label="Clear" className="grid size-6 place-items-center rounded text-faint hover:text-fg">
+              <X aria-hidden className="size-3.5" />
+            </button>
+          )}
+        </label>
+      )}
+      {visible.length === 0 && <p className="py-2 text-[12.5px] text-faint">No brain by that name.</p>}
+      {groups.map((g) =>
+        g.brains.length === 0 ? null : (
+          <section key={g.maker?.id ?? "brains"} aria-label={g.maker ? `Made by ${g.maker.name}` : "Brains"} className={g.maker ? "mt-5" : undefined}>
+            {g.maker && (
+              <h3 className="mb-2 flex items-center gap-1.5 text-[11.5px] font-semibold tracking-[0.06em] text-faint uppercase">
+                <BrainCircuit aria-hidden className="size-3.5" /> Made by {g.maker.name}
+                <span className="font-normal tabular-nums">· {g.brains.length}</span>
+              </h3>
+            )}
+            <div className="space-y-2.5">
+              {g.brains.map((b) => (
+                <BrainCard
+                  key={b.id}
+                  brain={b}
+                  open={openId === b.id}
+                  onToggle={() => setOpenId((o) => (o === b.id ? null : b.id))}
+                  fromImport={imported?.brain.id === b.id}
+                  focusNonce={openId === b.id ? focusNonce : 0}
+                  isDefault={b.id === conv.defaultBrainId}
+                  messageCount={counts.get(b.id) ?? 0}
+                  writing={writingBrainId === b.id}
+                  madeBy={makers.get(b.id) ?? null}
+                  onPayload={() => onPayload(b.id)}
+                >
+                  {imported?.brain.id === b.id && <ImportedNotes imported={imported} onDismiss={() => setImported(null)} />}
+                  <BrainEditor
+                    conversationId={conv.id}
+                    brain={b}
+                    isDefault={b.id === conv.defaultBrainId}
+                    messageCount={counts.get(b.id) ?? 0}
+                    writing={writingBrainId === b.id}
+                    model={model}
+                    imagePlan={imagePlan}
+                    onImageSettings={onImageSettings}
+                    onSaved={onBrain}
+                    onDefault={(id) => onPatch((c) => ({ ...c, defaultBrainId: id }))}
+                    onDeleted={(id) => {
+                      onPatch((c) => ({ ...c, brains: c.brains.filter((x) => x.id !== id) }));
+                      // T16: the newest made brain hands its number back to its maker (QA-8): show the maker's counter as it is now.
+                      if (makers.has(id)) {
+                        void api
+                          .call("conversation.get", { id: conv.id })
+                          .then((read) => onPatch((c) => ({ ...c, brains: read.brains })))
+                          .catch(() => {});
+                      }
+                    }}
+                    onPayload={() => onPayload(b.id)}
+                    messages={conv.messages}
+                    brains={conv.brains}
+                    maker={makers.get(b.id) ?? null}
+                    made={madeBy(b.id)}
+                    onJumpTo={onJumpTo}
+                    onOpenBrain={(id) => {
+                      setQuery("");
+                      setOpenId(id);
+                      setFocusNonce((n) => n + 1);
+                    }}
+                  />
+                </BrainCard>
+              ))}
+            </div>
+          </section>
+        ),
+      )}
       <div className="mt-3">
         {adding ? (
           <AddBrain
@@ -121,9 +222,11 @@ function BrainCard({
   open,
   onToggle,
   fromImport,
+  focusNonce,
   isDefault,
   messageCount,
   writing,
+  madeBy,
   onPayload,
   children,
 }: {
@@ -132,6 +235,10 @@ function BrainCard({
   onToggle(): void;
   /** Just brought in by brain.import: show its top, where the notes on what stayed behind are. */
   fromImport?: boolean;
+  /** T16: opened from elsewhere (a message's made brain or pin, another card): show its top. */
+  focusNonce?: number;
+  /** T16: the brain that made it, when it was made from a message. */
+  madeBy?: Brain | null;
   isDefault: boolean;
   messageCount: number;
   writing: boolean;
@@ -143,7 +250,7 @@ function BrainCard({
     const el = ref.current;
     if (!open || !el) return;
     const box = el.closest("#settings-body");
-    if (fromImport && box) {
+    if ((fromImport || focusNonce) && box) {
       // Its top, where the import's notes are. Scroll the panel only: scrollIntoView({block: "start"}) would scroll
       // the page itself too, and push the header off screen (T05 frontend lesson).
       const top = box.scrollTop + el.getBoundingClientRect().top - box.getBoundingClientRect().top - 12;
@@ -151,9 +258,14 @@ function BrainCard({
     } else {
       el.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
-  }, [open, fromImport]);
+  }, [open, fromImport, focusNonce]);
+  const extraPins = brain.pins.filter((p) => p.messageId !== brain.madeFrom).length;
+  // T16 first: what a dozen look-alike cards need told apart (which makes brains, which has pins), before what they share.
   const tags = [
     isDefault && "default",
+    brain.makes && `makes ${brain.makes.name.replace(MAKES_NUMBER, "N")}${brain.makes.enabled ? "" : " (off)"}`,
+    // A made brain always has the message it was made from pinned: only more than that is news.
+    extraPins > 0 && `${extraPins} pinned${brain.madeFrom ? " more" : ""}`,
     brain.kind === "image" && "image",
     brain.kind === "image" && (brain.shape ?? DEFAULT_SHAPE),
     brain.kind === "image" && brain.safeMode === false && "safe mode off",
@@ -162,6 +274,9 @@ function BrainCard({
     brain.stop.length > 0 && (brain.stop.length === 1 ? "stop sequence" : `${brain.stop.length} stop sequences`),
     brain.kind === "text" && brain.stop.length === 0 && "no stop sequence",
   ].filter((t): t is string => !!t);
+  // A made brain's prompt is its maker's blueprint, the same first line for every one of them, and its group already
+  // says who made it: its card is one line (T16, a dozen of them).
+  const oneLine = !!madeBy;
   const firstLine = brain.systemPrompt.trim().split("\n")[0];
   return (
     <div
@@ -174,7 +289,7 @@ function BrainCard({
           aria-expanded={open}
           aria-label={`${brain.name}${tags.length ? `, ${tags.join(", ")}` : ""}, ${plural(messageCount, "message")}`}
           onClick={onToggle}
-          className={cx("min-w-0 flex-1 rounded-xl px-3.5 text-left", open ? "py-3" : "pt-3 pb-2.5")}
+          className={cx("min-w-0 flex-1 rounded-xl px-3.5 text-left", open || oneLine ? "py-3" : "pt-3 pb-2.5")}
         >
           <span className="flex min-w-0 items-center gap-2">
             {/* The name keeps its room; the tags give way (clipped) when the card is narrow. */}
@@ -187,9 +302,9 @@ function BrainCard({
               ))}
             </span>
             {writing && <span className="shimmer shrink-0 text-[11.5px] font-medium">writing…</span>}
-            {open && <span className="ml-auto shrink-0 text-[11.5px] text-faint/80 tabular-nums">{plural(messageCount, "message")}</span>}
+            {(open || oneLine) && <span className="ml-auto shrink-0 text-[11.5px] text-faint/80 tabular-nums">{plural(messageCount, "message")}</span>}
           </span>
-          {!open && (
+          {!open && !oneLine && (
             <span className="mt-1.5 flex items-baseline gap-2 text-[12.5px]">
               <span className="min-w-0 flex-1 truncate text-faint">{firstLine}</span>
               <span className="shrink-0 text-[11.5px] text-faint/80 tabular-nums">{plural(messageCount, "message")}</span>

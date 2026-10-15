@@ -40,6 +40,9 @@ export function SettingsPanel({
   onBrain,
   onPatch,
   onPayload,
+  focusBrain,
+  onBrainFocused,
+  onJumpTo,
 }: {
   conv: Conversation;
   tab: SettingsTab;
@@ -56,6 +59,11 @@ export function SettingsPanel({
   onBrain(b: Brain): void;
   onPatch(fn: (c: Conversation) => Conversation): void;
   onPayload(brainId: string): void;
+  /** T16: open this brain's card (from a message's made brain or pin); the nonce re-opens the same one. */
+  focusBrain?: { id: string; nonce: number } | null;
+  onBrainFocused?(): void;
+  /** T16: show a message in the scrollback (a pin in a brain's card). */
+  onJumpTo(messageId: string): void;
 }) {
   const textModels = useModels("text");
   const imageModels = useModels("image");
@@ -112,6 +120,9 @@ export function SettingsPanel({
               onBrain={onBrain}
               onPatch={onPatch}
               onPayload={onPayload}
+              focusBrain={focusBrain ?? null}
+              onBrainFocused={onBrainFocused}
+              onJumpTo={onJumpTo}
               onImageSettings={() => {
                 onTab("conversation");
                 // Scroll the panel only: scrollIntoView would scroll the page itself too, and push the header off screen.

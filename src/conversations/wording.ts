@@ -19,8 +19,26 @@ export const IMAGE_STOP_NOTE =
 /** The payload view's and the brain editor's words for reasoning (design.md, "Reasoning on adds provider-side text"). */
 export const REASONING_NOTE = "Reasoning on: the provider adds a small hidden instruction we can't see or edit.";
 
-/** Brain badge colors, handed out in order to new brains (nextColor); the browser's color picker offers the same ones. */
-export const BRAIN_COLORS = ["#60a5fa", "#f59e0b", "#34d399", "#f472b6", "#a78bfa", "#f87171", "#22d3ee", "#a3e635"] as const;
+/**
+ * Brain badge colors, handed out in order to new brains (nextColor); the browser's color picker offers the same ones.
+ * T16 frontend: fourteen, not eight, since a brain per character puts a dozen or more at one table; they repeat after.
+ */
+export const BRAIN_COLORS = [
+  "#60a5fa",
+  "#f59e0b",
+  "#34d399",
+  "#f472b6",
+  "#a78bfa",
+  "#f87171",
+  "#22d3ee",
+  "#a3e635",
+  "#fb923c",
+  "#2dd4bf",
+  "#818cf8",
+  "#e879f9",
+  "#fde047",
+  "#fda4af",
+] as const;
 
 /**
  * The editable example every brain's final reminder starts with (T04). It is on for brains added beside the

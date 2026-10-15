@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client.ts";
 import { ApiError, errorMessage, isAbortError, retryOf } from "../../api/errors.ts";
-import { IMAGE_STOP_NOTE, type Brain, type Conversation, type LedgerMessage, type RetryRequest, type StreamYield } from "../../api/types.ts";
+import { IMAGE_STOP_NOTE, type Brain, type Conversation, type LedgerMessage, type PinRole, type RetryRequest, type StreamYield } from "../../api/types.ts";
 import { forBrowser } from "../../lib/format.ts";
 import { refreshConversations } from "../conversations/store.ts";
 
@@ -26,6 +26,11 @@ import { refreshConversations } from "../conversations/store.ts";
  * Dice (T09): a send can carry a roll (`turn` with `roll: true`). The server rolls; the roll arrives as a `message`
  * event, after your text's and before `start`, and is upserted like any message. Until it does, `pendingRoll`
  * stands in for it (a tumbling die, never a number). `roll()` just rolls (message.roll), asking no brain.
+ *
+ * Brains that make brains (T16): a new message from a maker makes a brain in the same write. The stream says so
+ * (`brain_made`, before `done`), as do message.add (`made`) and brain.make, and the brain joins the cast at once,
+ * marked `fresh` for this view (its button glows, its message offers a name). The maker's counter moved too, so the
+ * conversation is re-read once the reply is over. A delete that took a made brain (or pins) with it patches them out.
  */
 
 export type LiveReply = {
@@ -76,6 +81,15 @@ export type MessageActions = {
   remove(messageId: string): Promise<string | null>;
   /** `version` is 1-based, as the pager shows it. */
   selectVersion(messageId: string, version: number): Promise<string | null>;
+  /** T16: pin the message to a brain (brain.pin; `as` changes how an existing pin is sent), or unpin it. Allowed mid-reply. */
+  pin(messageId: string, brainId: string, as?: PinRole): Promise<string | null>;
+  unpin(messageId: string, brainId: string): Promise<string | null>;
+  /** T16: make a brain from the message with its author's blueprint (brain.make): the next name from the pattern, or `name`. */
+  make(messageId: string, name?: string): Promise<string | null>;
+  /** T16: "Said by": a brain id, or "player" (message.set-author). A ledger edit: refused mid-reply. */
+  setAuthor(messageId: string, as: string): Promise<string | null>;
+  /** T16: rename a brain (brain.update), from the message it was made from. */
+  renameBrain(brainId: string, name: string): Promise<string | null>;
   /** A new version of the last message, streaming in its place. Resolves to an up-front failure's message. */
   regenerate(messageId: string, ask?: RegenerateAsk): Promise<string | null>;
   /**
@@ -99,6 +113,8 @@ export type Chat = {
   busy: boolean;
   /** True while generation.stop is on its way. */
   stopping: boolean;
+  /** T16: brains made while this view was open (by a reply, an add, or by hand): new, and probably still to be named. */
+  fresh: ReadonlySet<string>;
   notice: ChatNotice | null;
   /**
    * Send a message (empty = the brain just responds), with a d20 roll after it when `roll` (T09: the server rolls).
@@ -184,6 +200,9 @@ export function useChat(id: string): Chat {
   const [live, setLive] = useState<LiveReply | null>(null);
   const [notice, setNotice] = useState<ChatNotice | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [fresh, setFresh] = useState<ReadonlySet<string>>(() => new Set());
+  /** A brain was made: its maker's counter moved, so re-read the conversation once nothing is streaming. */
+  const rereadAfter = useRef(false);
 
   const convRef = useRef<Conversation | null>(null);
   convRef.current = conv;
@@ -248,6 +267,17 @@ export function useChat(id: string): Chat {
     },
     [upsertMessage],
   );
+
+  /** T16: a brain was just made (a reply, an add, brain.make): into the cast at once, marked fresh; re-read after. */
+  const addMadeBrain = useCallback((brain: Brain) => {
+    setConv((c) => {
+      if (!c) return c;
+      const known = c.brains.some((b) => b.id === brain.id);
+      return { ...c, brains: known ? c.brains.map((b) => (b.id === brain.id ? brain : b)) : [...c.brains, brain] };
+    });
+    setFresh((f) => new Set(f).add(brain.id));
+    rereadAfter.current = true;
+  }, []);
 
   /** Re-read the whole conversation, unless a reply started meanwhile (its events are then the fresher truth). */
   const reload = useCallback(async () => {
@@ -331,6 +361,9 @@ export function useChat(id: string): Chat {
           flush();
           upsertMessage(ev.message);
           break;
+        case "brain_made":
+          addMadeBrain(ev.brain);
+          break;
         case "done":
           flush();
           if (ev.message) saveReply(ev.message, ev.spentUsd);
@@ -340,7 +373,7 @@ export function useChat(id: string): Chat {
       }
       return false;
     },
-    [upsertMessage, saveReply, flush, schedule],
+    [upsertMessage, saveReply, flush, schedule, addMadeBrain],
   );
 
   const fail = useCallback(
@@ -514,6 +547,13 @@ export function useChat(id: string): Chat {
     return () => clearTimeout(t);
   }, [conv, busy, reload]);
 
+  // T16: a brain was made, so its maker's counter moved: re-read once the reply (or the image prompt) is over.
+  useEffect(() => {
+    if (busy || !rereadAfter.current) return;
+    rereadAfter.current = false;
+    void reload().catch(() => {});
+  }, [busy, conv, reload]);
+
   const send = useCallback(
     async (content: string, brainId?: string, opts?: { roll?: boolean }): Promise<Unsent | null> => {
       const roll = opts?.roll === true;
@@ -635,6 +675,7 @@ export function useChat(id: string): Chat {
         // The stream this tab is reading delivers the saved message (or the `stopped` error) by itself.
         const head = r.message ? "Stopped. What had arrived is kept." : r.error ? forBrowser(r.error.message) : "Stopped.";
         setNotice({ tone: "info", message: head, ...(r.note ? { note: r.note } : {}) });
+        if (r.made) addMadeBrain(r.made); // the stream says so too; whichever lands first
         watchCost();
       } else if (r.painting?.length) {
         // The prompt was already saved when the stop arrived: what is left is an image, which no stop touches.
@@ -645,7 +686,7 @@ export function useChat(id: string): Chat {
     } finally {
       setStopping(false);
     }
-  }, [id, stopping, watchCost]);
+  }, [id, stopping, watchCost, addMadeBrain]);
 
   /** A ledger command's failure, in words for where it happened. A 409 also starts showing that reply. */
   const ledgerFailure = useCallback(
@@ -687,8 +728,23 @@ export function useChat(id: string): Chat {
       const m = convRef.current?.messages.find((x) => x.id === messageId);
       if (m && imagePending(m)) return IMAGE_BUSY;
       try {
-        await api.call("message.delete", { conversation: id, message: messageId });
-        setConv((c) => c && { ...c, messages: c.messages.filter((m) => m.id !== messageId) });
+        const r = await api.call("message.delete", { conversation: id, message: messageId });
+        // T16: a brain made from it that never spoke went with it; every other pin of it went too.
+        const gone = new Set((r.brainsDeleted ?? []).map((b) => b.brainId));
+        setConv(
+          (c) =>
+            c && {
+              ...c,
+              messages: c.messages.filter((m) => m.id !== messageId),
+              brains: c.brains
+                .filter((b) => !gone.has(b.id))
+                .map((b) =>
+                  b.madeFrom === messageId || b.pins.some((p) => p.messageId === messageId)
+                    ? { ...b, pins: b.pins.filter((p) => p.messageId !== messageId), madeFrom: b.madeFrom === messageId ? undefined : b.madeFrom }
+                    : b,
+                ),
+            },
+        );
         void reload().catch(() => {}); // the server pinned the running total; pick it up
         void refreshConversations();
         return null;
@@ -710,6 +766,82 @@ export function useChat(id: string): Chat {
       }
     },
     [id, upsertMessage, ledgerFailure],
+  );
+
+  const replaceBrain = useCallback(
+    (brain: Brain) =>
+      setConv((c) => {
+        if (!c) return c;
+        const known = c.brains.some((b) => b.id === brain.id);
+        return { ...c, brains: known ? c.brains.map((b) => (b.id === brain.id ? brain : b)) : [...c.brains, brain] };
+      }),
+    [],
+  );
+
+  const pin = useCallback(
+    async (messageId: string, brainId: string, as?: PinRole) => {
+      try {
+        replaceBrain((await api.call("brain.pin", { conversation: id, brain: brainId, message: messageId, ...(as ? { as } : {}) })).brain);
+        return null;
+      } catch (err) {
+        return ledgerFailure(err);
+      }
+    },
+    [id, replaceBrain, ledgerFailure],
+  );
+
+  const unpin = useCallback(
+    async (messageId: string, brainId: string) => {
+      try {
+        replaceBrain((await api.call("brain.unpin", { conversation: id, brain: brainId, message: messageId })).brain);
+        return null;
+      } catch (err) {
+        return ledgerFailure(err);
+      }
+    },
+    [id, replaceBrain, ledgerFailure],
+  );
+
+  const make = useCallback(
+    async (messageId: string, name?: string) => {
+      try {
+        const r = await api.call("brain.make", { conversation: id, message: messageId, ...(name ? { name } : {}) });
+        addMadeBrain(r.brain);
+        if (!busyRef.current) {
+          rereadAfter.current = false;
+          void reload().catch(() => {});
+        }
+        return null;
+      } catch (err) {
+        return ledgerFailure(err);
+      }
+    },
+    [id, addMadeBrain, reload, ledgerFailure],
+  );
+
+  const setAuthor = useCallback(
+    async (messageId: string, as: string) => {
+      if (busyRef.current) return BUSY_LEDGER;
+      try {
+        upsertMessage((await api.call("message.set-author", { conversation: id, message: messageId, as })).message);
+        return null;
+      } catch (err) {
+        return ledgerFailure(err);
+      }
+    },
+    [id, upsertMessage, ledgerFailure],
+  );
+
+  const renameBrain = useCallback(
+    async (brainId: string, name: string) => {
+      try {
+        replaceBrain(await api.call("brain.update", { conversation: id, brain: brainId, name }));
+        return null;
+      } catch (err) {
+        return errorMessage(err);
+      }
+    },
+    [id, replaceBrain],
   );
 
   const repaint = useCallback(
@@ -741,8 +873,8 @@ export function useChat(id: string): Chat {
   );
 
   const actions = useMemo<MessageActions>(
-    () => ({ edit, remove, selectVersion, regenerate, repaint }),
-    [edit, remove, selectVersion, regenerate, repaint],
+    () => ({ edit, remove, selectVersion, regenerate, repaint, pin, unpin, make, setAuthor, renameBrain }),
+    [edit, remove, selectVersion, regenerate, repaint, pin, unpin, make, setAuthor, renameBrain],
   );
 
   const retry = useCallback(async () => {
@@ -768,7 +900,9 @@ export function useChat(id: string): Chat {
     async (as: string, content: string) => {
       if (busyRef.current) return BUSY_LEDGER;
       try {
-        upsertMessage((await api.call("message.add", { conversation: id, as, content })).message);
+        const r = await api.call("message.add", { conversation: id, as, content });
+        upsertMessage(r.message);
+        if (r.made) addMadeBrain(r.made); // T16: words in a maker's mouth make a brain too
         setNotice(null);
         void refreshConversations();
         return null;
@@ -776,7 +910,7 @@ export function useChat(id: string): Chat {
         return ledgerFailure(err);
       }
     },
-    [id, upsertMessage, ledgerFailure],
+    [id, upsertMessage, ledgerFailure, addMadeBrain],
   );
 
   const roll = useCallback(async () => {
@@ -802,6 +936,7 @@ export function useChat(id: string): Chat {
     live,
     busy,
     stopping,
+    fresh,
     notice,
     send,
     stop,
@@ -812,15 +947,7 @@ export function useChat(id: string): Chat {
     dismissLive: useCallback(() => setLive((l) => (l?.phase === "failed" ? null : l)), []),
     dismissNotice: useCallback(() => setNotice(null), []),
     replaceConversation: useCallback((next: Conversation) => setConv(next), []),
-    replaceBrain: useCallback(
-      (brain: Brain) =>
-        setConv((c) => {
-          if (!c) return c;
-          const known = c.brains.some((b) => b.id === brain.id);
-          return { ...c, brains: known ? c.brains.map((b) => (b.id === brain.id ? brain : b)) : [...c.brains, brain] };
-        }),
-      [],
-    ),
+    replaceBrain,
     patch: useCallback((fn: (c: Conversation) => Conversation) => setConv((c) => c && fn(c)), []),
   };
 }

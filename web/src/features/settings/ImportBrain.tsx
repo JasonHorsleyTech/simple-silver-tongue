@@ -107,7 +107,7 @@ export function ImportBrainPicker({ conv, onImported }: { conv: Conversation; on
                         >
                           <span className="flex min-w-0 items-center gap-1.5">
                             <BrainBadge name={b.name} color={b.color ?? BRAIN_COLORS[i % BRAIN_COLORS.length]!} className="max-w-[70%]" />
-                            <BrainTags kind={b.kind} reasoning={b.reasoning} />
+                            <BrainTags kind={b.kind} reasoning={b.reasoning} makes={b.makes} />
                             {taken(conv, b.name) && <span className="shrink-0 text-[11.5px] text-faint">· one here already</span>}
                           </span>
                           {b.about && <span className="mt-1 block text-[12.5px] leading-[1.45] text-muted">{b.about}</span>}

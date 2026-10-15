@@ -495,3 +495,39 @@
     transition: none;
   }
 }
+
+/* T16: a brain made while you watch: its button (and "+N" when it is in there) glows a few times in its color. */
+[data-fresh] {
+  animation: ss-fresh 1.5s ease-out 4;
+}
+@keyframes ss-fresh {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--glow, var(--color-silver)) 75%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 8px transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-fresh] {
+    animation: none;
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--glow, var(--color-silver)) 55%, transparent);
+  }
+}
+
+/* T16: a message you jumped to (a pin in a brain's card): it lights up for a moment so you find it. */
+.ss-flash {
+  animation: ss-flash 1.8s ease-out 1;
+  border-radius: 12px;
+}
+@keyframes ss-flash {
+  0%,
+  35% {
+    background-color: rgb(142 174 230 / 0.12);
+    box-shadow: 0 0 0 8px rgb(142 174 230 / 0.12);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 8px transparent;
+  }
+}

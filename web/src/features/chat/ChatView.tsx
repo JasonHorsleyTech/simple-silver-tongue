@@ -1,10 +1,11 @@
 import { BookOpen, PenLine, Plus, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { Spinner } from "../../components/Spinner.tsx";
+import { brainActivity } from "../../lib/cast.ts";
 import { cx } from "../../lib/cx.ts";
 import { drafts } from "../../lib/drafts.ts";
 import { Link } from "../../lib/router.tsx";
@@ -51,6 +52,15 @@ export function ChatView({ id }: { id: string }) {
     [],
   );
   const docked = useMediaQuery("(min-width: 1180px)");
+  /** T16: a brain card to open in Settings → Brains (a message's made brain, a brain it is pinned to). */
+  const [focusBrain, setFocusBrain] = useState<{ id: string; nonce: number } | null>(null);
+  /** T16: who keeps a place on the composer's row when not every brain fits (the most recently active). */
+  const brainsNow = conv?.brains;
+  const messagesNow = conv?.messages;
+  const activity = useMemo(
+    () => (brainsNow && messagesNow ? brainActivity({ brains: brainsNow, messages: messagesNow }) : new Map<string, number>()),
+    [brainsNow, messagesNow],
+  );
 
   const setDraft = useCallback(
     (v: string) => {
@@ -98,6 +108,42 @@ export function ChatView({ id }: { id: string }) {
       return errorMessage(err);
     }
   }
+
+  const brainFocused = useCallback(() => setFocusBrain(null), []);
+  const focusCount = useRef(0);
+
+  /** T16: open Settings → Brains on one brain's card. */
+  const openBrain = useCallback(
+    (brainId: string) => {
+      openSettings("brains");
+      focusCount.current += 1;
+      setFocusBrain({ id: brainId, nonce: focusCount.current });
+    },
+    [openSettings],
+  );
+
+  /**
+   * T16: show a message in the scrollback (a pin in a brain's card): the scrollback scrolls to it (the box only, never
+   * the page) and it lights up for a moment. A drawer closes first, since it covers the chat.
+   */
+  const jumpToMessage = useCallback(
+    (messageId: string) => {
+      if (!docked) toggleSettings(false);
+      setTimeout(() => {
+        const box = document.querySelector<HTMLElement>("[data-scrollback]");
+        const el = document.getElementById(messageId);
+        if (!box || !el) return;
+        const b = box.getBoundingClientRect();
+        const r = el.getBoundingClientRect();
+        box.scrollTo({ top: box.scrollTop + r.top - b.top - Math.max(24, Math.min(120, (box.clientHeight - r.height) / 2)), behavior: "smooth" });
+        el.classList.remove("ss-flash");
+        void el.offsetWidth; // restart the animation
+        el.classList.add("ss-flash");
+        setTimeout(() => el.classList.remove("ss-flash"), 2000);
+      }, docked ? 0 : 60);
+    },
+    [docked, toggleSettings],
+  );
 
   /** Writing as someone adds words with no roll: choosing to do so puts the die down. */
   const setWriteAs = useCallback((as: string | null) => {
@@ -202,6 +248,9 @@ export function ChatView({ id }: { id: string }) {
       onBrain={chat.replaceBrain}
       onPatch={chat.patch}
       onPayload={(brainId) => setPayload({ kind: "turn", brainId })}
+      focusBrain={focusBrain}
+      onBrainFocused={brainFocused}
+      onJumpTo={jumpToMessage}
     />
   );
 
@@ -222,6 +271,7 @@ export function ChatView({ id }: { id: string }) {
           chat={chat}
           onRetry={() => void chat.retry()}
           onPreviewRegenerate={previewRegenerate}
+          onOpenBrain={openBrain}
           empty={
             <EmptyConversation
               conv={conv}
@@ -259,6 +309,8 @@ export function ChatView({ id }: { id: string }) {
           onWriteAs={setWriteAs}
           brains={conv.brains}
           defaultBrainId={conv.defaultBrainId}
+          activity={activity}
+          fresh={chat.fresh}
           busy={chat.busy}
           status={status}
           onStop={() => void chat.stop()}
@@ -382,7 +434,7 @@ function EmptyConversation({
             {conv.brains.map((b) => (
               <span key={b.id} className="inline-flex max-w-full items-center gap-1">
                 <BrainBadge name={b.name} color={b.color} />
-                <BrainTags kind={b.kind} reasoning={b.reasoning.enabled ? b.reasoning.effort : null} />
+                <BrainTags kind={b.kind} reasoning={b.reasoning.enabled ? b.reasoning.effort : null} makes={b.makes?.enabled ? b.makes.name : null} />
               </span>
             ))}
           </span>

@@ -1,6 +1,7 @@
 import { CommandError } from "../lib/errors.ts";
 import { newId } from "../lib/ids.ts";
 import { makeImageBrain, nextColor } from "./defaults.ts";
+import { freeMadeName, madeName } from "./naming.ts";
 import type { Brain, BrainMaker, Conversation, LedgerMessage } from "./types.ts";
 import { MAKES_NUMBER } from "./wording.ts";
 
@@ -12,28 +13,16 @@ import { MAKES_NUMBER } from "./wording.ts";
  * Character Creator's "Character {{n}}" and a Place Creator's "Place {{n}}" are the same code.
  */
 
-/** The word message.add --as uses for you (commands/brains.ts PLAYER), so no brain may be called that. */
-const RESERVED = "player";
-
-/** A name a new brain can't take: another brain's (ignoring case), "player", or one that looks like an id. */
-function taken(conv: Pick<Conversation, "brains">, name: string): boolean {
-  const low = name.toLowerCase();
-  return low === RESERVED || /^b_[a-z0-9]+$/.test(name) || conv.brains.some((b) => b.name.toLowerCase() === low);
-}
-
-/** The pattern with a number in it: "Character {{n}}" → "Character 4". */
-export const madeName = (pattern: string, n: number) => pattern.split(MAKES_NUMBER).join(String(n)).trim();
+/** The pattern with a number in it: "Character {{n}}" → "Character 4" (naming.ts, shared with the browser). */
+export { madeName };
 
 /**
  * The name the maker's next brain gets, and its number: the counter, moved past any name already taken (a brain
  * someone called "Character 4" by hand), so two brains never share a name.
  */
 export function nextMadeName(conv: Pick<Conversation, "brains">, maker: BrainMaker): { name: string; n: number } {
-  const start = Math.max(1, Math.floor(maker.next) || 1);
-  for (let n = start; n < start + 10_000; n++) {
-    const name = madeName(maker.name, n);
-    if (!taken(conv, name)) return { name, n };
-  }
+  const free = freeMadeName(conv.brains, maker);
+  if (free) return free;
   // Only a pattern without {{n}}, or one whose names look like ids, gets here: both are refused when set, so only a
   // hand-edited file could have one (T16 QA-3).
   throw new CommandError(

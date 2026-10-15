@@ -1,8 +1,8 @@
-import { Check, Copy, RotateCw } from "lucide-react";
+import { Check, Copy, Pin, RotateCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import { ROLL_PREVIEW_NOTE, stopNote, type Brain, type ChatMessage, type Preview } from "../../api/types.ts";
+import { PIN_AS_WORDS, ROLL_PREVIEW_NOTE, stopNote, type Brain, type ChatMessage, type PinRole, type Preview } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { D20Icon } from "../../components/D20.tsx";
 import { Dialog } from "../../components/Dialog.tsx";
@@ -183,7 +183,8 @@ export function PayloadDialog({
         <div className={cx("space-y-4 transition-opacity", loading && "opacity-60")} aria-busy={loading || undefined}>
           {preview.notes.map((n) => (
             // The stop note says what a visible setting does; the rest warn of something we can't see or that will fail.
-            <Notice key={n} tone={(body.stop?.length && n === stopNote(body.stop)) || n === ROLL_PREVIEW_NOTE ? "info" : "warn"}>
+            // T16: the pin and maker notes say what a visible setting does, too.
+            <Notice key={n} tone={(body.stop?.length && n === stopNote(body.stop)) || n === ROLL_PREVIEW_NOTE || isT16Note(n, preview.brainName) ? "info" : "warn"}>
               {n}
             </Notice>
           ))}
@@ -213,7 +214,7 @@ export function PayloadDialog({
                 </h3>
                 <ol className="space-y-2">
                   {messages.map((m, i) => (
-                    <PayloadMessage key={i} index={i} message={m} rollLine={i === rollAt} />
+                    <PayloadMessage key={i} index={i} message={m} rollLine={i === rollAt} pinned={preview.pinned?.find((p) => p.index === i)} />
                   ))}
                 </ol>
               </section>
@@ -308,14 +309,37 @@ const ROLE_TONE: Record<ChatMessage["role"], string> = {
   tool: "text-violet-200/90 bg-violet-300/[0.08] border-violet-300/20",
 };
 
-/** `rollLine`: the roll's own line in a roll preview (T09): its {{roll}} is where the server puts the number. */
-function PayloadMessage({ index, message: m, rollLine }: { index: number; message: ChatMessage; rollLine?: boolean }) {
+/** T16: the payload notes on pinned messages (pinnedNote) and on a maker's side effect (makesNote): information, not warnings. */
+function isT16Note(n: string, brainName: string): boolean {
+  return n.startsWith(`Pinned to ${brainName}: `) || n.startsWith(`${brainName} makes a brain from each new message: `);
+}
+
+/**
+ * `rollLine`: the roll's own line in a roll preview (T09): its {{roll}} is where the server puts the number.
+ * `pinned` (T16): a message pinned to this brain, sent here, right after the setup, rather than at its place.
+ */
+function PayloadMessage({
+  index,
+  message: m,
+  rollLine,
+  pinned,
+}: {
+  index: number;
+  message: ChatMessage;
+  rollLine?: boolean;
+  pinned?: { messageId: string; as: PinRole } | undefined;
+}) {
   return (
     <li className="overflow-hidden rounded-lg border border-line bg-canvas">
       <div className="flex items-center gap-2 border-b border-line bg-panel px-3 py-1.5">
         <span className="font-mono text-[11px] text-faint tabular-nums">[{index}]</span>
         <span className={cx("rounded border px-1.5 py-px font-mono text-[11px]", ROLE_TONE[m.role])}>{m.role}</span>
         {m.role === "tool" && <span className="font-mono text-[11px] text-faint">tool_call_id {m.tool_call_id}</span>}
+        {pinned && (
+          <span title={`Pinned: sent here, right after the setup, ${PIN_AS_WORDS[pinned.as]}, and not at its place in the story`} className="inline-flex min-w-0 items-center gap-1 text-[11px] text-muted">
+            <Pin aria-hidden className="size-3 shrink-0" /> <span className="truncate">pinned {pinned.messageId}</span>
+          </span>
+        )}
         {rollLine && (
           <span className="inline-flex items-center gap-1 text-[11px] text-muted">
             <D20Icon className="size-3" /> your roll, rolled when you send

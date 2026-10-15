@@ -41,6 +41,12 @@ export { SETUP_ROLES } from "../../../src/conversations/types.ts";
 export { DEFAULT_PIN_AS, PIN_ROLES } from "../../../src/conversations/types.ts";
 
 /**
+ * T16: how a maker names the brains it makes, the server's own rule: the name the next one gets (`freeMadeName`, which
+ * skips names already taken), and whether a made brain still has the name its pattern gave it (`isPatternName`).
+ */
+export { freeMadeName, isPatternName, madeName } from "../../../src/conversations/naming.ts";
+
+/**
  * The server's own image request rule: an image brain's shapes and what each is sent as, and what an image costs
  * with the conversation's settings (the image model picker shows it). Pure, so the browser runs the same code.
  */
