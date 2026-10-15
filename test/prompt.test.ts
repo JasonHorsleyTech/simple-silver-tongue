@@ -354,7 +354,7 @@ describe("planTurn and helpers", () => {
     assert.throws(() => planRegenerate(t2.conv, { thought: "x" }, DEEPSEEK), { code: "bad_request", message: /Muse's own note/ });
     t2.conv.messages.pop();
     muse.kind = "image";
-    assert.throws(() => planRegenerate(t2.conv, { thought: "x" }, DEEPSEEK), { code: "conflict", message: /Muse here is an image brain. Rename it/ });
+    assert.throws(() => planRegenerate(t2.conv, { thought: "x" }, DEEPSEEK), { code: "bad_brain", message: /Muse here is an image brain. Rename it/ });
     muse.kind = "text";
 
     // --wrap puts it in the thought template, {{brain}} the brain it is for; blank, or with a steer, is refused.

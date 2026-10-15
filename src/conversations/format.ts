@@ -142,7 +142,8 @@ export function formatMessage({ conversationId, author, message: m }: MessageVie
  */
 function thoughtBlock(v: MessageVersion, kind: LedgerMessage["kind"], opts: FormatOpts | undefined, count: { folded: number }): string[] {
   if (v.thought === undefined || (kind === "text" && v.content.startsWith(v.thought.trimEnd()))) return [];
-  return ["(the fresh take's note it answered, as sent; display only:)", shown(v.thought, "text", opts, count)];
+  // Worded for T15's versions too (T17 QA-5): theirs was the brain's own planted thought, not a note it answered.
+  return ["(the fresh take's thought, as sent; display only:)", shown(v.thought, "text", opts, count)];
 }
 
 /** The command that shows one message's hidden notes. */

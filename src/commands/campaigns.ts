@@ -62,6 +62,8 @@ const version = z.object({
 /** One line for the lists and the browser's picker (T10 QA-7: a line break broke the CLI listing). */
 const about = z.string().regex(/^[^\r\n]*$/, "one line, with no line breaks");
 const campaignSchema = z.object({
+  /** A conversation.get --json carries it: which upgrades the file still needs (T17 QA-2). Not stored; import writes the current one. */
+  schemaVersion: z.number().optional(),
   /** One line for examples.list. Not sent to any model, and not stored. */
   about: about.optional(),
   title: title.optional(),
@@ -238,7 +240,9 @@ function toConversation(doc: Campaign, where: string): Conversation {
   };
   if (s.maxTokens) conv.settings.maxTokens = s.maxTokens;
   if (s.temperature !== undefined && s.temperature !== null) conv.settings.temperature = s.temperature;
-  upgradeTemplates(conv.templates); // T17: a file with T15's thought template gets the Muse's note, as a load does
+  // T17: a file with T15's thought template gets the Muse's note, as a load does; one that says it is from schema 7
+  // on (a conversation.get --json since T17) keeps its template as it is (T17 QA-2).
+  if ((doc.schemaVersion ?? 0) < 7) upgradeTemplates(conv.templates);
   return conv;
 }
 

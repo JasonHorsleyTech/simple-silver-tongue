@@ -28,8 +28,8 @@ import {
   type Reply,
 } from "../conversations/turn.ts";
 import type { Brain, ChatRequest, Conversation, LedgerMessage, MessageVersion, RetryRequest, Usage } from "../conversations/types.ts";
-import { IMAGE_STOP_NOTE, isMuse, STOP_BILL_NOTE } from "../conversations/wording.ts";
-import { badRequest, CommandError } from "../lib/errors.ts";
+import { IMAGE_STOP_NOTE, isMuse, MUSE_NAME, STOP_BILL_NOTE } from "../conversations/wording.ts";
+import { badRequest, CommandError, notFound } from "../lib/errors.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { activeVersion } from "../conversations/prompt.ts";
 import { command, streamCommand, type Ctx, type StreamEvent } from "../registry.ts";
@@ -350,15 +350,16 @@ function saveMuseNote(c: Conversation, plan: MuseNotePlan, beforeId: string): { 
     c.brains.push(muse);
     museCreated = true;
   }
-  if (muse.kind !== "text") throw new CommandError(409, "conflict", `${muse.name} became an image brain while this fresh take was being sent, so its note wasn't saved. Try again.`);
+  // Not `conflict` (T17 QA-3): the browser reads that as "a reply is being written" and never shows these words.
+  if (muse.kind !== "text") throw new CommandError(400, "bad_brain", `${muse.name} became an image brain while this fresh take was being sent, so its note wasn't saved. Rename it (brain.update --brain "${muse.name}" --name ...), and the next fresh take adds a text ${MUSE_NAME}.`);
   if (plan.isNew) {
     const at = c.messages.findIndex((m) => m.id === beforeId);
-    if (at < 0) throw new CommandError(409, "conflict", `${beforeId} was deleted while its fresh take was being sent.`);
+    if (at < 0) throw notFound(`${beforeId} was deleted while its fresh take was being sent.`);
     const message: LedgerMessage = { ...structuredClone(plan.message), author: { type: "brain", brainId: muse.id } };
     return { message, muse, museCreated, made: insertMessage(c, message, at) };
   }
   const note = c.messages.find((m) => m.id === plan.message.id);
-  if (!note) throw new CommandError(409, "conflict", `The Muse's note ${plan.message.id} was deleted while this fresh take was being sent.`);
+  if (!note) throw notFound(`The Muse's note ${plan.message.id} was deleted while this fresh take was being sent.`);
   const text = activeVersion(plan.message).content;
   if (activeVersion(note).content !== text) {
     note.versions.push(structuredClone(activeVersion(plan.message)));

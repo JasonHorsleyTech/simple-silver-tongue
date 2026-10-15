@@ -8,7 +8,8 @@ import { activeVersion, assembleRequest, nothingToAnswer, REASONING_NOTE, reason
 import { newMuse } from "./defaults.ts";
 import { nextMadeName } from "./makers.ts";
 import { partialPrompt, type ToolCallParts } from "./tool-call.ts";
-import { freshTakeNote, isMuse, makesNote, MUSE_NAME, PIN_AS_WORDS, pinnedNote, ROLL_PREVIEW_NOTE, STOP_REASONING_NOTE, stopNote } from "./wording.ts";
+import { findHidden, isAllHidden } from "./hidden.ts";
+import { freshTakeNote, isMuse, makesNote, MUSE_NAME, museMakesNote, PIN_AS_WORDS, pinnedNote, ROLL_PREVIEW_NOTE, STOP_REASONING_NOTE, stopNote } from "./wording.ts";
 import type { Brain, ChatRequest, Conversation, LedgerMessage, MessageVersion, Roll, Usage } from "./types.ts";
 
 /**
@@ -98,8 +99,8 @@ export type RegeneratePlan = {
 /**
  * T17: a fresh take's note, as the send will save it. It is the Muse's (the brain called Muse, added when there is
  * none), right before the message being regenerated: a new message, or, when the message right before is already
- * the Muse's note, a new version of that note (the same note, its own pager), or that note as it is when it already
- * says exactly this.
+ * the Muse's note (written by you: its active version is authored), a new version of that note (the same note, its
+ * own pager), or that note as it is when it already says exactly this.
  */
 export type MuseNotePlan = {
   /** The note as it will be: a new message by the Muse, or the note right before the message with this version active. */
@@ -176,11 +177,14 @@ export function planRegenerate(conv: Conversation, opts: { message?: string; ste
   }
   if (fresh) {
     const n = fresh.note;
+    const text = activeVersion(n.message).content;
+    const shown = isAllHidden(text) ? "folded" : findHidden(text).length ? "partly" : "plain";
     plan.thought = thought;
     plan.note = n;
     plan.notes.unshift(
-      freshTakeNote({ brain: brain.name, messageId: message.id, noteId: n.message.id, muse: n.muse.name, isNew: n.isNew, version: n.version + 1, same: n.same, museCreated: n.museCreated }),
+      freshTakeNote({ brain: brain.name, messageId: message.id, noteId: n.message.id, muse: n.muse.name, isNew: n.isNew, version: n.version + 1, same: n.same, museCreated: n.museCreated, shown }),
     );
+    if (n.isNew && n.muse.makes?.enabled) plan.notes.push(museMakesNote(n.muse.name, nextMadeName(conv, n.muse.makes).name));
   }
   return plan;
 }
@@ -188,16 +192,18 @@ export function planRegenerate(conv: Conversation, opts: { message?: string; ste
 /**
  * T17: where a fresh take's note goes, and the ledger the request is built from with it in place (`view`; nothing
  * is saved). The note is written by the Muse, the brain called Muse (a new one, from newMuse, when there is none);
- * it goes right before `message`, or, when the message right before is already the Muse's note, becomes that
- * note's new version (or stays as it is, when it already says exactly this). Refused when the Muse is an image
- * brain (rename it, and the next fresh take adds a text one), or when `message` is the Muse's own note.
+ * it goes right before `message`, or, when the message right before is already the Muse's note (one you wrote,
+ * not one it generated), becomes that note's new version (or stays as it is, when it already says exactly this).
+ * Refused when the Muse is an image brain (rename it, and the next fresh take adds a text one), or when `message`
+ * is the Muse's own note.
  */
 export function planMuseNote(conv: Conversation, message: LedgerMessage, brain: Brain, text: string): { note: MuseNotePlan; view: Conversation } {
   const existing = conv.brains.find(isMuse);
   if (existing && existing.kind !== "text") {
+    // A 400, not a 409: nothing is running, and the browser reads every `conflict` as "a reply is being written" (T17 QA-3).
     throw new CommandError(
-      409,
-      "conflict",
+      400,
+      "bad_brain",
       `A fresh take's note is written by the brain called ${MUSE_NAME}, and ${existing.name} here is an image brain. Rename it (brain.update --brain "${existing.name}" --name ...), and the next fresh take adds a text ${MUSE_NAME}.`,
     );
   }
@@ -209,7 +215,10 @@ export function planMuseNote(conv: Conversation, message: LedgerMessage, brain: 
   const prev = at > 0 ? conv.messages[at - 1] : undefined;
   const createdAt = nowIso();
   const version: MessageVersion = { content: text, source: "authored", createdAt };
-  const ours = existing && prev && prev.kind === "text" && prev.author.type === "brain" && prev.author.brainId === existing.id ? prev : null;
+  // Only a note you wrote (an earlier fresh take's, or one added by hand) is re-versioned. Anything the Muse brain
+  // generated on a turn of its own (its own twist, or a poem from a brain that only happens to be called Muse) is
+  // its own message, and stays: the fresh take's note goes in after it (T17 QA-1).
+  const ours = existing && prev && prev.kind === "text" && prev.author.type === "brain" && prev.author.brainId === existing.id && activeVersion(prev).source === "authored" ? prev : null;
   let note: MuseNotePlan;
   let messages: LedgerMessage[];
   if (ours) {

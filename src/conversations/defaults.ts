@@ -2,7 +2,7 @@ import { DEFAULT_IMAGE_MODEL, DEFAULT_TEXT_MODEL } from "../config.ts";
 import { DEFAULT_SHAPE } from "../images/request.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { DEFAULT_PIN_AS, SCHEMA_VERSION, SETUP_ROLES, type Brain, type Conversation, type SetupMessage, type SetupRole, type Templates } from "./types.ts";
-import { BRAIN_COLORS, DEFAULT_SETUP_LABEL, DEFAULT_TOOL, FRAMING_STOP, MUSE_NAME, MUSE_SYSTEM_PROMPT, REMINDER_EXAMPLE, setupPrefill } from "./wording.ts";
+import { BRAIN_COLORS, DEFAULT_SETUP_LABEL, DEFAULT_TOOL, FRAMING_STOP, MUSE_NAME, MUSE_REMINDER, MUSE_SYSTEM_PROMPT, REMINDER_EXAMPLE, setupPrefill } from "./wording.ts";
 
 /**
  * Starting values for new conversations, brains and setup messages. Every string here reaches a model, so
@@ -95,7 +95,8 @@ export function upgradeConversation(conv: Conversation): Conversation {
   if (conv.templates && typeof conv.templates === "object") {
     if (typeof conv.templates.roll !== "string") conv.templates.roll = DEFAULT_TEMPLATES.roll;
     if (typeof conv.templates.thought !== "string") conv.templates.thought = DEFAULT_TEMPLATES.thought; // version 5 (T15)
-    upgradeTemplates(conv.templates); // version 7 (T17)
+    // Version 7 (T17), once: a file already at 7 keeps whatever template it has, T15's wording too (T17 QA-2).
+    if (!(conv.schemaVersion >= 7)) upgradeTemplates(conv.templates);
   }
   // Version 4 (T13): a setup message without a role (or with one we don't know) was sent as a user message, and still is.
   for (const s of Array.isArray(conv.setup) ? conv.setup : []) if (s && !SETUP_ROLES.includes(s.role)) s.role = "user";
@@ -108,10 +109,13 @@ export function upgradeConversation(conv: Conversation): Conversation {
 
 /**
  * T17: the Muse, as the first fresh take (or message.add --as Muse) adds it: a text brain called Muse, with the
- * pre-filled system prompt and the next free color, never the default. Its reminder is on, as any added brain's.
+ * pre-filled system prompt and the next free color, never the default. Its reminder is on, as any added brain's, with
+ * words of its own (MUSE_REMINDER).
  */
 export function newMuse(conv: Pick<Conversation, "brains">): Brain {
-  return newBrain({ name: MUSE_NAME, systemPrompt: MUSE_SYSTEM_PROMPT, color: nextColor(conv), isDefault: false });
+  const muse = newBrain({ name: MUSE_NAME, systemPrompt: MUSE_SYSTEM_PROMPT, color: nextColor(conv), isDefault: false });
+  muse.finalReminder.content = MUSE_REMINDER; // T17 triage: its own, for its own turns (the note's lines, the dice)
+  return muse;
 }
 
 /** What a brain needs to be an image brain: tool text, safe mode (on by default) and a shape. Existing values are kept. */

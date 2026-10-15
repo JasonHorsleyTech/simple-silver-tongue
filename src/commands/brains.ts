@@ -371,7 +371,9 @@ Reasoning is off by default. Turning it on is an opt-in: the provider then adds 
 or one written with message.add --as) makes a brain from the blueprint (--makes.blueprint.*: everything brain.add
 takes), named from the pattern (--makes.name "Character ${MAKES_NUMBER}", numbered by a counter that only counts up),
 with that message pinned to it (--makes.pin-as). New versions of the message make none. --no-makes.enabled keeps the
-setting and makes nothing; --makes null removes it. Starting one needs the pattern and the blueprint's system prompt.`,
+setting and makes nothing; --makes null removes it. Starting one needs the pattern and the blueprint's system prompt.
+The brain called Muse writes fresh takes' notes (T17): renamed, it is just another brain (its notes stay, under its
+new name), and the next fresh take adds a new Muse.`,
   args: z.object({
     conversation: conversationId,
     brain: brainRef.optional(),

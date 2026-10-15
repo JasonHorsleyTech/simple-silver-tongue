@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { DEFAULT_TEMPLATES, T15_THOUGHT_TEMPLATE } from "../src/conversations/defaults.ts";
 import { SCHEMA_VERSION, type Brain, type ChatRequest, type Conversation, type LedgerMessage } from "../src/conversations/types.ts";
-import { MUSE_SYSTEM_PROMPT } from "../src/conversations/wording.ts";
+import { MUSE_REMINDER, MUSE_SYSTEM_PROMPT } from "../src/conversations/wording.ts";
 import { createUser } from "../src/storage/users.ts";
 import { startTestServer } from "./helpers.ts";
 
@@ -40,6 +40,7 @@ describe("a fresh take: the Muse's note right before the message, then the brain
   const events = async (res: Response) => (await res.text()).trim().split("\n").map((l) => JSON.parse(l));
   const streamed = (evs: { type: string; delta?: string }[]) => evs.filter((e) => e.type === "delta").map((e) => e.delta).join("");
   const muse = (c: Conversation) => c.brains.find((b) => b.name === "Muse");
+  const activeVersionText = (m: LedgerMessage) => m.versions[m.activeVersion]!.content;
   const start = async () => {
     await ok(["auth.login", "--username", "dev-t17", "--password", ""]);
     const c = (await json(["conversation.create", "--title", "Tavern", "--system-prompt", "You are the GM."])) as Conversation;
@@ -74,7 +75,7 @@ describe("a fresh take: the Muse's note right before the message, then the brain
 
     const after = await get(c);
     const m = muse(after)!;
-    assert.deepEqual([m.kind, m.systemPrompt, m.id === after.defaultBrainId], ["text", MUSE_SYSTEM_PROMPT, false]);
+    assert.deepEqual([m.kind, m.systemPrompt, m.finalReminder, m.id === after.defaultBrainId], ["text", MUSE_SYSTEM_PROMPT, { enabled: true, content: MUSE_REMINDER }, false]);
     assert.deepEqual(after.messages.map((x) => x.author.type === "brain" ? (x.author.brainId === m.id ? "muse" : "gm") : "you"), ["you", "muse", "gm"]);
     const note = after.messages[1]!;
     assert.deepEqual([note.versions.length, note.versions[0]!.content, note.versions[0]!.source], [1, NOTE, "authored"]);
@@ -93,7 +94,7 @@ describe("a fresh take: the Muse's note right before the message, then the brain
     ]);
     assert.ok(!JSON.stringify(next).includes(v1));
     const shown = (await ok(["message.get", "--conversation", c, "--message", after.messages[2]!.id])).stdout;
-    assert.match(shown, /version 2\/2 \(active\) · generated · fresh take · \$[0-9.]+ ──\nMOCK reply[^\n]*\n\(the fresh take's note it answered, as sent; display only:\)\n\[Hidden · 3 lines\]/);
+    assert.match(shown, /version 2\/2 \(active\) · generated · fresh take · \$[0-9.]+ ──\nMOCK reply[^\n]*\n\(the fresh take's thought, as sent; display only:\)\n\[Hidden · 3 lines\]/);
     assert.match((await ok(["conversation.get", "--id", c])).stdout, /Muse[^\n]*\n\[Hidden · 3 lines\]/, "the note folds like any hidden note");
 
     // --wrap fills the template, {{brain}} included; a steer with it, a blank one, or one outside a regenerate is a 400.
@@ -261,11 +262,58 @@ describe("a fresh take: the Muse's note right before the message, then the brain
     // A campaign file (conversation.get --json is one) brings the Muse and its note; T15's template is swapped there too.
     const doc = await get(c);
     doc.templates.thought = T15_THOUGHT_TEMPLATE;
+    doc.schemaVersion = 6;
     const r = await t.cli(["conversation.import", "--campaign", "-", "--json"], { stdin: JSON.stringify(doc) });
     assert.equal(r.code, 0, r.stderr);
     const imported = JSON.parse(r.stdout) as Conversation;
     assert.equal(imported.templates.thought, DEFAULT_TEMPLATES.thought);
     assert.equal(imported.messages[1]!.versions[0]!.content, NOTE);
     assert.equal(muse(imported)?.id, (imported.messages[1]!.author as { brainId: string }).brainId);
+
+    // T17 QA-2: the swap is once, for files from before schema 7. T15's wording, set on purpose since, is yours.
+    await ok(["conversation.update", "--id", imported.id, "--templates.thought", T15_THOUGHT_TEMPLATE]);
+    assert.equal((await get(imported.id)).templates.thought, T15_THOUGHT_TEMPLATE, "a schema-7 file keeps T15's wording");
+    const again = await get(imported.id);
+    const r2 = await t.cli(["conversation.import", "--campaign", "-", "--json"], { stdin: JSON.stringify(again) });
+    assert.equal(r2.code, 0, r2.stderr);
+    assert.equal((JSON.parse(r2.stdout) as Conversation).templates.thought, T15_THOUGHT_TEMPLATE, "and so does its export, imported");
+  });
+
+  test("the Muse's own messages (T17 triage): one it generated stays and the note goes in after it; an image Muse is a 400; the payload says what the note will do", async () => {
+    // QA-1: a brain called Muse that writes poems. Its poem, right before the reply, is not a note to re-version.
+    const c = await start();
+    await ok(["brain.add", "--conversation", c, "--name", "Muse", "--system-prompt", "You are a poet.", "--no-final-reminder.enabled"]);
+    await ok(["turn", "--conversation", c, "--brain", "Muse", "--content", "Write me a poem."]);
+    await ok(["turn", "--conversation", c]);
+    const poem = (await get(c)).messages.at(-2)!;
+    const IDEA2 = "Critique the poem kindly.";
+    const preview = await json(["prompt.preview", "--conversation", c, "--regenerate", "--thought", IDEA2]);
+    assert.equal(preview.regenerate.note.isNew, true, "a new note, after the poem");
+    assert.match(preview.notes[0], /the player sees it as written \(it has no ```hidden block/, "QA-5: a note with no hidden block isn't folded");
+    const r = await ok(["message.regenerate", "--conversation", c, "--thought", IDEA2]);
+    assert.match(r.stderr, /right before the reply: every brain reads it\]\nCritique the poem kindly\./, "QA-5: the CLI prints a note the player sees in full");
+    assert.deepEqual(lastSent(), preview.body);
+    const after = await get(c);
+    const p = after.messages.find((m) => m.id === poem.id)!;
+    assert.deepEqual([p.versions.length, p.activeVersion, p.versions[0]!.source], [1, 0, "generated"], "the poem is untouched");
+    assert.deepEqual(after.messages.slice(-3).map((m) => (m.id === poem.id ? "poem" : activeVersionText(m))), ["poem", IDEA2, activeVersionText(after.messages.at(-1)!)]);
+    // The note this fresh take wrote is the one the next one re-versions.
+    const second = await json(["prompt.preview", "--conversation", c, "--regenerate", "--thought", "Praise it instead."]);
+    assert.deepEqual([second.regenerate.note.isNew, second.regenerate.note.version], [false, 2]);
+
+    // QA-3: an image brain called Muse is a 400 bad_brain (the browser shows the words), not a 409 conflict.
+    const c2 = await start();
+    await ok(["brain.add", "--conversation", c2, "--name", "Muse", "--kind", "image", "--system-prompt", "Paint."]);
+    const res = await post("message.regenerate", { conversation: c2, thought: "x" });
+    assert.equal(res.status, 400);
+    assert.equal(((await res.json()) as { error: { code: string } }).error.code, "bad_brain");
+
+    // QA-6: a Muse that makes brains makes one from a new note, and the payload view says so.
+    const c3 = await start();
+    await ok(["message.add", "--conversation", c3, "--as", "Muse", "--content", "A note."]);
+    await ok(["brain.update", "--conversation", c3, "--brain", "Muse", "--makes.name", "Idea {{n}}", "--makes.blueprint.system-prompt", "You are an idea."]);
+    await ok(["turn", "--conversation", c3, "--content", "Go on."]);
+    const made = await json(["prompt.preview", "--conversation", c3, "--regenerate", "--thought", "Another note."]);
+    assert.ok(made.notes.some((n: string) => /^Muse makes a brain from each new message, so this note will make one too: Idea 1/.test(n)), made.notes.join("\n"));
   });
 });

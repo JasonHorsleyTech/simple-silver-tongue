@@ -109,17 +109,39 @@ export const isMuse = (brain: { name: string }) => brain.name.trim().toLowerCase
 /**
  * T17: the system prompt a new Muse brain starts with. It is sent only when the Muse itself is asked for a turn (it
  * then writes a note of its own); a fresh take's note is your text, which no model writes. Editable like any prompt.
+ * T17 triage, tuned live: an idea once settled a peek the odds had just asked a d20 for (and the GM then skipped the
+ * roll), so it now leaves a waiting roll to the die; and told only that its hidden block "starts" with the phrase,
+ * it twice wrote the phrase first and no fence at all (the player would read it), so the lines are spelled out.
  */
 export const MUSE_SYSTEM_PROMPT =
-  "You are the Muse, one of the helpers at this table: you think up twists. On your turn, write one idea for the next reply in the story: fresher than the obvious move, true to everything said so far, and leaving the player's choices to the player. Your whole answer is one hidden note, a ```hidden block closed with ```, that starts \"An idea for the next reply, which the player won't see:\". The player's screen folds it unread; the helper who answers next carries it out.";
+  "You are the Muse, one of the helpers at this table: you think up twists. On your turn, write one idea for the next reply in the story: fresher than the obvious move, true to everything said so far, and leaving the player's choices to the player. How an uncertain action turns out is the dice's to say: when one is waiting on a roll (it was called a roll, or its odds were just named) and no 🎲 roll has answered it yet, your idea never says or hints whether it works. Give each outcome its own twist instead (what a success shows, what a failure costs), or work on something else in the scene. Your answer is one hidden note and nothing else: its first line is ```hidden, its second \"An idea for the next reply, which the player won't see:\", then the idea, and its last line is ``` to close the block. The player's screen folds it unread; the helper who answers next carries it out.";
+
+/** T17 triage: a new Muse's reminder, which restates the note's lines and the dice rule right before its turn. */
+export const MUSE_REMINDER =
+  "<!-- System reminder -->\nYou are the Muse. Your answer's first line is ```hidden and its last line is ```, with nothing outside them: inside, \"An idea for the next reply, which the player won't see:\", then one idea, leaving the player's choices to the player and a roll still waiting to the die.";
+
+/** T17 QA-5: how the player sees a fresh take's note: folded only if it is all in a hidden block (the template's is). */
+export type NoteShown = "folded" | "partly" | "plain";
+const NOTE_SHOWN: Record<NoteShown, string> = {
+  folded: "the player sees it folded",
+  partly: "the player sees it with its hidden part folded",
+  plain: "the player sees it as written (it has no ```hidden block, as the thought template gives it)",
+};
+
+/**
+ * T17 QA-6: the payload view's line when the Muse itself makes brains (a `makes` setting): its new note is a new
+ * message, so it makes one, as any of its messages would.
+ */
+export const museMakesNote = (muse: string, name: string) =>
+  `${muse} makes a brain from each new message, so this note will make one too: ${name}, with the note pinned to it.`;
 
 /**
  * T17: the payload view's line for a fresh take: where the Muse's note goes, and what is added when you send.
  * `noteId` and `version` (1-based): the note already right before the message, which gets a new version (or keeps
  * the one it has, when your text is what it already says). A new note gets its id when it is saved.
  */
-export const freshTakeNote = (o: { brain: string; messageId: string; noteId: string; muse: string; isNew: boolean; version: number; same: boolean; museCreated: boolean }) =>
-  `A fresh take: ${o.isNew ? `the Muse's note goes in as a new message, right before ${o.messageId}` : o.same ? `the Muse's note right before ${o.messageId} (${o.noteId}) already says this, so it stays as it is (version ${o.version})` : `the Muse's note right before ${o.messageId} (${o.noteId}) gets this as version ${o.version}`}. It is written by ${o.muse}, framed like any helper's: every brain reads it from now on, and the player sees it folded. ${o.messageId} itself is left out, so ${o.brain} never sees the reply it replaces; the new version is the reply alone.${o.museCreated ? ` This conversation has no brain called ${MUSE_NAME} yet, so one is added when you send (its system prompt is used only if you ask the Muse itself for a turn).` : ""}`;
+export const freshTakeNote = (o: { brain: string; messageId: string; noteId: string; muse: string; isNew: boolean; version: number; same: boolean; museCreated: boolean; shown: NoteShown }) =>
+  `A fresh take: ${o.isNew ? `the Muse's note goes in as a new message, right before ${o.messageId}` : o.same ? `the Muse's note right before ${o.messageId} (${o.noteId}) already says this, so it stays as it is (version ${o.version})` : `the Muse's note right before ${o.messageId} (${o.noteId}) gets this as version ${o.version}`}. It is written by ${o.muse}, framed like any helper's: every brain reads it from now on, and ${NOTE_SHOWN[o.shown]}. ${o.messageId} itself is left out, so ${o.brain} never sees the reply it replaces; the new version is the reply alone.${o.museCreated ? ` This conversation has no brain called ${MUSE_NAME} yet, so one is added when you send (its system prompt is used only if you ask the Muse itself for a turn).` : ""}`;
 
 /**
  * T16: how a pinned message is sent to the brain it is pinned to, in words for the payload view, brain.list and the
