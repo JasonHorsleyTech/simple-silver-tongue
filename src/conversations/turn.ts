@@ -1,12 +1,12 @@
-import { CommandError, notFound } from "../lib/errors.ts";
+import { badRequest, CommandError, notFound } from "../lib/errors.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import type { StreamEvent } from "../registry.ts";
 import type { ChatEvent } from "../venice/chat.ts";
 import type { VeniceClient } from "../venice/client.ts";
 import type { ModelInfo } from "../venice/models.ts";
-import { buildRequest, nothingToAnswer, REASONING_NOTE, reasoningOn, render, resolveBrain, templateProblem, type ModelCaps } from "./prompt.ts";
+import { buildRequest, endsOnThought, nothingToAnswer, REASONING_NOTE, reasoningOn, render, resolveBrain, templateProblem, type AnswerOpts, type ModelCaps } from "./prompt.ts";
 import { partialPrompt, type ToolCallParts } from "./tool-call.ts";
-import { ROLL_PREVIEW_NOTE, STOP_REASONING_NOTE, stopNote } from "./wording.ts";
+import { ROLL_PREVIEW_NOTE, STOP_REASONING_NOTE, stopNote, THOUGHT_LAST_NOTE } from "./wording.ts";
 import type { Brain, ChatRequest, Conversation, LedgerMessage, MessageVersion, Roll, Usage } from "./types.ts";
 
 /**
@@ -79,6 +79,11 @@ export type RegeneratePlan = {
   steer?: string;
   /** With a steer: the index of the version it revises (the active one, which stays in the request). */
   steeredFrom?: number;
+  /**
+   * T15, a fresh take: the thought as it is sent (verbatim; with `wrap`, inside the thought template) and stored
+   * on the new version. The message is left out, as in a re-roll; the thought goes in as the brain's own words.
+   */
+  thought?: string;
   body: ChatRequest;
 } & BodyReview;
 
@@ -87,8 +92,22 @@ export type RegeneratePlan = {
  * answers. A blank steer means a plain re-roll. With a steer the active version stays in, as the brain's own
  * last reply, so the model can see what "your previous response" is (T02 live probe); without one the message
  * is left out and the brain answers the history before it. Either way the steer is in this one request only.
+ *
+ * With a thought (T15, a fresh take) the message is left out too, and the thought goes in after the messages
+ * before it, as the brain's own `assistant` words, before its final reminder: the brain never sees the reply it
+ * replaces, and finds the thought as its own. The thought is sent exactly as given (never trimmed); `wrap` puts it
+ * into the conversation's thought template first, where {{thought}} is, as the browser's box starts. A blank
+ * thought, or one with a steer, is refused.
  */
-export function planRegenerate(conv: Conversation, opts: { message?: string; steer?: string }, model: ModelCaps): RegeneratePlan {
+export function planRegenerate(conv: Conversation, opts: { message?: string; steer?: string; thought?: string; wrap?: boolean }, model: ModelCaps): RegeneratePlan {
+  if (opts.thought !== undefined && opts.steer !== undefined) {
+    throw badRequest("A regenerate takes a steer (revise the reply on screen) or a thought (a fresh take, in the brain's own words), not both.");
+  }
+  if (opts.wrap && opts.thought === undefined) throw badRequest("wrap puts your thought into the thought template: give the thought too (--thought).");
+  if (opts.thought !== undefined && !opts.thought.trim()) {
+    throw badRequest("A thought can't be blank: it is sent as the brain's own words. Leave it out for a plain re-roll.");
+  }
+  const thought = opts.thought !== undefined && opts.wrap ? wrapThought(conv, opts.thought) : opts.thought;
   const last = conv.messages.at(-1);
   if (!last) throw new CommandError(400, "nothing_to_regenerate", "This conversation has no messages yet, so there is nothing to regenerate.");
   const message = opts.message ? conv.messages.find((m) => m.id === opts.message) : last;
@@ -114,9 +133,9 @@ export function planRegenerate(conv: Conversation, opts: { message?: string; ste
   const steer = opts.steer?.trim() || undefined;
   const body = steer
     ? buildRequest(conv, brain.id, { model, steer })
-    : buildRequest(conv, brain.id, { model, excludeFromMessageId: message.id });
-  const review = reviewBody(brain, body, model);
-  if (review.refusal && !steer && body.messages.at(-1)?.role === "assistant") {
+    : buildRequest(conv, brain.id, { model, excludeFromMessageId: message.id, ...(thought !== undefined ? { thought } : {}) });
+  const review = reviewBody(brain, body, model, { thought });
+  if (review.refusal && !steer && thought === undefined && body.messages.at(-1)?.role === "assistant") {
     // A plain re-roll whose message comes right after the same brain's own reply. When nothing comes before
     // it at all, nothingToAnswer's "only its system prompt" already says why (T03 QA-4).
     review.refusal = `Without ${message.id}, the request would end with ${brain.name}'s own earlier reply, so a plain re-roll has nothing to answer. Give it a steer, or edit the message instead.`;
@@ -126,17 +145,35 @@ export function planRegenerate(conv: Conversation, opts: { message?: string; ste
     plan.steer = steer;
     plan.steeredFrom = message.activeVersion;
   }
+  if (thought !== undefined) plan.thought = thought;
   return plan;
 }
 
+/** T15: `--wrap`: the thought inside the conversation's thought template, where {{thought}} is. */
+export function wrapThought(conv: Conversation, thought: string): string {
+  const problem = templateProblem("thought", conv.templates.thought);
+  if (problem) throw new CommandError(400, "bad_template", problem);
+  return render(conv.templates.thought, { thought });
+}
+
+/**
+ * T15: a fresh take's text version is saved merged: the thought, a blank line, then the reply, as one message
+ * of the brain's own, so later requests carry the planted note and what the brain wrote after it. The stream
+ * sends the head first (as a `delta`), so what streams is what is saved. A reply with no text saves the thought.
+ */
+export const freshTakeHead = (thought: string) => `${thought.trimEnd()}\n\n`;
+export const freshTakeContent = (thought: string, reply: string) => (reply.trim() ? freshTakeHead(thought) + reply : thought.trimEnd());
+
 /**
  * The checks every plan shares (planTurn and planRegenerate), so a new plan can't miss one.
- * The send path re-checks the refusal on its own (assertAnswerable in openChatStream).
+ * The send path re-checks the refusal on its own (assertAnswerable in openChatStream). A fresh take passes its
+ * thought: a body that ends on it (no final reminder) is sent, with a note saying how that went live.
  */
-export function reviewBody(brain: Brain, body: ChatRequest, model: ModelCaps): BodyReview {
+export function reviewBody(brain: Brain, body: ChatRequest, model: ModelCaps, opts: AnswerOpts = {}): BodyReview {
   const review: BodyReview = { notes: [] };
-  const refusal = nothingToAnswer(body, brain.name);
+  const refusal = nothingToAnswer(body, brain.name, opts);
   if (refusal) review.refusal = refusal;
+  if (endsOnThought(body, opts.thought)) review.notes.push(THOUGHT_LAST_NOTE);
   if (reasoningOn(brain, model)) review.notes.push(REASONING_NOTE);
   if (body.stop?.length) review.notes.push(stopNote(body.stop));
   if (body.stop?.length && reasoningOn(brain, model)) review.notes.push(STOP_REASONING_NOTE);

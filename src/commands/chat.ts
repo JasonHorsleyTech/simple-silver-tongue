@@ -16,6 +16,8 @@ import { rollD20 } from "../conversations/dice.ts";
 import { promptOf } from "../conversations/tool-call.ts";
 import {
   addSpend,
+  freshTakeContent,
+  freshTakeHead,
   generatedVersion,
   lookupModel,
   newMessage,
@@ -48,6 +50,17 @@ const steer = z
   .describe('A one-off direction for this regenerate only ("say it\'s blue"). Never sent again. Blank or omitted: a plain re-roll');
 const regenerateTarget = messageId.optional().describe("The message to regenerate: it must be the last one, written by a brain (default: the last message)");
 
+const thought = z
+  .string()
+  .optional()
+  .describe(
+    "A fresh take (T15): words the brain finds as its own, sent verbatim as its assistant message before its final reminder, instead of the reply being replaced. Saved with the reply, merged. Not with --steer, never blank",
+  );
+const wrap = z
+  .boolean()
+  .optional()
+  .describe("Put --thought into the conversation's thought template (templates.thought, a ```hidden block by default) where {{thought}} is, as the browser's Fresh take box starts");
+
 const roll = z
   .boolean()
   .optional()
@@ -59,8 +72,8 @@ export const promptPreview = command({
 --brain picks the brain (default: the default brain), so you can see the ledger from each one's point of view.
 With --content, it shows what turn --content would send (your message included). With --roll, what turn --roll
 would send: the die isn't rolled until you send, so the roll's line has {{roll}} where the number will go (the
-only difference), and a note says so. With --regenerate (plus --message and --steer), it shows what
-message.regenerate would send instead. Nothing is saved, rolled or sent.
+only difference), and a note says so. With --regenerate (plus --message, and --steer or --thought [--wrap]), it
+shows what message.regenerate would send instead. Nothing is saved, rolled or sent.
 --json prints the body byte for byte as it would go to Venice (minus the auth header), plus notes on text the
 provider adds that we can't show (reasoning on), and the reason the send would be refused, if it would.
 For an image brain it also shows the /image/generate request its prompt goes into: every field but the prompt,
@@ -73,6 +86,8 @@ which is the one its generate_image call writes, word for word.`,
     regenerate: z.boolean().optional().describe("Preview message.regenerate instead of turn (the message's own brain answers)"),
     message: regenerateTarget,
     steer,
+    thought,
+    wrap,
   }),
   examples: [
     "./ss prompt.preview --conversation c_k3j9x0q2ma",
@@ -80,10 +95,11 @@ which is the one its generate_image call writes, word for word.`,
     './ss prompt.preview --conversation c_k3j9x0q2ma --content "Next message" --json',
     './ss prompt.preview --conversation c_k3j9x0q2ma --brain "Game Master" --roll',
     './ss prompt.preview --conversation c_k3j9x0q2ma --regenerate --steer "Make it iambic pentameter."',
+    './ss prompt.preview --conversation c_k3j9x0q2ma --regenerate --thought "Subvert it: three goblins in a trench coat." --wrap',
   ],
   handler: async (args, ctx): Promise<Preview> => {
-    if (!args.regenerate && (args.message !== undefined || args.steer !== undefined)) {
-      throw badRequest("message and steer only apply to a regenerate preview: add regenerate (--regenerate).");
+    if (!args.regenerate && (args.message !== undefined || args.steer !== undefined || args.thought !== undefined || args.wrap)) {
+      throw badRequest("message, steer, thought and wrap only apply to a regenerate preview: add regenerate (--regenerate).");
     }
     if (args.regenerate && (args.content !== undefined || args.brain !== undefined || args.roll)) {
       throw badRequest("A regenerate preview takes no content, roll or brain: the message's own brain answers the messages as they are.");
@@ -91,7 +107,7 @@ which is the one its generate_image call writes, word for word.`,
     const conv = await loadConversation(ctx.requireSession().vault, args.conversation);
     const model = await lookupModel(ctx.deps.venice, "text", conv.settings.textModel);
     const plan = args.regenerate
-      ? planRegenerate(conv, { message: args.message, steer: args.steer }, model)
+      ? planRegenerate(conv, { message: args.message, steer: args.steer, thought: args.thought, wrap: args.wrap }, model)
       : planTurn(conv, { brain: args.brain, content: args.content, roll: args.roll ? "unrolled" : undefined }, model);
     const preview: Preview = { conversationId: conv.id, brainId: plan.brain.id, brainName: plan.brain.name, body: plan.body, notes: plan.notes };
     if (plan.refusal) preview.refusal = plan.refusal;
@@ -103,6 +119,7 @@ which is the one its generate_image call writes, word for word.`,
     if ("message" in plan) {
       preview.regenerate = { messageId: plan.message.id, newVersion: plan.message.versions.length + 1 };
       if (plan.steer !== undefined) Object.assign(preview.regenerate, { steer: plan.steer, steeredFrom: plan.steeredFrom });
+      if (plan.thought !== undefined) preview.regenerate.thought = plan.thought;
     }
     return preview;
   },
@@ -203,7 +220,7 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
   yield { type: "done", message, note: replyNote(plan.brain.name, reply, plan.body.stop), spentUsd };
 }
 
-const regenerateArgs = z.object({ conversation: conversationId, message: regenerateTarget, steer });
+const regenerateArgs = z.object({ conversation: conversationId, message: regenerateTarget, steer, thought, wrap });
 
 export const messageRegenerate = streamCommand({
   name: "message.regenerate",
@@ -214,12 +231,20 @@ the brain sees its current version, then your direction, and rewrites it. The st
 only and stored for display; later requests see just the active version, as if the brain wrote it on its own.
 Repeat as often as you like (each steer revises whichever version is active). Old versions are kept: go back
 with message.select-version. prompt.preview --regenerate shows the exact request first. One reply at a time
-per conversation (409 if busy); generation.follow watches it, generation.stop stops it.`,
+per conversation (409 if busy); generation.follow watches it, generation.stop stops it.
+--thought is a fresh take instead (T15): the brain never sees the reply it replaces. Your words go in as the
+brain's own, after the messages before it and before its final reminder, sent exactly as given (--wrap puts
+them in the thought template first: a \`\`\`hidden note, by default). The brain answers, and the new version is the
+thought, a blank line and the reply, so later requests carry both (edit it like any message). A brain with no
+final reminder gets a request that ends on the thought, and continues it: the preview says how that went live.
+For an image brain the new version is the new prompt alone; the thought is kept beside it, for display.`,
   args: regenerateArgs,
   examples: [
     "./ss message.regenerate --conversation c_k3j9x0q2ma",
     './ss message.regenerate --conversation c_k3j9x0q2ma --steer "Say it\'s blue."',
     './ss message.regenerate --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --steer @direction.md',
+    './ss message.regenerate --conversation c_k3j9x0q2ma --thought "Tired trope. Subvert it: three goblins in a trench coat." --wrap',
+    "./ss message.regenerate --conversation c_k3j9x0q2ma --thought @thought.md   # verbatim, fences and all",
   ],
   async *handler(args, ctx) {
     const gen = beginGeneration(ctx.requireSession().vault, args.conversation); // 409 before any event
@@ -237,30 +262,36 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
   const { vault } = ctx.requireSession();
   const conv = await gen.load(); // through the write queue (T03 QA-1): a delete that got in first is seen here
   const model = await lookupModel(ctx.deps.venice, "text", conv.settings.textModel);
-  const plan = planRegenerate(conv, { message: args.message, steer: args.steer }, model);
+  const plan = planRegenerate(conv, { message: args.message, steer: args.steer, thought: args.thought, wrap: args.wrap }, model);
   gen.forBrain(plan.brain.id);
   if (plan.refusal) throw new CommandError(400, "nothing_to_answer", plan.refusal);
   const painter = plan.brain.kind === "image" ? await painterFor(ctx.deps.venice, conv, plan.brain) : null;
   const id = plan.message.id;
   const keeps = `${id} keeps its current version.`;
-  const upstream = await openUpstream(ctx, conv.id, plan.body, gen, `Stopped before the new version started. ${keeps}`);
+  const upstream = await openUpstream(ctx, conv.id, plan.body, gen, `Stopped before the new version started. ${keeps}`, plan.thought);
 
   const start: StreamEvent = { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId: id, regenerate: true, kind: plan.brain.kind, conversationTitle: conv.title };
   if (plan.steer !== undefined) start.steer = plan.steer;
+  if (plan.thought !== undefined) start.thought = plan.thought;
   yield start;
+  // A fresh take's text version is saved as the thought, a blank line and the reply (T15). Its head streams
+  // first, so every client (a follower too) shows what will be saved, the thought folded like any hidden note.
+  if (plan.thought !== undefined && !painter) yield { type: "delta", delta: freshTakeHead(plan.thought) };
+  const again = { conversation: conv.id, message: id, ...(plan.steer !== undefined ? { steer: plan.steer } : {}), ...(plan.thought !== undefined ? { thought: plan.thought } : {}) };
   const say: Say = {
     kept: `No new version was saved; ${keeps}`,
     retry: "To retry, regenerate again.",
-    again: { command: "message.regenerate", args: { conversation: conv.id, message: id, ...(plan.steer !== undefined ? { steer: plan.steer } : {}) } },
+    again: { command: "message.regenerate", args: again },
   };
   const reply = yield* collectReply(vault, conv.id, upstream, gen, say);
 
   const n = plan.message.versions.length + 1;
-  const head = `${plan.brain.name} · version ${n}/${n}${plan.steer !== undefined ? " · steered" : ""}`;
+  const head = `${plan.brain.name} · version ${n}/${n}${plan.steer !== undefined ? " · steered" : plan.thought !== undefined ? " · fresh take" : ""}`;
   // Ledger edits are refused while this runs, and the plan read the ledger after the lock, so the message
   // is still there; but say so if it isn't.
   const addVersion = (c: Conversation, version: MessageVersion): LedgerMessage => {
     if (plan.steer !== undefined) Object.assign(version, { steer: plan.steer, steeredFrom: plan.steeredFrom });
+    if (plan.thought !== undefined) version.thought = plan.thought;
     const m = c.messages.find((x) => x.id === id);
     if (!m) throw new CommandError(409, "conflict", `${id} was deleted while its new version was being written, so the new version wasn't saved.`);
     m.versions.push(version);
@@ -271,6 +302,7 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
   if (painter) return yield* paintReply(ctx, gen, conv.id, reply, { painter, brain: plan.brain, textModel: plan.body.model, say, head }, addVersion);
 
   const version = generatedVersion(reply, plan.body.model);
+  if (plan.thought !== undefined) version.content = freshTakeContent(plan.thought, reply.content);
   let message!: LedgerMessage;
   const spentUsd = await saveReply(vault, conv.id, reply, (c) => {
     message = addVersion(c, version);
@@ -375,10 +407,11 @@ async function* imageTail(ctx: Ctx, s: ImageStarted): AsyncGenerator<StreamEvent
  * A stop that lands before Venice answers says what it left behind; the request itself goes on to a drain,
  * since Venice may well be writing (and billing) it already. A stop before anything was sent sends nothing.
  */
-async function openUpstream(ctx: Ctx, convId: string, body: ChatRequest, gen: GenerationHandle, stoppedText: string) {
+async function openUpstream(ctx: Ctx, convId: string, body: ChatRequest, gen: GenerationHandle, stoppedText: string, thought?: string) {
   if (gen.stopSignal.aborted) throw stopped(stoppedText);
   const { vault } = ctx.requireSession();
-  const pending = openChatStream(ctx.deps.venice, body, { signal: gen.upstreamSignal });
+  // `thought`: a fresh take's (T15), the one trailing assistant message the send path lets through.
+  const pending = openChatStream(ctx.deps.venice, body, { signal: gen.upstreamSignal, ...(thought !== undefined ? { thought } : {}) });
   const events = await Promise.race([pending, untilAborted(gen.stopSignal).then(() => null)]);
   if (events) return events;
   gen.keepUpstream();

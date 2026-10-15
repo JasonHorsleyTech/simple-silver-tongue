@@ -4,6 +4,7 @@ import type { Brain, LedgerMessage, MessageVersion } from "../../api/types.ts";
 import { cx } from "../../lib/cx.ts";
 import { activeVersion, clockTime, fullTime } from "../../lib/format.ts";
 import { rollView } from "../../lib/rolls.ts";
+import { readLocal, writeLocal } from "../../lib/storage.ts";
 import { expectedAspect, ImageBody } from "./ImageCard.tsx";
 import { LiveReply } from "./LiveReply.tsx";
 import { MessageEditor } from "./MessageEditor.tsx";
@@ -12,8 +13,8 @@ import { CopyAction, DeleteConfirm, IconAction, MessageFooter, VersionMeta, Vers
 import { MessageText } from "./MessageText.tsx";
 import { Reasoning } from "./Reasoning.tsx";
 import { RollBubble } from "./RollCard.tsx";
-import { SteerBox } from "./SteerBox.tsx";
-import { IMAGE_BUSY, imagePending, type LiveReply as Live, type MessageActions } from "./useChat.ts";
+import { SteerBox, type RegenerateMode } from "./SteerBox.tsx";
+import { IMAGE_BUSY, imagePending, type LiveReply as Live, type MessageActions, type RegenerateAsk } from "./useChat.ts";
 
 export { BrainMessageFrame, PlayerBubble } from "./MessageFrame.tsx";
 
@@ -22,11 +23,15 @@ const BUSY_HINT = "A reply is being written. Change messages once it's done, or 
 
 type Mode = "view" | "edit" | "delete" | "steer";
 
+/** The regenerate box's last tab (Revise or Fresh take), remembered in this browser. */
+const REGEN_MODE_KEY = "ss.regenerateMode";
+
 /**
  * One ledger message, showing its active version, with its actions:
  *   any message   edit (raw Markdown in place), delete (confirmed inline), copy
  *   brain message the ‹ 2/3 › pager when it has versions, and the steer behind the version shown
- *   last reply    Regenerate…, with an optional steer; the new version streams into this same slot (`live`)
+ *   last reply    Regenerate…: Revise (an optional steer) or Fresh take (a thought as the brain's own words, T15);
+ *                 the new version streams into this same slot (`live`)
  *   image message the picture and its prompt (ImageCard); edit changes the prompt and paints it again, and
  *                 "Paint again" makes another image of a finished one, as a new version (both are kept)
  * A text message's hidden notes (T08) show folded (MessageText); the editor and Copy have the raw text.
@@ -46,6 +51,7 @@ export const MessageItem = memo(function MessageItem({
   actions,
   onPreviewRegenerate,
   onDismissLive,
+  thoughtTemplate,
 }: {
   message: LedgerMessage;
   brain?: Brain;
@@ -57,12 +63,20 @@ export const MessageItem = memo(function MessageItem({
   live?: Live;
   busy: boolean;
   actions: MessageActions;
-  onPreviewRegenerate(messageId: string, steer: string): void;
+  onPreviewRegenerate(messageId: string, ask: RegenerateAsk): void;
   onDismissLive(): void;
+  /** The conversation's templates.thought, for the last message's Fresh take box (T15). */
+  thoughtTemplate?: string;
 }) {
   const v = activeVersion(message);
   const [mode, setMode] = useState<Mode>("view");
   const [steer, setSteer] = useState("");
+  const [regenMode, setRegenModeState] = useState<RegenerateMode>(() => (readLocal(REGEN_MODE_KEY) === "fresh" ? "fresh" : "revise"));
+  const setRegenMode = (m: RegenerateMode) => {
+    setRegenModeState(m);
+    writeLocal(REGEN_MODE_KEY, m);
+  };
+  const [thought, setThought] = useState("");
   const [steerError, setSteerError] = useState<string | null>(null);
   const [regenerating, setRegenerating] = useState(false);
   const [pending, setPending] = useState(false);
@@ -94,7 +108,7 @@ export const MessageItem = memo(function MessageItem({
         live={live}
         brain={brain}
         slot={{ nextVersion: message.versions.length + 1, fromVersion: live.steer ? message.activeVersion + 1 : null }}
-        onRetry={() => void actions.regenerate(message.id, live.steer ?? "")}
+        onRetry={() => void actions.regenerate(message.id, live.thought !== null ? { thought: live.thought } : { steer: live.steer ?? "" })}
         onDismiss={onDismissLive}
       />
     );
@@ -198,16 +212,20 @@ export const MessageItem = memo(function MessageItem({
     setPainting(false);
     if (problem) setHint(problem);
   };
+  /** What the box asks for: Revise sends the steer (blank: a re-roll), Fresh take the thought exactly as it stands. */
+  const ask = (): RegenerateAsk => (regenMode === "fresh" ? { thought } : { steer });
   const regenerate = async () => {
     if (regenerating) return;
     if (busy) return setSteerError(BUSY_HINT);
+    if (regenMode === "fresh" && !thought.trim()) return;
     setSteerError(null);
     setRegenerating(true);
-    const problem = await actions.regenerate(message.id, steer);
+    const problem = await actions.regenerate(message.id, ask());
     setRegenerating(false);
-    if (problem) return setSteerError(problem); // refused up front: the box stays open with the steer
+    if (problem) return setSteerError(problem); // refused up front: the box stays open with the steer or thought
     setMode("view");
     setSteer("");
+    setThought("");
   };
 
   return (
@@ -223,7 +241,9 @@ export const MessageItem = memo(function MessageItem({
               steer={v.steer}
               fromVersion={v.steeredFrom !== undefined ? v.steeredFrom + 1 : null}
               repaintOf={v.repaintOf !== undefined ? v.repaintOf + 1 : null}
-              reroll={message.activeVersion > 0 && v.steer === undefined && v.repaintOf === undefined}
+              freshTake={v.thought !== undefined}
+              image={image}
+              reroll={message.activeVersion > 0 && v.steer === undefined && v.repaintOf === undefined && v.thought === undefined}
             />
           ) : null
         }
@@ -259,7 +279,7 @@ export const MessageItem = memo(function MessageItem({
                       type="button"
                       aria-expanded={mode === "steer"}
                       onClick={() => setMode((m) => (m === "steer" ? "view" : "steer"))}
-                      title={image ? "A new prompt and a new image, as a new version, optionally with a steer" : "Write this reply again, optionally with a steer"}
+                      title={image ? "A new prompt and a new image, as a new version: revise it with a steer, or a fresh take" : "Write this reply again: revise it with a steer, or a fresh take from a thought you plant"}
                       className={cx(
                         "mr-0.5 inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] transition-colors",
                         mode === "steer" ? "bg-hover text-fg" : "text-muted hover:bg-hover hover:text-fg",
@@ -288,6 +308,13 @@ export const MessageItem = memo(function MessageItem({
         }
       >
         {image ? (
+          <>
+            {/* T15: a fresh take's thought isn't in an image prompt (that goes to the image model word for word): it is kept beside it. */}
+            {v.thought !== undefined && mode !== "edit" && (
+              <div key={message.activeVersion} className="mb-3">
+                <MessageText text={v.thought} />
+              </div>
+            )}
           <ImageBody
             version={v}
             brain={brain}
@@ -297,6 +324,7 @@ export const MessageItem = memo(function MessageItem({
             onRepaint={(o) => actions.repaint(message.id, o)}
             onEdit={unlessPainting(paintingShown, () => setMode("edit"))}
           />
+          </>
         ) : mode === "edit" ? (
           editor()
         ) : (
@@ -307,19 +335,32 @@ export const MessageItem = memo(function MessageItem({
       {hintLine}
       {mode === "steer" && canRegenerate && (
         <SteerBox
-          value={steer}
-          onChange={(s) => {
+          mode={regenMode}
+          onMode={(m) => {
+            setRegenMode(m);
+            setSteerError(null);
+          }}
+          steer={steer}
+          onSteer={(s) => {
             setSteer(s);
             setSteerError(null);
           }}
+          thought={thought}
+          onThought={(s) => {
+            setThought(s);
+            setSteerError(null);
+          }}
+          thoughtTemplate={thoughtTemplate ?? ""}
           onSubmit={() => void regenerate()}
           onCancel={() => {
             setMode("view");
             setSteerError(null);
           }}
-          onPreview={() => onPreviewRegenerate(message.id, steer)}
+          onPreview={() => onPreviewRegenerate(message.id, ask())}
           error={steerError}
           image={image}
+          brainName={brain?.name ?? "The brain"}
+          reminder={!!brain?.finalReminder.enabled && brain.finalReminder.content.trim() !== ""}
           nextVersion={count + 1}
           fromVersion={count > 1 ? message.activeVersion + 1 : null}
           pending={regenerating}

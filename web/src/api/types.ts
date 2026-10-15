@@ -53,6 +53,7 @@ export {
   STOP_BILL_NOTE,
   STOP_REASONING_NOTE,
   stopNote,
+  THOUGHT_LAST_NOTE,
 } from "../../../src/conversations/wording.ts";
 
 /**
@@ -122,8 +123,8 @@ export type Preview = {
   body: ChatRequest;
   notes: string[];
   refusal?: string;
-  /** prompt.preview with regenerate: which message gets the new version, and the steer it is asked with. */
-  regenerate?: { messageId: string; newVersion: number; steer?: string; steeredFrom?: number };
+  /** prompt.preview with regenerate: which message gets the new version, and the steer (or T15 thought) it is asked with. */
+  regenerate?: { messageId: string; newVersion: number; steer?: string; steeredFrom?: number; thought?: string };
   /** Image brains (T05): the /image/generate body their prompt goes into, minus `prompt` itself, and what was left out. */
   image?: { path: "/image/generate"; params: Omit<ImageRequest, "prompt">; notes: string[] };
 };
@@ -276,7 +277,7 @@ export type Commands = {
   "message.roll": { args: { conversation: string }; result: MessageView };
   /** T09: `roll` previews turn --roll; the roll's line keeps {{roll}} where the number will go (ROLL_PREVIEW_NOTE). */
   "prompt.preview": {
-    args: { conversation: string; brain?: string; content?: string; roll?: boolean; regenerate?: boolean; message?: string; steer?: string };
+    args: { conversation: string; brain?: string; content?: string; roll?: boolean; regenerate?: boolean; message?: string; steer?: string; thought?: string };
     result: Preview;
   };
   /**
@@ -307,8 +308,12 @@ export type StreamCommands = {
   turn: { args: { conversation: string; content?: string; brain?: string; roll?: boolean } };
   /** Re-attach to a reply that is being generated right now (after a reload, or from another tab). */
   "generation.follow": { args: { conversation: string } };
-  /** A new, active version of the last message (a brain's). With a steer, the brain rewrites its current version. */
-  "message.regenerate": { args: { conversation: string; message?: string; steer?: string } };
+  /**
+   * A new, active version of the last message (a brain's). With a steer, the brain rewrites its current version.
+   * With a thought (T15, a fresh take; never with a steer), the brain finds it as its own words instead of the
+   * reply: the stream's first delta is the thought and a blank line, so what streams is what is saved.
+   */
+  "message.regenerate": { args: { conversation: string; message?: string; steer?: string; thought?: string } };
   /**
    * T05: paint an image message's active prompt again. A failed, interrupted or blurred image is replaced; a
    * finished one is kept, and the retry becomes a new version with the same prompt (`repaintOf`). 409 while
@@ -335,7 +340,7 @@ export type StreamEvent =
   /**
    * The brain starts; messageId is the id its saved message will have. For message.regenerate (also when
    * replayed by generation.follow), `regenerate` is true, messageId is the message getting a new version,
-   * and `steer` is the direction it was given, if any.
+   * and `steer` is the direction it was given, if any (T15: or `thought`, a fresh take's).
    */
   | {
       type: "start";
@@ -344,6 +349,7 @@ export type StreamEvent =
       messageId: string;
       regenerate?: true;
       steer?: string;
+      thought?: string;
       /** T05: "image" for an image brain. `imageOnly`: no text streams (image.retry, or an edit or add of a prompt). */
       kind?: "text" | "image";
       imageOnly?: true;

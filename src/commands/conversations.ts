@@ -93,6 +93,10 @@ export const templates = z
     otherBrainImage: template("otherBrainImage", "How a brain sees another brain's image prompt. {{brain}}, and {{prompt}} (required)"),
     steer: template("steer", "How a steer is sent when regenerating. Must contain {{instruction}}, the steer"),
     roll: template("roll", "The line a roll adds as your message (turn --roll, message.roll). Must contain {{roll}}, the number. Used when you roll: earlier rolls keep their text"),
+    thought: template(
+      "thought",
+      "What a fresh take's thought starts as (T15): the browser's Fresh take box opens with it, the caret at {{thought}}, and message.regenerate --thought --wrap puts your text there. Must contain {{thought}}",
+    ),
   })
   .partial();
 
@@ -115,8 +119,9 @@ each image brain has its own shape (brain.update --shape). Only what the model t
 --brain <image brain> shows the exact image request and says what was left out. A resolution the current model
 doesn't list is refused.
 Templates are sent to the models, so they are yours to edit; prompt.preview shows the effect. Each one must keep
-its placeholder ({{content}}, {{prompt}}, {{instruction}} or {{roll}}), where the text goes. The roll template
-(T09) makes a roll's message when you roll, so a change shows in later rolls; earlier ones keep their text.`,
+its placeholder ({{content}}, {{prompt}}, {{instruction}}, {{roll}} or {{thought}}), where the text goes. The roll
+template (T09) makes a roll's message when you roll, so a change shows in later rolls; earlier ones keep their
+text. The thought template (T15) is what a fresh take's thought starts as (message.regenerate --thought --wrap).`,
   args: z.object({
     id: conversationId,
     title: title.optional(),

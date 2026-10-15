@@ -54,12 +54,26 @@ export function LiveReply({
         name={brain?.name ?? live.brainName ?? "Reply"}
         color={brain?.color ?? "#9aa3b0"}
         status={status}
-        origin={slot && live.steer ? <SteerNote steer={live.steer} fromVersion={slot.fromVersion} /> : null}
+        origin={
+          slot && live.thought !== null ? (
+            <SteerNote freshTake image={live.image} />
+          ) : slot && live.steer ? (
+            <SteerNote steer={live.steer} fromVersion={slot.fromVersion} />
+          ) : null
+        }
         reasoning={live.reasoning ? <Reasoning text={live.reasoning} live={live.phase === "reasoning"} /> : null}
         footer={failed ? null : FOOTER_SPACE}
       >
         {live.image ? (
-          <LiveImage prompt={live.content} aspect={expectedAspect(brain)} color={brain?.color} failed={failed} />
+          <>
+            {/* T15: an image fresh take's thought sits above the picture, as it will once saved. */}
+            {live.thought !== null && (
+              <div className="mb-3">
+                <MessageText text={live.thought} />
+              </div>
+            )}
+            <LiveImage prompt={live.content} aspect={expectedAspect(brain)} color={brain?.color} failed={failed} />
+          </>
         ) : live.content ? (
           <div className={failed ? "opacity-55" : "ss-caret"}>
             <MessageText text={live.content} writing={!failed} empty={<TypingDots />} />

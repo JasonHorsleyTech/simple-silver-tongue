@@ -131,7 +131,7 @@ go, use turn --roll. Refused while a reply is being generated.`,
 
 export const messageGet = command({
   name: "message.get",
-  description: `Show one message with every version: its text, and the steer that produced it, if any.
+  description: `Show one message with every version: its text, and the steer (or fresh take) that produced it, if any.
 The active version is the one every brain sees. Switch with message.select-version. Hidden notes fold to one
 line: --reveal shows them.`,
   args: z.object(target),
@@ -239,7 +239,7 @@ Refused while a reply is being generated.`,
   },
   format: (r: MessageView, opts) => {
     const v = activeVersion(r.message);
-    const why = v.steer !== undefined ? ` (steer: "${v.steer}")` : "";
+    const why = v.steer !== undefined ? ` (steer: "${v.steer}")` : v.thought !== undefined ? " (a fresh take)" : "";
     const count = { folded: 0 };
     const text = shown(v.content, r.message.kind, opts, count);
     const hint = count.folded ? `\n\n${revealHint(count.folded, revealMessage(r.conversationId, r.message.id))}` : "";

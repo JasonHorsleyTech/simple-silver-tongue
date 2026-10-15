@@ -7,9 +7,10 @@
 
 /**
  * 2 (T07 triage): every brain has `stop`. 3 (T09): templates.roll. 4 (T13): every setup message has a `role`.
- * loadConversation upgrades older files (upgradeConversation, defaults.ts), in memory; the next write saves them.
+ * 5 (T15): templates.thought. loadConversation upgrades older files (upgradeConversation, defaults.ts), in
+ * memory; the next write saves them.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export type Conversation = {
   schemaVersion: number;
@@ -54,8 +55,9 @@ export type ImageSettings = {
 
 /**
  * Framing strings. Placeholders are literal, single-pass replacements: {{content}} {{brain}} {{prompt}} {{instruction}}
- * {{roll}}. Four are applied each time a request is built; `roll` (T09) once, when the server rolls: the roll's
- * message holds the line it makes, so every brain reads that line framed as a player message.
+ * {{roll}} {{thought}}. Four are applied each time a request is built; `roll` (T09) once, when the server rolls: the
+ * roll's message holds the line it makes, so every brain reads that line framed as a player message. `thought`
+ * (T15) is a pre-fill: what a fresh take's box starts with, never applied by the request builder.
  */
 export type Templates = {
   player: string;
@@ -64,6 +66,12 @@ export type Templates = {
   steer: string;
   /** T09: a roll's message, with {{roll}} for the number. Default ROLL_TEMPLATE: "🎲 I rolled a d20: **{{roll}}**". */
   roll: string;
+  /**
+   * T15: what the Fresh take box starts with (a ```hidden block by default), {{thought}} marking where the caret
+   * goes. The box's text is sent as it stands, so the request builder never renders this; only
+   * message.regenerate --wrap does, putting --thought where {{thought}} is.
+   */
+  thought: string;
 };
 
 /**
@@ -170,6 +178,14 @@ export type MessageVersion = {
   /** With a steer: the index of the version the steer revised (the one that was active). Display only. */
   steeredFrom?: number;
   /**
+   * T15: a fresh take. The thought the user planted as the brain's own words: sent once, as an assistant message
+   * after the messages before this one, then the brain answered. Display only, never sent on its own. A text
+   * version's content is the thought, a blank line and the reply (saved merged, so later requests carry both);
+   * an image version's content is the prompt alone (it goes to the image model word for word), so this is the
+   * only place its thought is kept.
+   */
+  thought?: string;
+  /**
    * T05 triage: image.retry of a finished image. This version paints the same prompt as version `repaintOf`
    * (an index) again, so both images are kept. Display only.
    */
@@ -253,7 +269,7 @@ export type ChatRequest = {
  */
 export type RetryRequest =
   | { command: "turn"; args: { conversation: string; brain: string } }
-  | { command: "message.regenerate"; args: { conversation: string; message: string; steer?: string } }
+  | { command: "message.regenerate"; args: { conversation: string; message: string; steer?: string; thought?: string } }
   /** A failed image (T05): paint the active version's prompt again. Rides on image_error events as `retry`. */
   | { command: "image.retry"; args: { conversation: string; message: string } };
 

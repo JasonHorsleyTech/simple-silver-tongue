@@ -1,8 +1,9 @@
 /**
  * Model entries copied verbatim from the live Venice GET /models response (2026-10-13 and 2026-10-14), so the
- * mock speaks the real shape. All are curated (src/venice/curated.ts), so models.list shows them in mock mode
- * too. Text: one with reasoning effort levels, one with no reasoning, one that reasons with no effort levels
- * (reasoning off is disable_thinking). Image: one of each way of sizing and pricing an image, width × height
+ * mock speaks the real shape. All but GLM 5.3 are curated (src/venice/curated.ts), so models.list shows them in
+ * mock mode too. Text: one with reasoning effort levels, one with no reasoning, one that reasons with no effort
+ * levels (reasoning off is disable_thinking: z-ai-glm-5-3, kept here for that shape though T15 took it out of the
+ * curated list; models.list --all shows it). Image: one of each way of sizing and pricing an image, width × height
  * at a flat price (z-image-turbo), resolution and aspect ratio priced per resolution (krea-2-turbo), aspect
  * ratio only at a flat price (hunyuan-image-v3), and resolution priced per quality (grok-imagine-image-2-0).
  */

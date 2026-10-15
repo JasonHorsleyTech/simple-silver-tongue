@@ -19,6 +19,9 @@ export const DEFAULT_TEMPLATES: Templates = {
   // T09: the line a roll adds as the player's message, which every brain then reads framed like any of theirs.
   // Applied once, when the server rolls; earlier rolls keep their text.
   roll: "🎲 I rolled a d20: **{{roll}}**",
+  // T15: what the Fresh take box starts with, the caret where {{thought}} is. A hidden note, so the thought folds on
+  // screen like the brain's own notes, and its last line reads as the brain deciding to answer.
+  thought: "```hidden\n{{thought}}\n\nThat sounds good, I'll respond next.\n```",
 };
 
 export const DEFAULT_BRAIN_NAME = "Assistant";
@@ -62,7 +65,8 @@ export function newBrain(opts: { name: string; systemPrompt: string; color?: str
  * A brain whose list is empty keeps it empty. Version 3 (T09): templates without `roll` get the default, so
  * every conversation can roll. Since 2026-10-14 an image brain has a shape (landscape if it has none), and the
  * conversation-wide width, height and aspect ratio it replaced are dropped. Version 4 (T13): a setup message
- * without a role gets `user`, which is how it was always sent. Tolerates a partial document (listConversations
+ * without a role gets `user`, which is how it was always sent. Version 5 (T15): templates without `thought` get
+ * the default, so every conversation can take a fresh take. Tolerates a partial document (listConversations
  * reports those).
  */
 export function upgradeConversation(conv: Conversation): Conversation {
@@ -71,7 +75,10 @@ export function upgradeConversation(conv: Conversation): Conversation {
     if (b && !Array.isArray(b.stop)) b.stop = defaultStop(b.kind === "image" ? "image" : "text");
     if (b?.kind === "image") b.shape ??= DEFAULT_SHAPE;
   }
-  if (conv.templates && typeof conv.templates === "object" && typeof conv.templates.roll !== "string") conv.templates.roll = DEFAULT_TEMPLATES.roll;
+  if (conv.templates && typeof conv.templates === "object") {
+    if (typeof conv.templates.roll !== "string") conv.templates.roll = DEFAULT_TEMPLATES.roll;
+    if (typeof conv.templates.thought !== "string") conv.templates.thought = DEFAULT_TEMPLATES.thought; // version 5 (T15)
+  }
   // Version 4 (T13): a setup message without a role (or with one we don't know) was sent as a user message, and still is.
   for (const s of Array.isArray(conv.setup) ? conv.setup : []) if (s && !SETUP_ROLES.includes(s.role)) s.role = "user";
   // Image sizes moved from the conversation to each image brain's shape (2026-10-14): drop the old fields.

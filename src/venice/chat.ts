@@ -23,6 +23,11 @@ export type ChatStreamOptions = {
   connectTimeoutMs?: number;
   /** Longest silence allowed between chunks once the stream is running. There is no total limit. */
   idleTimeoutMs?: number;
+  /**
+   * T15: a fresh take's thought. A body that ends on exactly this assistant message (a brain with no final
+   * reminder) is let through; every other body ending on the brain's own message is still refused.
+   */
+  thought?: string;
 };
 
 class Timeout extends Error {}
@@ -37,7 +42,7 @@ export async function openChatStream(
   opts: ChatStreamOptions = {},
 ): Promise<AsyncGenerator<ChatEvent>> {
   assertSendable(body);
-  assertAnswerable(body);
+  assertAnswerable(body, { thought: opts.thought });
   const { connectTimeoutMs = 120_000, idleTimeoutMs = 180_000 } = opts;
   const ctl = new AbortController();
   const onAbort = () => ctl.abort(opts.signal?.reason);

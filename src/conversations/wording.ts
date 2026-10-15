@@ -77,3 +77,11 @@ export const rollLabel = (roll: Roll, edited = false) => `🎲 ${roll.die}${edit
  */
 export const ROLL_PREVIEW_NOTE =
   "The d20 isn't rolled yet. When you send, the server rolls it and puts the number (1 to 20) where {{roll}} is in your roll's line, the newest player message (a {{roll}} anywhere else is sent as written). The rest of this body is exactly what is sent.";
+
+/**
+ * T15: the payload view's note for a fresh take whose request ends on the thought: a brain with no final reminder
+ * (the plain "Assistant"), so nothing comes after the brain's own words and the model continues them (a prefill).
+ * Measured live (2026-10-15, design.md, "Prompt assembly"); the send path allows this one trailing assistant message.
+ */
+export const THOUGHT_LAST_NOTE =
+  "This brain has no final reminder, so the request ends on your thought, as its own unfinished reply, and the model carries on from it. Live, that worked on DeepSeek V4.1 Flash about 2 runs in 3 (the others wrote code, answered with a tag, came back empty or gave the thought away), broke on GLM 5.3 and on Gemma with reasoning off, and held on Grok 4.7 and Kimi K3. With the final reminder on, a user message comes after the thought, and that worked 6 runs in 6.";

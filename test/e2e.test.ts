@@ -94,7 +94,8 @@ describe("CLI end to end against an in-process server and mock Venice", () => {
 
     // The pickers' list is the curated one, in its own order; --all is everything Venice lists.
     const ids = async (...extra: string[]) => JSON.parse((await t.cli(["models.list", "--json", ...extra])).stdout).models.map((m: { id: string }) => m.id);
-    assert.deepEqual(await ids(), ["deepseek-v4-1-flash", "z-ai-glm-5-3", "venice-uncensored-1-2", "z-image-turbo", "grok-imagine-image-2-0", "krea-2-turbo", "hunyuan-image-v3"]);
+    // T15: GLM is parked (curated.ts), so the mock's z-ai-glm-5-3 is listed only with --all.
+    assert.deepEqual(await ids(), ["deepseek-v4-1-flash", "venice-uncensored-1-2", "z-image-turbo", "grok-imagine-image-2-0", "krea-2-turbo", "hunyuan-image-v3"]);
     assert.equal((await ids("--all")).length, 7);
     assert.match((await t.cli(["models.list", "--type", "image"])).stdout, /hunyuan-image-v3 .* aspect ratio\n/, "sized by aspect ratio, not width × height");
     const venice = [

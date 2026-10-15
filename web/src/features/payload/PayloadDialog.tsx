@@ -15,9 +15,9 @@ import { BrainBadge } from "../chat/BrainBadge.tsx";
 
 /**
  * Which request to show: the next Send (with the unsent composer text, and a roll when the die is armed), or a
- * Regenerate with its steer.
+ * Regenerate with its steer, or (T15) a fresh take with its thought, exactly as the box holds it.
  */
-export type PayloadRequest = { kind: "turn"; draft: string; roll?: boolean } | { kind: "regenerate"; messageId: string; steer: string };
+export type PayloadRequest = { kind: "turn"; draft: string; roll?: boolean } | { kind: "regenerate"; messageId: string; steer: string; thought?: string };
 
 /**
  * "Exact payload": prompt.preview for one brain, which is built by the same code path that turn and
@@ -59,7 +59,8 @@ export function PayloadDialog({
   const regen = request.kind === "regenerate" ? request : null;
   const draft = request.kind === "turn" ? request.draft : "";
   const withDraft = draft.trim() !== "";
-  const steer = regen?.steer.trim() ?? "";
+  const thought = regen?.thought;
+  const steer = thought === undefined ? (regen?.steer.trim() ?? "") : "";
   const regenId = regen?.messageId;
 
   const load = useCallback(async () => {
@@ -67,7 +68,7 @@ export function PayloadDialog({
     setError(null);
     try {
       const args = regenId
-        ? { conversation: conversationId, regenerate: true, message: regenId, ...(steer ? { steer } : {}) }
+        ? { conversation: conversationId, regenerate: true, message: regenId, ...(steer ? { steer } : {}), ...(thought !== undefined ? { thought } : {}) }
         : { conversation: conversationId, brain: brain.id, ...(withDraft ? { content: draft } : {}), ...(withRoll ? { roll: true } : {}) };
       setPreview(await api.call("prompt.preview", args));
     } catch (err) {
@@ -75,7 +76,7 @@ export function PayloadDialog({
     } finally {
       setLoading(false);
     }
-  }, [conversationId, brain.id, draft, withDraft, withRoll, regenId, steer]);
+  }, [conversationId, brain.id, draft, withDraft, withRoll, regenId, steer, thought]);
 
   useEffect(() => {
     void load();
@@ -98,9 +99,11 @@ export function PayloadDialog({
           <>
             <code className="font-mono text-[11.5px] text-muted">POST /chat/completions</code>, exactly as Regenerate would make it
             {preview?.regenerate ? ` (version ${preview.regenerate.newVersion})` : ""}, minus the API key.{" "}
-            {steer
-              ? "The version on screen stays in, and your steer goes last. Only this one request carries the steer."
-              : "A plain re-roll: the messages before this one, without it."}
+            {thought !== undefined
+              ? `A fresh take: the messages before this one, without it, then your thought as ${brain.name}'s own words, word for word${body?.messages.at(-1)?.role === "assistant" ? ", last" : ", then its final reminder"}.`
+              : steer
+                ? "The version on screen stays in, and your steer goes last. Only this one request carries the steer."
+                : "A plain re-roll: the messages before this one, without it."}
           </>
         ) : (
           <>

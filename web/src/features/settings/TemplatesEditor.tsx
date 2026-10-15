@@ -38,12 +38,21 @@ const SPECS: Spec[] = [
     needs: ["{{roll}}"],
     required: true,
   },
+  {
+    key: "thought",
+    label: "Fresh take",
+    description:
+      "What Regenerate's Fresh take box starts with: a thought you plant as the brain's own words. {{thought}} is where the caret goes. Whatever the box holds when you send is sent word for word, so you can change it there each time.",
+    needs: ["{{thought}}"],
+    required: true,
+  },
 ];
 
 /**
  * The templates (conversation.update --templates.*). They are plain text that reaches the models, so they are the
  * user's to edit; the payload view shows the effect. Placeholders are literal, single pass. Four frame messages
  * each time a request is built; the roll's (T09) is applied once, when the server rolls, and must have {{roll}}.
+ * The thought's (T15) is the Fresh take box's starting text, and must have {{thought}}, where the caret goes.
  */
 export function TemplatesEditor({ conv, onSaved }: { conv: Conversation; onSaved(c: Conversation): void }) {
   return (
@@ -60,11 +69,15 @@ export function TemplatesEditor({ conv, onSaved }: { conv: Conversation; onSaved
           warn={(v) => {
             const missing = s.needs.filter((n) => !v.includes(n));
             if (!missing.length) return null;
-            return s.required
-              ? `Needs ${missing.join(" and ")}: that is where the number goes, so a roll's line can't be made without it.`
-              : `Without ${missing.join(" and ")}, the message itself isn't sent, only this text.`;
+            return s.key === "thought"
+              ? `Needs ${missing.join(" and ")}: that is where the caret goes, and where ./ss puts your words (--wrap).`
+              : s.required
+                ? `Needs ${missing.join(" and ")}: that is where the number goes, so a roll's line can't be made without it.`
+                : `Without ${missing.join(" and ")}, the message itself isn't sent, only this text.`;
           }}
-          validate={s.required ? (v) => (s.needs.every((n) => v.includes(n)) ? null : `Needs ${s.needs.join(" and ")}, where the number goes.`) : undefined}
+          validate={
+            s.required ? (v) => (s.needs.every((n) => v.includes(n)) ? null : `Needs ${s.needs.join(" and ")}, ${s.key === "thought" ? "where your thought goes" : "where the number goes"}.`) : undefined
+          }
           onSave={async (value) => onSaved(await api.call("conversation.update", { id: conv.id, templates: { [s.key]: value } }))}
         />
       ))}

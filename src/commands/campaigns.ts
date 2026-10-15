@@ -44,6 +44,7 @@ const version = z.object({
   source: z.enum(["generated", "authored"]).default("authored"),
   steer: z.string().optional(),
   steeredFrom: z.number().int().min(0).optional(),
+  thought: z.string().optional(), // T15: a fresh take's thought, display only (a text version's content starts with it)
   repaintOf: z.number().int().min(0).optional(),
   reasoning: z.string().optional(),
   edited: z.boolean().optional(),
@@ -402,7 +403,7 @@ Your own file stays where it is, in plaintext: the imported copy is encrypted li
 /** brain.import's answer: the brain as added, where it came from, and what it left behind. */
 export type BrainImport = { conversationId: string; brain: Brain; from: { preset?: string; example?: string; title: string }; notes: string[] };
 
-const TEMPLATE_NAMES = ["player", "otherBrainText", "otherBrainImage", "steer", "roll"] as const;
+const TEMPLATE_NAMES = ["player", "otherBrainText", "otherBrainImage", "steer", "roll", "thought"] as const;
 
 export const brainImport = command({
   name: "brain.import",

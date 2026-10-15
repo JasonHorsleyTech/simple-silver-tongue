@@ -1,4 +1,4 @@
-import { CornerDownRight, PenLine } from "lucide-react";
+import { CornerDownRight, PenLine, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
 import { cx } from "../../lib/cx.ts";
 import { clockTime, fullTime } from "../../lib/format.ts";
@@ -84,23 +84,34 @@ export function BrainMessageFrame({
 }
 
 /**
- * Where a version came from: the steer that produced it (and which version it revised), or a plain re-roll.
- * Display only: the steer was sent once, with the request that wrote this version, and never again.
+ * Where a version came from: the steer that produced it (and which version it revised), a fresh take (T15), or a
+ * plain re-roll. Display only: the steer was sent once, with the request that wrote this version, and never again.
+ * A fresh take's thought isn't repeated here (it is usually a hidden note): a text version starts with it, and an
+ * image version shows it above the picture.
  */
 export function SteerNote({
   steer,
   fromVersion,
   reroll,
   repaintOf,
+  freshTake,
+  image,
 }: {
   steer?: string | null;
   fromVersion?: number | null;
   reroll?: boolean;
   /** An image version painted again from version N's prompt (image.retry of a finished image), 1-based. */
   repaintOf?: number | null;
+  /** T15: written after a thought planted as the brain's own words. */
+  freshTake?: boolean;
+  image?: boolean;
 }) {
-  if (!steer && !reroll && !repaintOf) return null;
-  const title = steer
+  if (!steer && !reroll && !repaintOf && !freshTake) return null;
+  const title = freshTake
+    ? image
+      ? "A fresh take: written after a thought you planted as the brain's own words (shown above the picture; it was sent with that request only). It never saw the version before."
+      : "A fresh take: written after a thought you planted as the brain's own words. The version starts with that thought, and every later request carries it. It never saw the version before."
+    : steer
     ? `The steer behind this version${fromVersion ? `, which revised version ${fromVersion}` : ""}. It was sent once, with that request only.`
     : repaintOf
       ? `Painted again from version ${repaintOf}'s prompt, word for word: another image of the same prompt. Both images are kept.`
@@ -110,8 +121,10 @@ export function SteerNote({
       <span aria-hidden className="text-line-strong">
         ·
       </span>
-      <CornerDownRight aria-hidden className="size-3.5 shrink-0" />
-      {steer ? (
+      {freshTake ? <Sparkles aria-hidden className="size-3.5 shrink-0" /> : <CornerDownRight aria-hidden className="size-3.5 shrink-0" />}
+      {freshTake ? (
+        <span>fresh take</span>
+      ) : steer ? (
         <>
           <span className="shrink-0">steered</span>
           <span className="min-w-0 truncate text-muted">“{steer}”</span>

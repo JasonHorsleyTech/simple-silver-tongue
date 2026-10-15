@@ -39,6 +39,11 @@ export type LiveReply = {
   messageId: string | null;
   /** A regenerate's steer, trimmed; null for a plain re-roll or a turn. Display only. */
   steer: string | null;
+  /**
+   * T15: a fresh take's thought, as sent; null otherwise. The server streams it as the reply's first delta (the
+   * thought and a blank line), so `content` already shows it, folded, as it will be saved.
+   */
+  thought: string | null;
   content: string;
   reasoning: string;
   phase: "waiting" | "reasoning" | "writing" | "failed";
@@ -62,6 +67,9 @@ export type Unsent = { text: string; roll: boolean };
 /** A line above the composer: an up-front send failure (error), or what a stop did and didn't save (info). */
 export type ChatNotice = { tone: "error" | "info"; message: string; note?: string };
 
+/** How a regenerate is asked: a steer (Revise; blank = a plain re-roll), or a fresh take's thought (T15), sent as typed. */
+export type RegenerateAsk = { steer?: string; thought?: string };
+
 /** Ledger commands resolve to null when done, or to a message to show where the action was taken. */
 export type MessageActions = {
   edit(messageId: string, content: string): Promise<string | null>;
@@ -69,7 +77,7 @@ export type MessageActions = {
   /** `version` is 1-based, as the pager shows it. */
   selectVersion(messageId: string, version: number): Promise<string | null>;
   /** A new version of the last message, streaming in its place. Resolves to an up-front failure's message. */
-  regenerate(messageId: string, steer: string): Promise<string | null>;
+  regenerate(messageId: string, ask?: RegenerateAsk): Promise<string | null>;
   /**
    * image.retry: paint an image message's prompt again. A failed, blurred or flagged image is replaced; a
    * finished one is kept and the repaint becomes a new version. With `safeModeOff`, the brain's safe mode is
@@ -269,6 +277,7 @@ export function useChat(id: string): Chat {
             brainName: null,
             messageId: null,
             steer: null,
+            thought: null,
             content: "",
             reasoning: "",
             phase: "waiting",
@@ -293,6 +302,7 @@ export function useChat(id: string): Chat {
             ...(l ?? { origin: "follow", content: "", reasoning: "", phase: "waiting", error: null, retry: null }),
             kind: ev.regenerate ? "regenerate" : "turn",
             steer: ev.steer ?? null,
+            thought: ev.thought ?? null,
             brainId: ev.brainId,
             brainName: ev.brainName,
             messageId: ev.messageId,
@@ -523,6 +533,7 @@ export function useChat(id: string): Chat {
         brainName: target?.name ?? null,
         messageId: null,
         steer: null,
+        thought: null,
         content: "",
         reasoning: "",
         phase: "waiting",
@@ -563,12 +574,14 @@ export function useChat(id: string): Chat {
   );
 
   const regenerate = useCallback(
-    async (messageId: string, steer: string): Promise<string | null> => {
+    async (messageId: string, ask: RegenerateAsk = {}): Promise<string | null> => {
       const c = convRef.current;
       if (!c || busyRef.current) return BUSY_LEDGER;
       const m = c.messages.find((x) => x.id === messageId);
       const brain = m?.author.type === "brain" ? (c.brains.find((b) => b.id === (m.author as { brainId: string }).brainId) ?? null) : null;
-      const trimmed = steer.trim();
+      // A fresh take's thought is sent exactly as typed (T15); a steer is trimmed, and blank is a plain re-roll.
+      const thought = ask.thought ?? null;
+      const trimmed = thought === null ? (ask.steer ?? "").trim() : "";
       busyRef.current = true;
       setNotice(null);
       // The message's slot shows the new version from the first moment (typing dots), not the bottom of the list.
@@ -579,6 +592,7 @@ export function useChat(id: string): Chat {
         brainName: brain?.name ?? null,
         messageId,
         steer: trimmed || null,
+        thought,
         content: "",
         reasoning: "",
         phase: "waiting",
@@ -588,7 +602,7 @@ export function useChat(id: string): Chat {
       });
       let started = false;
       try {
-        const args = { conversation: id, message: messageId, ...(trimmed ? { steer: trimmed } : {}) };
+        const args = { conversation: id, message: messageId, ...(trimmed ? { steer: trimmed } : {}), ...(thought !== null ? { thought } : {}) };
         for await (const ev of api.stream("message.regenerate", args, { signal: alive.current.signal })) {
           if (ev.type === "start") started = true;
           if (apply(ev)) break; // the new prompt is saved: its image is followed on its own
@@ -736,7 +750,7 @@ export function useChat(id: string): Chat {
     if (!l || l.phase !== "failed") return;
     const r = l.retry;
     if (r?.command === "message.regenerate") {
-      const problem = await regenerate(r.args.message, r.args.steer ?? "");
+      const problem = await regenerate(r.args.message, r.args.thought !== undefined ? { thought: r.args.thought } : { steer: r.args.steer ?? "" });
       if (problem) setNotice({ tone: "error", message: problem });
       return;
     }

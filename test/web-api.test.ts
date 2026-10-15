@@ -9,9 +9,10 @@ import { ApiError, errorMessage, retryOf } from "../web/src/api/errors.ts";
 import { readNdjson } from "../web/src/api/ndjson.ts";
 import { forBrowser } from "../web/src/lib/format.ts";
 import { brainInitials } from "../web/src/lib/initials.ts";
+import { prefillThought } from "../web/src/lib/thought.ts";
 import { rollLineIndex, rollView } from "../web/src/lib/rolls.ts";
 import { STOP_BILL_NOTE as SERVER_STOP_NOTE } from "../src/commands/chat.ts";
-import { BRAIN_COLORS as SERVER_COLORS } from "../src/conversations/defaults.ts";
+import { BRAIN_COLORS as SERVER_COLORS, DEFAULT_TEMPLATES } from "../src/conversations/defaults.ts";
 import { REASONING_NOTE as SERVER_REASONING_NOTE } from "../src/conversations/prompt.ts";
 import { IMAGE_STOP_NOTE as SERVER_IMAGE_STOP_NOTE } from "../src/conversations/wording.ts";
 import type { LedgerMessage } from "../src/conversations/types.ts";
@@ -448,4 +449,12 @@ test("brain initials for the composer's buttons are short and never clash (T12)"
   assert.deepEqual(brainInitials(["Character Actor", "Character Artist", "GM", "Narrator", "DiceMaster"]), ["CAc", "CAr", "GM", "Na", "DM"]);
   const same = brainInitials(["Bob", "bob", "Dice Master", "Dice Mister"]);
   assert.equal(new Set(same.map((l) => l.toLowerCase())).size, same.length);
+});
+
+test("the Fresh take box starts with the thought template, the marker gone and the caret where it was (T15)", () => {
+  const { text, caret } = prefillThought(DEFAULT_TEMPLATES.thought);
+  assert.equal(text, "```hidden\n\n\nThat sounds good, I'll respond next.\n```");
+  assert.equal(caret, "```hidden\n".length);
+  assert.deepEqual(prefillThought("a {{thought}} b {{thought}}"), { text: "a  b ", caret: 2 }, "no marker is left to be sent");
+  assert.deepEqual(prefillThought("no marker"), { text: "no marker", caret: 9 });
 });

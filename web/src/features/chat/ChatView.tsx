@@ -19,7 +19,7 @@ import { ChatHeader } from "./ChatHeader.tsx";
 import { DamagedFile } from "./DamagedFile.tsx";
 import { AS_PLAYER, Composer } from "./Composer.tsx";
 import { Scrollback } from "./Scrollback.tsx";
-import { useChat } from "./useChat.ts";
+import { useChat, type RegenerateAsk } from "./useChat.ts";
 
 const SETTINGS_OPEN_KEY = "ss.settingsOpen";
 const SETTINGS_TAB_KEY = "ss.settingsTab";
@@ -46,7 +46,10 @@ export function ChatView({ id }: { id: string }) {
   /** T09: the die is armed: the next send rolls a d20 after the composer's words, and then switches it off. */
   const [roll, setRoll] = useState(false);
   const [payload, setPayload] = useState<{ kind: "turn"; brainId: string | null } | Extract<PayloadRequest, { kind: "regenerate" }> | null>(null);
-  const previewRegenerate = useCallback((messageId: string, steer: string) => setPayload({ kind: "regenerate", messageId, steer }), []);
+  const previewRegenerate = useCallback(
+    (messageId: string, ask: RegenerateAsk) => setPayload({ kind: "regenerate", messageId, steer: ask.steer ?? "", ...(ask.thought !== undefined ? { thought: ask.thought } : {}) }),
+    [],
+  );
   const docked = useMediaQuery("(min-width: 1180px)");
 
   const setDraft = useCallback(

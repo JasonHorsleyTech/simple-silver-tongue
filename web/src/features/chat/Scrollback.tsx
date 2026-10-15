@@ -7,7 +7,7 @@ import { MessageItem } from "./MessageItem.tsx";
 import { PlayerBubble } from "./MessageFrame.tsx";
 import { MessageText } from "./MessageText.tsx";
 import { PendingRoll } from "./RollCard.tsx";
-import type { Chat } from "./useChat.ts";
+import type { Chat, RegenerateAsk } from "./useChat.ts";
 
 /** More than this many pixels below the view (the column's own bottom padding is 40) brings up "Latest". */
 const AWAY_PX = 64;
@@ -30,7 +30,7 @@ export function Scrollback({
   conv: Conversation;
   chat: Chat;
   onRetry(): void;
-  onPreviewRegenerate(messageId: string, steer: string): void;
+  onPreviewRegenerate(messageId: string, ask: RegenerateAsk): void;
   empty: ReactNode;
 }) {
   const box = useRef<HTMLDivElement>(null);
@@ -160,6 +160,7 @@ export function Scrollback({
                         actions={chat.actions}
                         onPreviewRegenerate={onPreviewRegenerate}
                         onDismissLive={chat.dismissLive}
+                        thoughtTemplate={m === last ? conv.templates.thought : undefined}
                       />
                     </li>
                   ))}
