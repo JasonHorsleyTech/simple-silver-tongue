@@ -487,7 +487,7 @@ Jason, 2026-10-15, done directly (no four-pass loop, at his request). A steer as
 
 ---
 
-## T16: Brains that make brains: one brain per character, its sheet pinned · `qa`
+## T16: Brains that make brains: one brain per character, its sheet pinned · `triage`
 
 Jason, 2026-10-15. Today one Character Actor plays every character. By message 50 its history holds Alice, Bob, Charlie and Dave, all as its own `assistant` lines, and Alice's sheet is 45 messages back behind three rival sheets. Going back to talk to Alice confuses it. The fix: **every character gets a brain of their own, made automatically when the Character Creator writes their sheet, with that sheet pinned at the top of their view.** Alice's own lines are then her `assistant` turns, Bob's are framed `<!-- from: Bob -->`, and her sheet is always right under her instructions.
 
