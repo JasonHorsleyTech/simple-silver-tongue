@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { DEFAULT_PIN_AS, defaultStop, makeImageBrain, newBrain, nextColor, REMINDER_EXAMPLE } from "../conversations/defaults.ts";
-import { makeBrain, madeName, nextMadeName } from "../conversations/makers.ts";
+import { freeNumber, makeBrain, madeName, nextMadeName } from "../conversations/makers.ts";
 import { REASONING_NOTE, resolveBrain } from "../conversations/prompt.ts";
 import { assertBrainIdle, loadConversation, mutateConversation } from "../conversations/store.ts";
 import { PIN_ROLES, type Brain, type BrainBlueprint, type Conversation, type ImageShape, type PinRole } from "../conversations/types.ts";
@@ -93,6 +93,8 @@ const makesName = z
   .refine((s) => !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(s), "A name pattern is one line, with no line breaks, tabs or control characters")
   .refine((s) => s.includes(MAKES_NUMBER), `The name pattern needs ${MAKES_NUMBER} where the number goes ("Character ${MAKES_NUMBER}"), or every brain it made would have the same name`)
   .refine((s) => /[\p{L}\p{N}\p{P}\p{S}]/u.test(s.replaceAll(MAKES_NUMBER, "")) || s.replaceAll(MAKES_NUMBER, "").trim() === "", "A name pattern is visible text")
+  // T16 QA-3: the names it makes must be names a brain can have. Only digits change from one to the next, so the first tells.
+  .refine((s) => !/^b_[a-z0-9]+$/.test(madeName(s, 1)), "The names this pattern makes would look like brain ids (b_...), which a brain name can't")
   .describe(`The new brain's name, with ${MAKES_NUMBER} where its number goes: "Character ${MAKES_NUMBER}"`);
 
 /** T16: the brain a maker makes: everything brain.add takes but its name (the pattern) and color (the next free one). */
@@ -155,8 +157,11 @@ export function applyMakes(brain: Brain, args: z.output<typeof makes> | undefine
   if (bp.kind !== undefined && bp.kind !== b.kind) {
     b.kind = bp.kind;
     if (bp.stop === undefined) b.stop = defaultStop(bp.kind); // a new kind starts with its own stop sequences
-    if (b.kind === "image") fillImageBlueprint(b);
   }
+  // An image blueprint has what a new image brain has (tool text, safe mode, shape), filling only what is missing.
+  // T16 QA-2: one made as image from the start had no tool text, so brain.list couldn't show the words its brains
+  // would get, and --makes.blueprint.tool.* was a 500.
+  if (b.kind === "image") fillImageBlueprint(b);
   if (b.kind !== "image" && (bp.safeMode !== undefined || bp.shape !== undefined || (bp.tool && Object.keys(bp.tool).length))) {
     throw badRequest(`Safe mode, shape and tool text are for image brains, and ${brain.name} makes text brains. Pass --makes.blueprint.kind image too.`);
   }
@@ -175,7 +180,7 @@ export function applyMakes(brain: Brain, args: z.output<typeof makes> | undefine
   brain.makes = m;
 }
 
-/** An image blueprint's tool text, safe mode and shape, as makeImageBrain gives a brain. */
+/** An image blueprint's tool text, safe mode and shape, as makeImageBrain gives a brain (it keeps what is set). */
 function fillImageBlueprint(b: BrainBlueprint): void {
   const probe = { ...b, id: "", name: "", color: "", pins: [] } as Brain;
   makeImageBrain(probe);
@@ -227,6 +232,15 @@ export function brainLine(b: Brain, conv?: Pick<Conversation, "defaultBrainId">)
   return bits.join(" · ");
 }
 
+/** The next made brain's name for a listing; a pattern with no free name (only a hand-edited file has one) says so. */
+function nextFree(conv: Pick<Conversation, "brains">, m: NonNullable<Brain["makes"]>): string {
+  try {
+    return nextMadeName(conv, m).name;
+  } catch {
+    return "none (no name this pattern makes is free: change it with --makes.name)";
+  }
+}
+
 /** T16: brain.list's lines for a brain's pins and its maker setting, every word of the blueprint included. */
 function pinAndMakerLines(b: Brain, conv: { messages: Array<{ id: string; author: Conversation["messages"][number]["author"] }>; brains: Brain[] }): string[] {
   const out: string[] = [];
@@ -243,7 +257,7 @@ function pinAndMakerLines(b: Brain, conv: { messages: Array<{ id: string; author
   if (m) {
     const bp = m.blueprint;
     out.push(
-      `Makes a brain from each new message (${m.enabled ? "on" : "off: brain.make still uses it"}): named "${m.name}", next ${nextMadeName(conv, m).name}, the message pinned ${PIN_AS_WORDS[m.pinAs]}.`,
+      `Makes a brain from each new message (${m.enabled ? "on" : "off: brain.make still uses it"}): named "${m.name}", next ${nextFree(conv, m)}, the message pinned ${PIN_AS_WORDS[m.pinAs]}.`,
       `  Each one: ${bp.kind} · reasoning ${bp.reasoning.enabled ? bp.reasoning.effort : "off"} · final reminder ${bp.finalReminder.enabled && bp.finalReminder.content.trim() ? "on" : "off"} · ${bp.stop.length ? `stops at ${bp.stop.map((x) => JSON.stringify(x)).join(", ")}` : "no stop sequences"}${bp.kind === "image" ? ` · safe mode ${bp.safeMode === false ? "off" : "on"} · ${bp.shape ?? DEFAULT_SHAPE}` : ""}`,
       "  Its system prompt:",
       bp.systemPrompt,
@@ -447,6 +461,7 @@ while the brain is writing a reply.`,
       }
       assertBrainIdle(vault, c.id, brain, "delete"); // in the queue, after the lock-holder's read (T03 QA-1)
       c.brains.splice(c.brains.indexOf(brain), 1);
+      freeNumber(c, brain); // the newest made brain gives its number back (T16 QA-8)
       return brain;
     });
     return { conversationId: conv.id, deleted: result.id, name: result.name, brains: conv.brains.map((b) => b.name) };

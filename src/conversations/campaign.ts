@@ -68,6 +68,13 @@ export function rebuild(
         return { ...m, id, author, versions };
       });
 
+  // T16 QA-4: without the ledger, a brain made from one of its messages stays behind with it (its prompt is about a
+  // pinned message that isn't coming), and each maker counts from 1 again: a fresh start on the same kit. If that
+  // would leave no brain at all, they all come.
+  const kept = opts.messages ? src.brains : src.brains.filter((b) => !b.madeFrom);
+  const brains = kept.length ? kept : src.brains;
+  const defaultBrain = brains.find((b) => b.id === src.defaultBrainId) ?? brains[0]!;
+
   const conv: Conversation = {
     schemaVersion: src.schemaVersion,
     id: newId("c"),
@@ -77,14 +84,15 @@ export function rebuild(
     settings: structuredClone(src.settings),
     templates: { ...src.templates },
     setup: src.setup.map((s) => ({ ...s, id: newId("s") })),
-    brains: src.brains.map((b) => {
+    brains: brains.map((b) => {
       // T16: pins and madeFrom point at the new copies of their messages; without the ledger there are none.
       const { madeFrom, ...rest } = structuredClone(b);
       const brain: Brain = { ...rest, id: brainIds.get(b.id)!, pins: (b.pins ?? []).flatMap((p) => (messageIds.has(p.messageId) ? [{ ...p, messageId: messageIds.get(p.messageId)! }] : [])) };
       if (madeFrom && messageIds.has(madeFrom)) brain.madeFrom = messageIds.get(madeFrom)!;
+      if (!opts.messages && brain.makes) brain.makes.next = 1;
       return brain;
     }),
-    defaultBrainId: brainIds.get(src.defaultBrainId)!,
+    defaultBrainId: brainIds.get(defaultBrain.id)!,
     messages,
     spentUsd: 0,
   };

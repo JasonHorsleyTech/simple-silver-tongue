@@ -378,7 +378,9 @@ already have: ./ss brain.import --preset <name> --brain <brain>. Nothing here is
       : "No presets in presets/.",
 });
 
-const withoutMessages = z.boolean().describe("Leave the ledger out: brains, setup messages, templates and settings only");
+const withoutMessages = z
+  .boolean()
+  .describe("Leave the ledger out: brains, setup messages, templates and settings only. A brain made from a message (T16) stays behind with it, and each brain that makes brains counts from 1 again");
 
 /** Check the models against Venice's list, and the image resolution against the image model, as conversation.update does. */
 async function checkSettings(ctx: Ctx, conv: Conversation, where: string): Promise<void> {
@@ -522,7 +524,8 @@ export const conversationClone = command({
   description: `Start a new conversation from one of yours: same brains, setup, templates and settings (and ledger).
 Unless --without-messages, the whole ledger comes too, every version and image included. It gets fresh ids and has
 cost nothing yet; the original is untouched. With --without-messages it is a fresh start on the same setup:
-"we're doing Pathfinder" from the D&D campaign, then edit the World Bible and the prompts to suit.`,
+"we're doing Pathfinder" from the D&D campaign, then edit the World Bible and the prompts to suit. The brains made
+from messages (a Character Creator's characters) stay behind with the ledger, and the makers count from 1 again.`,
   args: z.object({
     id: conversationId.describe("The conversation to copy (c_...)"),
     title: title.optional().describe('Title for the copy (default: "<title> (copy)")'),

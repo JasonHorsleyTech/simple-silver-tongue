@@ -34,8 +34,13 @@ export function nextMadeName(conv: Pick<Conversation, "brains">, maker: BrainMak
     const name = madeName(maker.name, n);
     if (!taken(conv, name)) return { name, n };
   }
-  // Only a pattern without {{n}} gets here (refused when set; a hand-edited file could have one).
-  throw new CommandError(409, "conflict", `Every name the pattern "${maker.name}" makes is taken. Give it ${MAKES_NUMBER} where the number goes.`);
+  // Only a pattern without {{n}}, or one whose names look like ids, gets here: both are refused when set, so only a
+  // hand-edited file could have one (T16 QA-3).
+  throw new CommandError(
+    409,
+    "conflict",
+    `No name the pattern "${maker.name}" makes is free: each is taken by another brain, or isn't a name a brain can have. Change the pattern with brain.update --makes.name "Character ${MAKES_NUMBER}".`,
+  );
 }
 
 /**
@@ -83,6 +88,19 @@ export function appendMessage(conv: Conversation, message: LedgerMessage): Brain
   return maker?.makes?.enabled ? makeBrain(conv, maker, message) : null;
 }
 
+/**
+ * A brain that goes while it still has the name its maker's newest number gave it hands the number back (T16 QA-8),
+ * so undoing a slip (delete the message, and the never-spoken brain it made goes too) leaves no gap: the next brain
+ * gets the same name. A renamed brain, or an older number, changes nothing; the counter still never goes back past a
+ * brain that is here, so renaming "Character 1" doesn't free "1".
+ */
+export function freeNumber(conv: Pick<Conversation, "brains">, gone: Pick<Brain, "name">): void {
+  for (const b of conv.brains) {
+    const m = b.makes;
+    if (m && m.next > 1 && madeName(m.name, m.next - 1) === gone.name) m.next -= 1;
+  }
+}
+
 /** What a message delete did to the brains (T16): the brains it deleted, and the brains that lost their pin of it. */
 export type Forgotten = {
   /** Made from the message and never spoken (and not the default): deleted with it. */
@@ -106,6 +124,7 @@ export function forgetMessage(conv: Conversation, messageId: string): Forgotten 
       delete b.madeFrom;
       if (!spoke(b) && b.id !== conv.defaultBrainId) {
         conv.brains.splice(conv.brains.indexOf(b), 1);
+        freeNumber(conv, b);
         out.brainsDeleted.push({ brainId: b.id, name: b.name });
         continue;
       }

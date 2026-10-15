@@ -189,6 +189,42 @@ describe("brains that make brains, pinned messages, and who said what (T16): CLI
     assert.match(kept.stdout, /Game Master \(b_[a-z0-9]+\) had it pinned; the pin is gone/);
     const conv = await get(c);
     assert.ok(conv.brains.every((x) => x.pins.length === 0 && x.madeFrom === undefined));
+
+    // T16 QA-8: deleting the newest made brain's message hands its number back, so a slip leaves no gap.
+    assert.equal(conv.brains.find((x) => x.name === "Character Creator")!.makes!.next, 3, "Character 1 wasn't the newest: no change");
+    const slip = await json(["message.add", "--conversation", c, "--as", "Character Creator", "--content", "```hidden\nslip\n```"]);
+    assert.equal(slip.made.name, "Character 3");
+    await ok(["message.delete", "--conversation", c, "--message", slip.message.id]);
+    const again = await json(["message.add", "--conversation", c, "--as", "Character Creator", "--content", "```hidden\nagain\n```"]);
+    assert.equal(again.made.name, "Character 3", "the slip's number came back");
+    await ok(["brain.delete", "--conversation", c, "--brain", "Character 3"]);
+    assert.equal((await brain(c, "Character Creator"))!.makes!.next, 3, "brain.delete hands it back too");
+  });
+
+  test("triage: an image blueprint gets tool text; an id-shaped pattern is refused; the pin notes and refusals say it right", async () => {
+    await login();
+    const conv = (await json(["conversation.create", "--title", "Triage", "--system-prompt", "You help."])) as Conversation;
+    const c = conv.id;
+    // QA-2: a new image blueprint is filled like a new image brain, and its tool text can be set at once.
+    const img = (await json([
+      "brain.add", "--conversation", c, "--name", "ImgMaker", "--system-prompt", "x",
+      "--makes.name", "Pic {{n}}", "--makes.blueprint.system-prompt", "y", "--makes.blueprint.kind", "image", "--makes.blueprint.tool.name", "paint_it",
+    ])) as Brain;
+    assert.equal(img.makes!.blueprint.tool!.name, "paint_it");
+    assert.ok(img.makes!.blueprint.tool!.description && img.makes!.blueprint.safeMode === true && img.makes!.blueprint.shape);
+    assert.match((await ok(["brain.list", "--conversation", c])).stdout, /Its tool paint_it:\n\s+description: /);
+    // QA-3: names that would look like brain ids are refused when set.
+    await fails(["brain.add", "--conversation", c, "--name", "IdMaker", "--system-prompt", "x", "--makes.name", "b_{{n}}", "--makes.blueprint.system-prompt", "y"], /would look like brain ids/);
+    // QA-6: a pin of your own message is "(yours)".
+    const mine = await json(["message.add", "--conversation", c, "--as", "player", "--content", "My note."]);
+    await ok(["brain.pin", "--conversation", c, "--brain", "Assistant", "--message", mine.message.id, "--as", "assistant"]);
+    const notes = (await preview(c, "--brain", "Assistant", "--content", "hi")).notes as string[];
+    assert.ok(notes.some((n) => n.includes(`${mine.message.id} (yours), as the brain's own words`)), notes.join("\n"));
+    // QA-9: a body that ends on a pin says so, not "its own reply".
+    await ok(["brain.add", "--conversation", c, "--name", "Maker", "--system-prompt", "x", "--makes.name", "Thing {{n}}", "--makes.blueprint.system-prompt", "y", "--makes.pin-as", "assistant", "--no-makes.blueprint.final-reminder.enabled"]);
+    await ok(["message.delete", "--conversation", c, "--message", mine.message.id]);
+    await ok(["message.add", "--conversation", c, "--as", "Maker", "--content", "A note."]);
+    await fails(["turn", "--conversation", c, "--brain", "Thing 1"], /would end with m_[a-z0-9]+, which is pinned to Thing 1 and sent as the brain's own words, its text verbatim, so there is nothing after it/);
   });
 
   test("generic: a Place Creator makes Place {{n}} brains; a stopped reply makes one, a failed one makes nothing", async () => {
@@ -238,6 +274,11 @@ describe("brains that make brains, pinned messages, and who said what (T16): CLI
     }
     const bare = (await json(["conversation.clone", "--id", c, "--without-messages"])) as Conversation;
     assert.ok(bare.brains.every((b) => b.pins.length === 0 && b.madeFrom === undefined), "no ledger, no pins");
+    // T16 QA-4: and no brains made from it; the maker counts from 1 again.
+    assert.deepEqual(bare.brains.map((b) => b.name), src.brains.filter((b) => !b.madeFrom).map((b) => b.name));
+    assert.equal(bare.brains.find((b) => b.name === "Character Creator")!.makes!.next, 1);
+    const bareImport = (await json(["conversation.import", "--campaign", JSON.stringify(src), "--without-messages"])) as Conversation;
+    assert.equal(bareImport.brains.some((b) => b.name === "Character 1"), false);
     const bad = structuredClone(src) as unknown as { brains: Array<{ pins: Array<{ messageId: string }> }> };
     bad.brains.at(-1)!.pins[0]!.messageId = "m_nowhere";
     await fails(["conversation.import", "--campaign", JSON.stringify(bad)], /brains\.6\.pins\.0\.messageId: no message has the id m_nowhere/);

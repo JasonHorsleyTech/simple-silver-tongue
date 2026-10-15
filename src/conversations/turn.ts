@@ -7,7 +7,7 @@ import type { ModelInfo } from "../venice/models.ts";
 import { assembleRequest, endsOnThought, nothingToAnswer, REASONING_NOTE, reasoningOn, render, resolveBrain, templateProblem, type AnswerOpts, type ModelCaps, type PinnedAt } from "./prompt.ts";
 import { nextMadeName } from "./makers.ts";
 import { partialPrompt, type ToolCallParts } from "./tool-call.ts";
-import { makesNote, pinnedNote, ROLL_PREVIEW_NOTE, STOP_REASONING_NOTE, stopNote, THOUGHT_LAST_NOTE } from "./wording.ts";
+import { makesNote, PIN_AS_WORDS, pinnedNote, ROLL_PREVIEW_NOTE, STOP_REASONING_NOTE, stopNote, THOUGHT_LAST_NOTE } from "./wording.ts";
 import type { Brain, ChatRequest, Conversation, LedgerMessage, MessageVersion, Roll, Usage } from "./types.ts";
 
 /**
@@ -140,7 +140,7 @@ export function planRegenerate(conv: Conversation, opts: { message?: string; ste
     ? assembleRequest(conv, brain.id, { model, steer })
     : assembleRequest(conv, brain.id, { model, excludeFromMessageId: message.id, ...(thought !== undefined ? { thought } : {}) });
   const review = reviewBody(brain, body, model, { thought }, { conv, pinned });
-  if (review.refusal && !steer && thought === undefined && body.messages.at(-1)?.role === "assistant") {
+  if (review.refusal && !steer && thought === undefined && body.messages.at(-1)?.role === "assistant" && !endsOnPin(body, pinned)) {
     // A plain re-roll whose message comes right after the same brain's own reply. When nothing comes before
     // it at all, nothingToAnswer's "only its system prompt" already says why (T03 QA-4).
     review.refusal = `Without ${message.id}, the request would end with ${brain.name}'s own earlier reply, so a plain re-roll has nothing to answer. Give it a steer, or edit the message instead.`;
@@ -185,20 +185,28 @@ export function reviewBody(
   if (pins.pinned.length) {
     const author = (id: string) => {
       const m = pins.conv.messages.find((x) => x.id === id);
-      if (!m || m.author.type === "player") return "your";
+      if (!m || m.author.type === "player") return undefined;
       const by = m.author.brainId;
       return pins.conv.brains.find((b) => b.id === by)?.name ?? by;
     };
     review.notes.push(pinnedNote(brain.name, pins.pinned.map((p) => ({ messageId: p.messageId, as: p.as, author: author(p.messageId) }))));
   }
   const refusal = nothingToAnswer(body, brain.name, opts);
-  if (refusal) review.refusal = refusal;
+  const lastPin = endsOnPin(body, pins.pinned);
+  if (refusal) review.refusal = lastPin ? pinnedLastRefusal(brain.name, lastPin) : refusal;
   if (endsOnThought(body, opts.thought)) review.notes.push(THOUGHT_LAST_NOTE);
   if (reasoningOn(brain, model)) review.notes.push(REASONING_NOTE);
   if (body.stop?.length) review.notes.push(stopNote(body.stop));
   if (body.stop?.length && reasoningOn(brain, model)) review.notes.push(STOP_REASONING_NOTE);
   return review;
 }
+
+/** The pin a body ends on, if it does: nothing in the ledger comes after the messages moved to the top (T16 QA-9). */
+export const endsOnPin = (body: Pick<ChatRequest, "messages">, pinned: PinnedAt[]) => pinned.find((p) => p.index === body.messages.length - 1);
+
+/** nothingToAnswer's words when the body ends on a pinned message: it isn't the brain's reply, or a setup message. */
+const pinnedLastRefusal = (brain: string, pin: PinnedAt) =>
+  `The request would end with ${pin.messageId}, which is pinned to ${brain} and sent ${PIN_AS_WORDS[pin.as]}, so there is nothing after it for ${brain} to answer. Write a message for it first.`;
 
 export function newMessage(author: LedgerMessage["author"], kind: LedgerMessage["kind"], version: MessageVersion, id = newId("m")): LedgerMessage {
   return { id, author, kind, versions: [version], activeVersion: 0, createdAt: version.createdAt, updatedAt: version.createdAt };

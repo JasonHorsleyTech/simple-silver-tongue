@@ -96,9 +96,12 @@ export const PIN_AS_WORDS: Record<PinRole, string> = {
   assistant: "as the brain's own words, its text verbatim",
 };
 
-/** T16: the payload view's line for the messages pinned to this brain, which are sent right after the setup. */
-export const pinnedNote = (brain: string, pins: ReadonlyArray<{ messageId: string; as: PinRole; author: string }>) =>
-  `Pinned to ${brain}: ${pins.map((p) => `${p.messageId} (${p.author}'s), ${PIN_AS_WORDS[p.as]}`).join("; ")}. ${pins.length === 1 ? "It is" : "They are"} sent right after the setup messages, as ${pins.length === 1 ? "it stands" : "they stand"} now, and not again at ${pins.length === 1 ? "its place" : "their places"} in the ledger.`;
+/**
+ * T16: the payload view's line for the messages pinned to this brain, which are sent right after the setup. `author`
+ * is the brain that wrote each one; none means yours (T16 QA-6: it said "your's").
+ */
+export const pinnedNote = (brain: string, pins: ReadonlyArray<{ messageId: string; as: PinRole; author?: string | undefined }>) =>
+  `Pinned to ${brain}: ${pins.map((p) => `${p.messageId} (${p.author === undefined ? "yours" : `${p.author}'s`}), ${PIN_AS_WORDS[p.as]}`).join("; ")}. ${pins.length === 1 ? "It is" : "They are"} sent right after the setup messages, as ${pins.length === 1 ? "it stands" : "they stand"} now, and not again at ${pins.length === 1 ? "its place" : "their places"} in the ledger.`;
 
 /**
  * T16: the payload view's line for a brain that makes brains (`makes`): sending to it is a side effect, since its

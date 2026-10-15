@@ -366,8 +366,9 @@ async function printStream(res: Response, opts: StreamOpts, io: Io, dim: (s: str
         made = ev.brain;
         break;
       case "image_pending":
+        errOut("\n"); // the prompt on stdout has no newline of its own (T16 QA-7: "Made a new brain" was glued to it)
         sayMade();
-        errOut(dim(`\n(making image ${ev.imageId ?? ""} with ${ev.model ?? "the image model"}... the conversation is free meanwhile)\n`));
+        errOut(dim(`(making image ${ev.imageId ?? ""} with ${ev.model ?? "the image model"}... the conversation is free meanwhile)\n`));
         break;
       case "image_done": {
         const flags = [ev.image?.blurred ? "blurred by safe mode" : "", ev.image?.contentViolation ? "flagged by Venice's content policy" : ""].filter(Boolean);
