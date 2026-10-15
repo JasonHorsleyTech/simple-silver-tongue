@@ -16,11 +16,6 @@ export type BuildOptions = {
   excludeFromMessageId?: string;
   /** Regenerate with a one-off direction: rendered with templates.steer and sent last. Never stored in the ledger. */
   steer?: string;
-  /**
-   * T15, a fresh take: the brain's own words, sent verbatim as an `assistant` message after the ledger (with
-   * excludeFromMessageId, so the reply being replaced is left out) and before the final reminder. Not with a steer.
-   */
-  thought?: string;
 };
 
 const PLACEHOLDER = /\{\{(content|brain|prompt|instruction|roll|thought)\}\}/g;
@@ -105,10 +100,6 @@ export function assembleRequest(conv: Conversation, brainId: string, opts: Build
   if (opts.steer !== undefined && !opts.steer.trim()) {
     throw badRequest("A steer can't be blank. Leave it out for a plain re-roll.");
   }
-  if (opts.thought !== undefined) {
-    if (!opts.thought.trim()) throw badRequest("A thought can't be blank: it is sent as the brain's own words. Leave it out for a plain re-roll.");
-    if (opts.steer !== undefined) throw badRequest("A regenerate takes a steer (revise) or a thought (a fresh take), not both.");
-  }
   if (brain.kind === "image" && !brain.tool) {
     throw new CommandError(400, "bad_brain", `Image brain "${brain.name}" has no tool text (tool.name, description, ...).`);
   }
@@ -182,10 +173,6 @@ export function assembleRequest(conv: Conversation, brainId: string, opts: Build
   // 3. The ledger, from this brain's point of view, using each message's active version. Pinned ones are above.
   for (const m of ledger) if (!pinAs.has(m.id)) messages.push(...view(m));
 
-  // 3b. A fresh take (T15): the thought, verbatim, as the brain's own words. Before the reminder, so the request
-  // still ends with a user message when the brain has one (live, that worked every time; see assertAnswerable).
-  if (opts.thought !== undefined) messages.push({ role: "assistant", content: opts.thought });
-
   // 4. Final reminder, verbatim.
   if (brain.finalReminder.enabled && brain.finalReminder.content.trim()) {
     messages.push({ role: "user", content: brain.finalReminder.content });
@@ -258,37 +245,19 @@ export function assertSendable(body: Pick<ChatRequest, "messages" | "venice_para
   }
 }
 
-/** What a body may end with besides a user or tool message: a fresh take's thought (T15; see endsOnThought). */
-export type AnswerOpts = { thought?: string };
-
-/**
- * True when the body ends on exactly this fresh take's thought: the brain has no final reminder (or a blank one),
- * so nothing comes after the words planted in its mouth. This is the one trailing assistant message the send path
- * lets through, and only when the caller says it is the thought it built, word for word.
- */
-export function endsOnThought(body: Pick<ChatRequest, "messages">, thought: string | undefined): boolean {
-  const last = body.messages.at(-1);
-  return thought !== undefined && body.messages.length > 1 && last?.role === "assistant" && !last.tool_calls && last.content === thought;
-}
-
 /**
  * Why a body gives the model nothing to answer, or null when it ends with a user or tool message. Live,
  * deepseek-v4-1-flash treats a trailing assistant message as a prefix to continue (it repeated its reply and
  * leaked a raw </think>), and a body that is only the system prompt gets continued as text (T02 QA-3).
  * Every plan reports it (prompt.preview shows the body with this note) and the send path refuses it.
  *
- * The one exception (T15): a fresh take for a brain with no final reminder ends on its thought, so the model
- * continues the words planted in its mouth (a prefill). Allowed only for that body, matched word for word
- * (`opts.thought`, endsOnThought); every other body that ends on the brain's own message is still refused.
- * Measured live (2026-10-15, the preset Game Master, reasoning off): thought then the reminder was clean 6 runs
- * in 6 on DeepSeek V4.1 Flash; ending on the thought was clean only about 2 runs in 3 there (9 of 14: it also
- * wrote C code, answered `<contradiction>`, came back empty, or blurted the secret), broke on GLM 5.3 and on
- * Gemma with reasoning off, and held on Grok 4.7 and Kimi K3. So the payload view says so (THOUGHT_LAST_NOTE).
+ * No exception (T17): T15 let a fresh take end on the brain's own planted thought (a prefill), and live it broke
+ * too often (mid-word starts, other languages, code). A fresh take's thought is now the Muse's note, a `user`
+ * message like any helper's, so its body ends on a user message whatever the brain.
  */
-export function nothingToAnswer(body: Pick<ChatRequest, "messages">, brainName = "the brain", opts: AnswerOpts = {}): string | null {
+export function nothingToAnswer(body: Pick<ChatRequest, "messages">, brainName = "the brain"): string | null {
   const last = body.messages.at(-1)?.role;
   if (last === "user" || last === "tool") return null;
-  if (endsOnThought(body, opts.thought)) return null;
   if (last === "assistant") {
     return `The last message is ${brainName}'s own reply, so there is nothing new for it to answer. Write a message for it first.`;
   }
@@ -297,12 +266,9 @@ export function nothingToAnswer(body: Pick<ChatRequest, "messages">, brainName =
   return `There is nothing for ${brainName} to answer yet: the request would hold only its system prompt. Write a message for it first.`;
 }
 
-/**
- * The send path's copy of the check above, whoever built the body (so T03's regenerate can't skip it). Only a
- * fresh take passes `thought`, and then only a body ending on that exact thought gets through (see nothingToAnswer).
- */
-export function assertAnswerable(body: Pick<ChatRequest, "messages">, opts: AnswerOpts = {}): void {
-  const why = nothingToAnswer(body, undefined, opts);
+/** The send path's copy of the check above, whoever built the body (so T03's regenerate can't skip it). */
+export function assertAnswerable(body: Pick<ChatRequest, "messages">): void {
+  const why = nothingToAnswer(body);
   if (why) throw new CommandError(400, "nothing_to_answer", why);
 }
 

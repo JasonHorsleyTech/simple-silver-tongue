@@ -70,7 +70,15 @@ export function makeBrain(conv: Conversation, maker: Brain, message: LedgerMessa
  * Returns the brain it made, if any. New versions never come through here, so they make nothing.
  */
 export function appendMessage(conv: Conversation, message: LedgerMessage): Brain | null {
-  conv.messages.push(message);
+  return insertMessage(conv, message, conv.messages.length);
+}
+
+/**
+ * appendMessage at a place in the ledger (T17: a fresh take's Muse note goes in right before the message it is for).
+ * The same rule: a new message by a maker makes its brain, in the same write.
+ */
+export function insertMessage(conv: Conversation, message: LedgerMessage, at: number): Brain | null {
+  conv.messages.splice(at, 0, message);
   const author = message.author;
   if (author.type !== "brain") return null;
   const maker = conv.brains.find((b) => b.id === author.brainId);

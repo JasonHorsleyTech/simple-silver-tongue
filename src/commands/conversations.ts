@@ -97,7 +97,7 @@ export const templates = z
     roll: template("roll", "The line a roll adds as your message (turn --roll, message.roll). Must contain {{roll}}, the number. Used when you roll: earlier rolls keep their text"),
     thought: template(
       "thought",
-      "What a fresh take's thought starts as (T15): the browser's Fresh take box opens with it, the caret at {{thought}}, and message.regenerate --thought --wrap puts your text there. Must contain {{thought}}",
+      "What a fresh take's note from the Muse starts as (T17): the browser's Fresh take box opens with it, the caret at {{thought}}, and message.regenerate --thought --wrap puts your text there. {{brain}} is the brain the note is for. Must contain {{thought}}",
     ),
   })
   .partial();
@@ -123,7 +123,8 @@ doesn't list is refused.
 Templates are sent to the models, so they are yours to edit; prompt.preview shows the effect. Each one must keep
 its placeholder ({{content}}, {{prompt}}, {{instruction}}, {{roll}} or {{thought}}), where the text goes. The roll
 template (T09) makes a roll's message when you roll, so a change shows in later rolls; earlier ones keep their
-text. The thought template (T15) is what a fresh take's thought starts as (message.regenerate --thought --wrap).`,
+text. The thought template is what a fresh take's note from the Muse starts as (message.regenerate --thought --wrap;
+{{brain}} there is the brain the note is for).`,
   args: z.object({
     id: conversationId,
     title: title.optional(),

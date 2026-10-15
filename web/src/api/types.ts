@@ -69,7 +69,9 @@ export {
   STOP_BILL_NOTE,
   STOP_REASONING_NOTE,
   stopNote,
-  THOUGHT_LAST_NOTE,
+  /** T17: a fresh take's note is the Muse's: the brain called Muse (isMuse), added by the first fresh take. */
+  MUSE_NAME,
+  isMuse,
   /** T16: a pin's role in words, the payload view's notes for pins and makers, and the {{n}} of a name pattern. */
   PIN_AS_WORDS,
   pinnedNote,
@@ -144,8 +146,20 @@ export type Preview = {
   body: ChatRequest;
   notes: string[];
   refusal?: string;
-  /** prompt.preview with regenerate: which message gets the new version, and the steer (or T15 thought) it is asked with. */
-  regenerate?: { messageId: string; newVersion: number; steer?: string; steeredFrom?: number; thought?: string };
+  /**
+   * prompt.preview with regenerate: which message gets the new version, and the steer or thought it is asked with.
+   * T17: a fresh take's `note`, the Muse's note it would save right before the message (`version` 1-based; `isNew`:
+   * a new message, whose id comes when it is saved, so no `messageId`; `same`: the note already says this;
+   * `museCreated`: no brain is called Muse yet, so one is added).
+   */
+  regenerate?: {
+    messageId: string;
+    newVersion: number;
+    steer?: string;
+    steeredFrom?: number;
+    thought?: string;
+    note?: { messageId?: string; version: number; isNew: boolean; same: boolean; muse: string; museCreated: boolean };
+  };
   /** Image brains (T05): the /image/generate body their prompt goes into, minus `prompt` itself, and what was left out. */
   image?: { path: "/image/generate"; params: Omit<ImageRequest, "prompt">; notes: string[] };
   /**
@@ -393,8 +407,9 @@ export type StreamCommands = {
   "generation.follow": { args: { conversation: string } };
   /**
    * A new, active version of the last message (a brain's). With a steer, the brain rewrites its current version.
-   * With a thought (T15, a fresh take; never with a steer), the brain finds it as its own words instead of the
-   * reply: the stream's first delta is the thought and a blank line, so what streams is what is saved.
+   * With a thought (a fresh take; never with a steer; T17), the thought is the Muse's note: saved in the ledger
+   * right before the message (a `muse_note` event, before `start`), and the brain answers it. The new version is
+   * the reply alone, with `thought` (display only) saying what note it answered.
    */
   "message.regenerate": { args: { conversation: string; message?: string; steer?: string; thought?: string } };
   /**
@@ -451,6 +466,13 @@ export type StreamEvent =
    * after the save and before `done` (an image brain's: before `image_pending`, where a client stops reading).
    */
   | { type: "brain_made"; brain: Brain; messageId: string }
+  /**
+   * T17, a fresh take: the Muse's note was saved (Venice took the request), before `start`. `message` is the note as
+   * saved (a new message, or a new version of the note already there), and it sits right before `before`, the
+   * message getting the new version: insert it there, not at the end. `brain` is the Muse (the brain called Muse);
+   * `brainCreated` when this fresh take just added it to the conversation.
+   */
+  | { type: "muse_note"; message: LedgerMessage; before: string; brain: Brain; brainCreated?: true }
   /**
    * The saved brain message. Null only from generation.follow when nothing was running. `spentUsd` is the
    * conversation's running total once this reply's cost was added (a stopped reply's cost comes later).

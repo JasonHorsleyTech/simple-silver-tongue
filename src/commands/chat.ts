@@ -13,12 +13,10 @@ import {
 import { beginPainting, endPainting, newImageRecord } from "../conversations/images.ts";
 import { followImages, imageNote, painterFor, startPainting, type Painter } from "../conversations/paint.ts";
 import { rollD20 } from "../conversations/dice.ts";
-import { appendMessage } from "../conversations/makers.ts";
+import { appendMessage, insertMessage } from "../conversations/makers.ts";
 import { promptOf } from "../conversations/tool-call.ts";
 import {
   addSpend,
-  freshTakeContent,
-  freshTakeHead,
   generatedVersion,
   lookupModel,
   newMessage,
@@ -26,12 +24,14 @@ import {
   planTurn,
   relayReply,
   untilAborted,
+  type MuseNotePlan,
   type Reply,
 } from "../conversations/turn.ts";
 import type { Brain, ChatRequest, Conversation, LedgerMessage, MessageVersion, RetryRequest, Usage } from "../conversations/types.ts";
-import { IMAGE_STOP_NOTE, STOP_BILL_NOTE } from "../conversations/wording.ts";
+import { IMAGE_STOP_NOTE, isMuse, STOP_BILL_NOTE } from "../conversations/wording.ts";
 import { badRequest, CommandError } from "../lib/errors.ts";
 import { newId, nowIso } from "../lib/ids.ts";
+import { activeVersion } from "../conversations/prompt.ts";
 import { command, streamCommand, type Ctx, type StreamEvent } from "../registry.ts";
 import { closeVault, forkVault, type Vault } from "../storage/vault.ts";
 import { openChatStream, type ChatEvent } from "../venice/chat.ts";
@@ -55,12 +55,12 @@ const thought = z
   .string()
   .optional()
   .describe(
-    "A fresh take (T15): words the brain finds as its own, sent verbatim as its assistant message before its final reminder, instead of the reply being replaced. Saved with the reply, merged. Not with --steer, never blank",
+    "A fresh take: your idea for the brain's next reply, saved as a note from the Muse right before the message (a new note, or a new version of the Muse's note already there), which every brain reads and the player sees folded. The brain answers it, never seeing the reply it replaces. Sent verbatim (--wrap: inside the thought template). Not with --steer, never blank",
   );
 const wrap = z
   .boolean()
   .optional()
-  .describe("Put --thought into the conversation's thought template (templates.thought, a ```hidden block by default) where {{thought}} is, as the browser's Fresh take box starts");
+  .describe("Put --thought into the conversation's thought template (templates.thought, the Muse's ```hidden note by default) where {{thought}} is, with the brain's name for {{brain}}, as the browser's Fresh take box starts");
 
 const roll = z
   .boolean()
@@ -74,7 +74,8 @@ export const promptPreview = command({
 With --content, it shows what turn --content would send (your message included). With --roll, what turn --roll
 would send: the die isn't rolled until you send, so the roll's line has {{roll}} where the number will go (the
 only difference), and a note says so. With --regenerate (plus --message, and --steer or --thought [--wrap]), it
-shows what message.regenerate would send instead. Nothing is saved, rolled or sent.
+shows what message.regenerate would send instead (a fresh take's body has the Muse's note in place, which the
+send saves). Nothing is saved, rolled or sent.
 --json prints the body byte for byte as it would go to Venice (minus the auth header), plus notes on text the
 provider adds that we can't show (reasoning on), and the reason the send would be refused, if it would.
 For an image brain it also shows the /image/generate request its prompt goes into: every field but the prompt,
@@ -122,6 +123,11 @@ which is the one its generate_image call writes, word for word.`,
       preview.regenerate = { messageId: plan.message.id, newVersion: plan.message.versions.length + 1 };
       if (plan.steer !== undefined) Object.assign(preview.regenerate, { steer: plan.steer, steeredFrom: plan.steeredFrom });
       if (plan.thought !== undefined) preview.regenerate.thought = plan.thought;
+      if (plan.note) {
+        const n = plan.note;
+        // A new note gets its id when it is saved, so the preview names only one that is already there.
+        preview.regenerate.note = { ...(n.isNew ? {} : { messageId: n.message.id }), version: n.version + 1, isNew: n.isNew, same: n.same, muse: n.muse.name, museCreated: n.museCreated };
+      }
     }
     return preview;
   },
@@ -242,12 +248,14 @@ only and stored for display; later requests see just the active version, as if t
 Repeat as often as you like (each steer revises whichever version is active). Old versions are kept: go back
 with message.select-version. prompt.preview --regenerate shows the exact request first. One reply at a time
 per conversation (409 if busy); generation.follow watches it, generation.stop stops it.
---thought is a fresh take instead (T15): the brain never sees the reply it replaces. Your words go in as the
-brain's own, after the messages before it and before its final reminder, sent exactly as given (--wrap puts
-them in the thought template first: a \`\`\`hidden note, by default). The brain answers, and the new version is the
-thought, a blank line and the reply, so later requests carry both (edit it like any message). A brain with no
-final reminder gets a request that ends on the thought, and continues it: the preview says how that went live.
-For an image brain the new version is the new prompt alone; the thought is kept beside it, for display.`,
+--thought is a fresh take instead (T17): your idea goes in as a note from the Muse, a message of its own right
+before this one (the brain called Muse writes it; the first fresh take adds that brain), framed like any helper's,
+so every brain reads it from now on and the player sees it folded. It is sent exactly as given (--wrap puts it
+in the thought template first: "An idea for <brain>'s next reply, which the player won't see", in a
+\`\`\`hidden note). The brain never sees the reply it replaces, and answers the note; the new version is the reply
+alone (for an image brain, the new prompt). Another fresh take on the same message gives that note a new version.
+The note is saved once Venice takes the request and stays if the reply stops or breaks: a plain regenerate then
+answers it. Delete or edit it like any message.`,
   args: regenerateArgs,
   examples: [
     "./ss message.regenerate --conversation c_k3j9x0q2ma",
@@ -278,18 +286,25 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
   const painter = plan.brain.kind === "image" ? await painterFor(ctx.deps.venice, conv, plan.brain) : null;
   const id = plan.message.id;
   const keeps = `${id} keeps its current version.`;
-  const upstream = await openUpstream(ctx, conv.id, plan.body, gen, `Stopped before the new version started. ${keeps}`, plan.thought);
+  const upstream = await openUpstream(ctx, conv.id, plan.body, gen, `Stopped before the new version started. ${keeps}`);
 
+  // T17: a fresh take's note, saved now that Venice has the request (as a turn's message is), right before the message.
+  let noteSaved: LedgerMessage | null = null;
+  if (plan.note) {
+    const { result } = await mutateConversation(vault, conv.id, (c) => saveMuseNote(c, plan.note!, id));
+    noteSaved = result.message;
+    yield { type: "muse_note", message: result.message, before: id, brain: result.muse, ...(result.museCreated ? { brainCreated: true } : {}) };
+    if (result.made) yield brainMade(result.made, result.message.id);
+  }
   const start: StreamEvent = { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId: id, regenerate: true, kind: plan.brain.kind, conversationTitle: conv.title };
   if (plan.steer !== undefined) start.steer = plan.steer;
   if (plan.thought !== undefined) start.thought = plan.thought;
   yield start;
-  // A fresh take's text version is saved as the thought, a blank line and the reply (T15). Its head streams
-  // first, so every client (a follower too) shows what will be saved, the thought folded like any hidden note.
-  if (plan.thought !== undefined && !painter) yield { type: "delta", delta: freshTakeHead(plan.thought) };
-  const again = { conversation: conv.id, message: id, ...(plan.steer !== undefined ? { steer: plan.steer } : {}), ...(plan.thought !== undefined ? { thought: plan.thought } : {}) };
+  // A fresh take's retry is a plain re-roll: its note is in the ledger now, so sending the thought again would add it twice.
+  const again = { conversation: conv.id, message: id, ...(plan.steer !== undefined ? { steer: plan.steer } : {}) };
+  const noteKept = noteSaved ? ` The Muse's note ${noteSaved.id} stays, so a plain regenerate (no thought) answers it.` : "";
   const say: Say = {
-    kept: `No new version was saved; ${keeps}`,
+    kept: `No new version was saved; ${keeps}${noteKept}`,
     retry: "To retry, regenerate again.",
     again: { command: "message.regenerate", args: again },
   };
@@ -312,13 +327,45 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
   if (painter) return yield* paintReply(ctx, gen, conv.id, reply, { painter, brain: plan.brain, textModel: plan.body.model, say, head }, (c, v) => ({ message: addVersion(c, v) }));
 
   const version = generatedVersion(reply, plan.body.model);
-  if (plan.thought !== undefined) version.content = freshTakeContent(plan.thought, reply.content);
   let message!: LedgerMessage;
   const spentUsd = await saveReply(vault, conv.id, reply, (c) => {
     message = addVersion(c, version);
     return { messageId: id, version: message.activeVersion };
   });
   yield { type: "done", message, note: replyNote(head, reply, plan.body.stop), spentUsd };
+}
+
+/**
+ * T17: save a fresh take's note as planned (planMuseNote), inside mutateConversation, once Venice has taken the
+ * request. The Muse is the plan's brain if it is still here, else the brain called Muse now, else the plan's new one,
+ * added. A new note goes right before the message (insertMessage: a Muse that makes brains makes one, as for any new
+ * message); a note already there gets the text as a new, active version, unless it already says exactly this. Ledger
+ * edits are refused while this generation runs, so the message and the note are where the plan saw them.
+ */
+function saveMuseNote(c: Conversation, plan: MuseNotePlan, beforeId: string): { message: LedgerMessage; muse: Brain; museCreated: boolean; made: Brain | null } {
+  let muse = c.brains.find((b) => b.id === plan.muse.id) ?? c.brains.find(isMuse);
+  let museCreated = false;
+  if (!muse) {
+    muse = structuredClone(plan.muse);
+    c.brains.push(muse);
+    museCreated = true;
+  }
+  if (muse.kind !== "text") throw new CommandError(409, "conflict", `${muse.name} became an image brain while this fresh take was being sent, so its note wasn't saved. Try again.`);
+  if (plan.isNew) {
+    const at = c.messages.findIndex((m) => m.id === beforeId);
+    if (at < 0) throw new CommandError(409, "conflict", `${beforeId} was deleted while its fresh take was being sent.`);
+    const message: LedgerMessage = { ...structuredClone(plan.message), author: { type: "brain", brainId: muse.id } };
+    return { message, muse, museCreated, made: insertMessage(c, message, at) };
+  }
+  const note = c.messages.find((m) => m.id === plan.message.id);
+  if (!note) throw new CommandError(409, "conflict", `The Muse's note ${plan.message.id} was deleted while this fresh take was being sent.`);
+  const text = activeVersion(plan.message).content;
+  if (activeVersion(note).content !== text) {
+    note.versions.push(structuredClone(activeVersion(plan.message)));
+    note.activeVersion = note.versions.length - 1;
+    note.updatedAt = nowIso(); // stamped in the write queue (the browser keeps the newer copy)
+  }
+  return { message: note, muse, museCreated, made: null };
 }
 
 /**
@@ -419,11 +466,10 @@ async function* imageTail(ctx: Ctx, s: ImageStarted): AsyncGenerator<StreamEvent
  * A stop that lands before Venice answers says what it left behind; the request itself goes on to a drain,
  * since Venice may well be writing (and billing) it already. A stop before anything was sent sends nothing.
  */
-async function openUpstream(ctx: Ctx, convId: string, body: ChatRequest, gen: GenerationHandle, stoppedText: string, thought?: string) {
+async function openUpstream(ctx: Ctx, convId: string, body: ChatRequest, gen: GenerationHandle, stoppedText: string) {
   if (gen.stopSignal.aborted) throw stopped(stoppedText);
   const { vault } = ctx.requireSession();
-  // `thought`: a fresh take's (T15), the one trailing assistant message the send path lets through.
-  const pending = openChatStream(ctx.deps.venice, body, { signal: gen.upstreamSignal, ...(thought !== undefined ? { thought } : {}) });
+  const pending = openChatStream(ctx.deps.venice, body, { signal: gen.upstreamSignal });
   const events = await Promise.race([pending, untilAborted(gen.stopSignal).then(() => null)]);
   if (events) return events;
   gen.keepUpstream();

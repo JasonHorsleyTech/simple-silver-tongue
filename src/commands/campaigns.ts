@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { ROOT, DEFAULT_IMAGE_MODEL, DEFAULT_TEXT_MODEL } from "../config.ts";
 import { rebuild } from "../conversations/campaign.ts";
-import { DEFAULT_PIN_AS, DEFAULT_TEMPLATES, newBrain, nextColor } from "../conversations/defaults.ts";
+import { DEFAULT_PIN_AS, DEFAULT_TEMPLATES, newBrain, nextColor, upgradeTemplates } from "../conversations/defaults.ts";
 import { createConversationFile, loadConversation, mutateConversation } from "../conversations/store.ts";
 import { lookupModel } from "../conversations/turn.ts";
 import { SCHEMA_VERSION, SETUP_ROLES, type Brain, type Conversation, type ImageSettings, type LedgerMessage, type MessageVersion } from "../conversations/types.ts";
@@ -44,7 +44,7 @@ const version = z.object({
   source: z.enum(["generated", "authored"]).default("authored"),
   steer: z.string().optional(),
   steeredFrom: z.number().int().min(0).optional(),
-  thought: z.string().optional(), // T15: a fresh take's thought, display only (a text version's content starts with it)
+  thought: z.string().optional(), // a fresh take's note, display only (T17: the Muse's note is its own message; T15: a text version's content starts with it)
   repaintOf: z.number().int().min(0).optional(),
   reasoning: z.string().optional(),
   edited: z.boolean().optional(),
@@ -238,6 +238,7 @@ function toConversation(doc: Campaign, where: string): Conversation {
   };
   if (s.maxTokens) conv.settings.maxTokens = s.maxTokens;
   if (s.temperature !== undefined && s.temperature !== null) conv.settings.temperature = s.temperature;
+  upgradeTemplates(conv.templates); // T17: a file with T15's thought template gets the Muse's note, as a load does
   return conv;
 }
 

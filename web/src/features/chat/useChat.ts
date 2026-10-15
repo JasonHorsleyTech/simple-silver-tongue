@@ -364,6 +364,24 @@ export function useChat(id: string): Chat {
         case "brain_made":
           addMadeBrain(ev.brain);
           break;
+        case "muse_note":
+          // T17: a fresh take's note, saved right before the message being regenerated (and the Muse, if just added).
+          flush();
+          setConv((c) => {
+            if (!c) return c;
+            const known = c.brains.some((b) => b.id === ev.brain.id);
+            const brains = known ? c.brains.map((b) => (b.id === ev.brain.id ? ev.brain : b)) : [...c.brains, ev.brain];
+            const i = c.messages.findIndex((m) => m.id === ev.message.id);
+            const at = c.messages.findIndex((m) => m.id === ev.before);
+            const messages =
+              i !== -1
+                ? c.messages.map((m, j) => (j === i && newer(ev.message, m) ? ev.message : m))
+                : at === -1
+                  ? [...c.messages, ev.message]
+                  : [...c.messages.slice(0, at), ev.message, ...c.messages.slice(at)];
+            return { ...c, brains, messages };
+          });
+          break;
         case "done":
           flush();
           if (ev.message) saveReply(ev.message, ev.spentUsd);

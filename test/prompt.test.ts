@@ -12,8 +12,7 @@ import {
   resolveBrain,
   type ModelCaps,
 } from "../src/conversations/prompt.ts";
-import { freshTakeContent, newMessage, planRegenerate, planTurn, reviewBody } from "../src/conversations/turn.ts";
-import { THOUGHT_LAST_NOTE } from "../src/conversations/wording.ts";
+import { newMessage, planRegenerate, planTurn, reviewBody } from "../src/conversations/turn.ts";
 import type { Author, Brain, Conversation, MessageVersion } from "../src/conversations/types.ts";
 
 const DEEPSEEK: ModelCaps = { reasoning: { supported: true, effortOptions: ["none", "low", "high", "max"] } };
@@ -306,48 +305,70 @@ describe("planTurn and helpers", () => {
     assert.doesNotMatch(plan.refusal ?? "", /earlier reply/);
   });
 
-  test("fresh take (T15): the re-roll body plus the thought, as the brain's own words, before its reminder; the old reply never in it", () => {
-    const { conv, gm, dice, last } = table();
-    const THOUGHT = "```hidden\nSubvert it: three goblins in a trench coat.\n\nThat sounds good, I'll respond next.\n```\n";
+  test("fresh take (T17): the Muse's note right before the message, framed like any helper's; the body ends on a user message, reminder or not", () => {
+    const { conv, gm, dice } = table();
+    const NOTE = "```hidden\nAn idea for the Dice Master's next reply, which the player won't see:\n\nSubvert it: a natural 1.\n```\n";
+    const framed = (text: string) => user(`<!-- from: Muse -->\n${text}`);
     // The Dice Master has a reminder: re-roll its line, with a thought.
     conv.messages.splice(-1); // the GM's last reply goes, so the Dice Master's...
     conv.messages.splice(-2); // ...line is last
     const roll = conv.messages.at(-1)!;
     assert.equal(roll.author.type === "brain" && roll.author.brainId, dice.id);
     const reroll = planRegenerate(conv, {}, DEEPSEEK);
-    let plan = planRegenerate(conv, { thought: THOUGHT }, DEEPSEEK);
-    assert.equal(plan.thought, THOUGHT, "sent exactly as given, never trimmed");
-    assert.deepEqual(plan.body.messages, [...reroll.body.messages.slice(0, -1), assistant(THOUGHT), reroll.body.messages.at(-1)], "the re-roll's body, the thought before the reminder");
+    let plan = planRegenerate(conv, { thought: NOTE }, DEEPSEEK);
+    assert.equal(plan.thought, NOTE, "sent exactly as given, never trimmed");
+    assert.deepEqual(plan.body.messages, [...reroll.body.messages.slice(0, -1), framed(NOTE), reroll.body.messages.at(-1)], "the re-roll's body, the note before the reminder");
     assert.deepEqual(plan.body.messages.at(-1), user("<!-- System reminder --> Only roll."));
-    assert.deepEqual([plan.refusal, plan.notes.includes(THOUGHT_LAST_NOTE), plan.steer], [undefined, false, undefined]);
+    assert.deepEqual([plan.refusal, plan.steer], [undefined, undefined]);
     assert.ok(!JSON.stringify(plan.body).includes("Roll: 17."), "the reply being replaced is left out");
+    // No Muse yet: the plan makes one (saved only by the send), and the note is a new message by it.
+    assert.deepEqual([plan.note!.isNew, plan.note!.museCreated, plan.note!.muse.name, plan.note!.muse.kind], [true, true, "Muse", "text"]);
+    assert.deepEqual(plan.note!.message.author, { type: "brain", brainId: plan.note!.muse.id });
+    assert.equal(conv.brains.length, 3, "nothing changed in the conversation");
+    assert.match(plan.notes[0]!, /^A fresh take: the Muse's note goes in as a new message, right before .* no brain called Muse yet, so one is added when you send/);
 
-    // The GM has no reminder: the request ends on the thought (a prefill), allowed for this one body, with a note.
+    // The GM has no reminder: the body ends on the note, a user message (T15 ended on its own words, a prefill).
     const t2 = table();
-    plan = planRegenerate(t2.conv, { thought: THOUGHT }, DEEPSEEK);
+    plan = planRegenerate(t2.conv, { thought: NOTE }, DEEPSEEK);
     assert.equal(plan.message.id, t2.last.id);
-    assert.deepEqual(plan.body.messages.slice(-2), [user("<!-- from: the user -->\nI sit down."), assistant(THOUGHT)]);
+    assert.deepEqual(plan.body.messages.slice(-2), [user("<!-- from: the user -->\nI sit down."), framed(NOTE)]);
     assert.equal(plan.refusal, undefined);
-    assert.equal(plan.notes[0], THOUGHT_LAST_NOTE);
-    assert.doesNotThrow(() => assertAnswerable(plan.body, { thought: THOUGHT }));
-    // Only that exact thought gets through: the guard still refuses every other body ending on the brain's own words.
-    assert.throws(() => assertAnswerable(plan.body), { code: "nothing_to_answer" });
-    assert.throws(() => assertAnswerable(plan.body, { thought: THOUGHT.trim() }), { code: "nothing_to_answer" });
+    assert.doesNotThrow(() => assertAnswerable(plan.body));
     assert.ok(!JSON.stringify(plan.body).includes("The figure nods.") && !JSON.stringify(plan.body).includes("OLD-VERSION"));
 
-    // --wrap puts it in the thought template; blank, or with a steer, is refused.
-    assert.equal(planRegenerate(t2.conv, { thought: "Goblins.", wrap: true }, DEEPSEEK).thought, "```hidden\nGoblins.\n\nThat sounds good, I'll respond next.\n```");
+    // With a Muse note right before the message, a second fresh take is a new version of it (the same text: as it is).
+    const muse = plan.note!.muse;
+    t2.conv.brains.push(muse);
+    t2.conv.messages.splice(-1, 0, plan.note!.message);
+    plan = planRegenerate(t2.conv, { thought: "Second idea." }, DEEPSEEK);
+    assert.deepEqual([plan.note!.isNew, plan.note!.museCreated, plan.note!.version, plan.note!.message.id], [false, false, 1, t2.conv.messages.at(-2)!.id]);
+    assert.deepEqual(plan.body.messages.at(-1), framed("Second idea."), "the note's new version, in its place");
+    assert.equal(plan.body.messages.filter((m) => m.content.includes("<!-- from: Muse -->")).length, 1, "one note, not two");
+    assert.equal(t2.conv.messages.at(-2)!.versions.length, 1, "the plan changes nothing");
+    plan = planRegenerate(t2.conv, { thought: NOTE }, DEEPSEEK);
+    assert.deepEqual([plan.note!.same, plan.note!.version], [true, 0]);
+    // Every other brain reads the note framed, at its place, after the next turn too.
+    assert.deepEqual(buildRequest(t2.conv, t2.dice.id, { model: DEEPSEEK }).messages.at(-3), framed(NOTE));
+    // The Muse's own note can't be taken afresh; an image brain called Muse is refused with what to do.
+    t2.conv.messages.push(newMessage({ type: "brain", brainId: muse.id }, "text", { content: "A note.", source: "authored", createdAt: AT }));
+    assert.throws(() => planRegenerate(t2.conv, { thought: "x" }, DEEPSEEK), { code: "bad_request", message: /Muse's own note/ });
+    t2.conv.messages.pop();
+    muse.kind = "image";
+    assert.throws(() => planRegenerate(t2.conv, { thought: "x" }, DEEPSEEK), { code: "conflict", message: /Muse here is an image brain. Rename it/ });
+    muse.kind = "text";
+
+    // --wrap puts it in the thought template, {{brain}} the brain it is for; blank, or with a steer, is refused.
+    assert.equal(
+      planRegenerate(t2.conv, { thought: "Goblins.", wrap: true }, DEEPSEEK).thought,
+      "```hidden\nAn idea for Game Master's next reply, which the player won't see:\n\nGoblins.\n```",
+    );
     assert.throws(() => planRegenerate(t2.conv, { thought: " \n " }, DEEPSEEK), { code: "bad_request", message: /thought can't be blank/ });
     assert.throws(() => planRegenerate(t2.conv, { thought: "x", steer: "y" }, DEEPSEEK), { code: "bad_request", message: /not both/ });
     assert.throws(() => planRegenerate(t2.conv, { wrap: true }, DEEPSEEK), { code: "bad_request" });
     t2.conv.templates.thought = "no marker";
     assert.throws(() => planRegenerate(t2.conv, { thought: "x", wrap: true }, DEEPSEEK), { code: "bad_template", message: /thought template has no \{\{thought\}\}/ });
     assert.ok(planRegenerate(t2.conv, { thought: "x" }, DEEPSEEK), "without --wrap the template isn't used");
-    assert.throws(() => buildRequest(t2.conv, t2.gm.id, { model: DEEPSEEK, thought: "x", steer: "y" }), /not both/);
-
-    // Saved merged: the thought, a blank line, the reply (what streams); an empty reply saves the thought alone.
-    assert.equal(freshTakeContent(THOUGHT, "The figure is short."), "```hidden\nSubvert it: three goblins in a trench coat.\n\nThat sounds good, I'll respond next.\n```\n\nThe figure is short.");
-    assert.equal(freshTakeContent(THOUGHT, " \n"), THOUGHT.trimEnd());
+    void gm;
   });
 
   test("a template without its placeholder is refused where it's used, so no text is silently left out (T03 QA-3)", () => {

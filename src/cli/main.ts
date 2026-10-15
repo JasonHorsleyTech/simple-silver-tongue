@@ -354,6 +354,20 @@ async function printStream(res: Response, opts: StreamOpts, io: Io, dim: (s: str
         if (roll && typeof roll.result === "number") errOut(`${rollLabel(roll)}\n`);
         break;
       }
+      case "muse_note": {
+        // T17: a fresh take's note, saved before the reply. It is a hidden note, so only --reveal prints its text.
+        const m = ev.message ?? {};
+        const n = Array.isArray(m.versions) ? m.versions.length : 1;
+        const which = n > 1 ? `, version ${(m.activeVersion ?? 0) + 1}/${n}` : "";
+        if (ev.brainCreated) errOut(dim(`(added a brain called ${ev.brain?.name ?? "Muse"} (${ev.brain?.id ?? "?"}): it writes the fresh takes' notes)
+`));
+        if (opts.reveal) errOut(dim(`[${ev.brain?.name ?? "Muse"}'s note ${m.id}${which}, right before the reply:]
+${m.versions?.[m.activeVersion ?? 0]?.content ?? ""}
+`));
+        else errOut(dim(`[${ev.brain?.name ?? "Muse"}'s note ${m.id}${which}, right before the reply: every brain reads it; --reveal shows it]
+`));
+        break;
+      }
       case "start": {
         // With SS_CONVERSATION, name the campaign, so a stale export after a clone shows at once (T07 QA-6).
         const where = fromEnv && typeof ev.conversationTitle === "string" ? ` · in "${ev.conversationTitle}"` : "";

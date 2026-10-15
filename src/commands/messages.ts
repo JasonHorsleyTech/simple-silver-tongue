@@ -9,7 +9,8 @@ import { rollD20 } from "../conversations/dice.ts";
 import { addSpend, newMessage, rollMessage } from "../conversations/turn.ts";
 import type { Author, Brain, Conversation, LedgerMessage } from "../conversations/types.ts";
 import { appendMessage, forgetMessage, type Forgotten } from "../conversations/makers.ts";
-import { rollLabel } from "../conversations/wording.ts";
+import { isMuse, rollLabel } from "../conversations/wording.ts";
+import { newMuse } from "../conversations/defaults.ts";
 import { badRequest, CommandError, conflict, notFound } from "../lib/errors.ts";
 import { nowIso } from "../lib/ids.ts";
 import { removeImageFiles } from "../images/files.ts";
@@ -42,7 +43,23 @@ export function viewOf(conv: Conversation, m: LedgerMessage): MessageView {
  * message.edit and message.add: the message, plus the image being made for it now, if they started one (T05), and
  * (T16, message.add) the brain it made, when its author makes brains.
  */
-export type ImageMessageView = MessageView & { painting?: { imageId: string; model: string }; made?: Brain };
+export type ImageMessageView = MessageView & { painting?: { imageId: string; model: string }; made?: Brain; museAdded?: Brain };
+
+/**
+ * T17: the brain `as` names, inside mutateConversation. "Muse" when no brain is called Muse adds one (newMuse), as a
+ * fresh take does, so a note from the Muse can be written by hand from the start.
+ */
+function authorBrain(c: Conversation, as: string): { brain: Brain; museAdded: Brain | null } {
+  if (isMuse({ name: as }) && !c.brains.some(isMuse)) {
+    const brain = newMuse(c);
+    c.brains.push(brain);
+    return { brain, museAdded: brain };
+  }
+  return { brain: resolveBrain(c, as), museAdded: null };
+}
+
+/** The CLI's line for a Muse a hand-written note added (T17). */
+const museLine = (b: Brain) => `Added a brain called ${b.name} (${b.id}): fresh takes' notes are its. Its system prompt is used only if you ask it for a turn.`;
 
 const startedView = (s: Started): ImageMessageView => ({ ...viewOf(s.conv, s.message), ...(s.painting ? { painting: s.painting } : {}), ...(s.made ? { made: s.made } : {}) });
 
@@ -73,6 +90,8 @@ export const messageAdd = command({
 Master's opening scene: that brain sees them as its own past reply (assistant), every other brain sees them
 framed with its name, exactly as if it had written them. Then send a turn, to any brain, to carry on.
 In the mouth of a brain that makes brains (T16, brain.update --makes), it makes a new brain, as a reply would.
+--as Muse writes a note from the Muse (T17), as a fresh take does: a hidden idea for the next reply, which every
+brain reads; with no brain called Muse yet, it adds one.
 --as <image brain> makes the content its image prompt, and its image is made from it: this answers at once,
 and the image is painted after (image.follow watches it; conversation.get shows its state).
 Refused while a reply is being generated (it would land after your message, answering what came before it).`,
@@ -84,30 +103,35 @@ Refused while a reply is being generated (it would land after your message, answ
   examples: [
     './ss message.add --conversation c_k3j9x0q2ma --as "Game Master" --content @opening-scene.md',
     './ss message.add --conversation c_k3j9x0q2ma --as player --content "I look around the tavern."',
+    './ss message.add --conversation c_k3j9x0q2ma --as Muse --content @idea.md   # a note from the Muse; then turn --brain "Game Master"',
   ],
   handler: async (args, ctx): Promise<ImageMessageView> => {
     const { vault } = ctx.requireSession();
     const player = args.as.trim().toLowerCase() === PLAYER;
-    if (!player && resolveBrain(await loadConversation(vault, args.conversation), args.as).kind === "image") {
+    const before = await loadConversation(vault, args.conversation);
+    const newMuseNow = isMuse({ name: args.as }) && !before.brains.some(isMuse); // T17: added below, a text brain
+    if (!player && !newMuseNow && resolveBrain(before, args.as).kind === "image") {
       // A prompt in an image brain's mouth: saved, then painted as a job of its own (repaint.ts).
       return startedView(await addImageMessage(vault, ctx.deps.venice, args.conversation, args.as, args.content));
     }
     const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
       assertLedgerIdle(vault, c.id);
       let author: Author = { type: "player" };
+      let museAdded: Brain | null = null;
       if (!player) {
-        const brain = resolveBrain(c, args.as);
-        if (brain.kind !== "text") throw conflict(`${brain.name} became an image brain while you were adding this. Try again.`);
-        author = { type: "brain", brainId: brain.id };
+        const found = authorBrain(c, args.as);
+        museAdded = found.museAdded;
+        if (found.brain.kind !== "text") throw conflict(`${found.brain.name} became an image brain while you were adding this. Try again.`);
+        author = { type: "brain", brainId: found.brain.id };
       }
       const m = newMessage(author, "text", { content: args.content, source: "authored", createdAt: nowIso() });
-      return { m, made: appendMessage(c, m) }; // T16: in a maker's mouth, it makes a brain in the same write
+      return { m, museAdded, made: appendMessage(c, m) }; // T16: in a maker's mouth, it makes a brain in the same write
     });
-    return { ...viewOf(conv, result.m), ...(result.made ? { made: result.made } : {}) };
+    return { ...viewOf(conv, result.m), ...(result.made ? { made: result.made } : {}), ...(result.museAdded ? { museAdded: result.museAdded } : {}) };
   },
   format: (r: ImageMessageView) => {
     const who = r.message.author.type === "player" ? "your message" : r.message.kind === "image" ? `an image prompt in ${r.author}'s mouth` : `in ${r.author}'s mouth`;
-    return `Added ${r.message.id} (${who}). Every brain sees it from the next request.${r.message.kind === "image" ? paintingLine(r) : ""}${r.made ? `\n${madeLine(r.made, r.conversationId)}` : ""}`;
+    return `Added ${r.message.id} (${who}). Every brain sees it from the next request.${r.message.kind === "image" ? paintingLine(r) : ""}${r.museAdded ? `\n${museLine(r.museAdded)}` : ""}${r.made ? `\n${madeLine(r.made, r.conversationId)}` : ""}`;
   },
 });
 
@@ -298,16 +322,18 @@ being generated.`,
     './ss message.set-author --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --as "Character 2"',
     "./ss message.set-author --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --as player",
   ],
-  handler: async (args, ctx): Promise<MessageView & { from: string; changed: boolean }> => {
+  handler: async (args, ctx): Promise<MessageView & { from: string; changed: boolean; museAdded?: Brain }> => {
     const { vault } = ctx.requireSession();
     const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
       assertLedgerIdle(vault, c.id);
       const m = findMessage(c, args.message);
       const from = viewOf(c, m).author;
       const player = args.as.trim().toLowerCase() === PLAYER;
-      const to: Author = player ? { type: "player" } : { type: "brain", brainId: resolveBrain(c, args.as).id };
+      // T17: --as Muse with no brain called Muse adds one, as message.add does (dropped below if the move is refused).
+      const found = player ? null : authorBrain(c, args.as);
+      const to: Author = found ? { type: "brain", brainId: found.brain.id } : { type: "player" };
       const same = to.type === m.author.type && (to.type === "player" || to.brainId === (m.author as { brainId: string }).brainId);
-      if (same) return { m, from, changed: false };
+      if (same) return { m, from, changed: false, museAdded: null };
       if (to.type === "player") {
         if (m.kind === "image") throw badRequest(`${m.id} is an image prompt, and only an image brain can say one. Move it to another image brain.`);
         if (m.versions.length > 1) {
@@ -322,14 +348,14 @@ being generated.`,
       }
       m.author = to;
       m.updatedAt = nowIso(); // stamped in the write queue (the browser keeps the newer copy)
-      return { m, from, changed: true };
+      return { m, from, changed: true, museAdded: found?.museAdded ?? null };
     });
-    return { ...viewOf(conv, result.m), from: result.from, changed: result.changed };
+    return { ...viewOf(conv, result.m), from: result.from, changed: result.changed, ...(result.museAdded ? { museAdded: result.museAdded } : {}) };
   },
-  format: (r: MessageView & { from: string; changed: boolean }) =>
-    r.changed
+  format: (r: MessageView & { from: string; changed: boolean; museAdded?: Brain }) =>
+    (r.changed
       ? `${r.message.id} is now said by ${r.author} (was ${r.from}). Every brain sees it that way from the next request: ${r.author === "you" ? "framed as yours" : `${r.author} reads it as its own words, and the other brains see it framed with that name`}.`
-      : `${r.message.id} is already said by ${r.author}. Nothing changed.`,
+      : `${r.message.id} is already said by ${r.author}. Nothing changed.`) + (r.museAdded ? `\n${museLine(r.museAdded)}` : ""),
 });
 
 export default [messageAdd, messageRoll, messageGet, messageEdit, messageDelete, messageSelectVersion, messageSetAuthor];

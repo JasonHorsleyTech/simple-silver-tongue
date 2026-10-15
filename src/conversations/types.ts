@@ -8,10 +8,10 @@
 /**
  * 2 (T07 triage): every brain has `stop`. 3 (T09): templates.roll. 4 (T13): every setup message has a `role`.
  * 5 (T15): templates.thought. 6 (T16): every brain has `pins` (none, in an older file); `makes` and `madeFrom` are
- * optional. loadConversation upgrades older files (upgradeConversation, defaults.ts), in memory; the next write
- * saves them.
+ * optional. 7 (T17): templates.thought, if it is still T15's default, becomes the Muse's note. loadConversation
+ * upgrades older files (upgradeConversation, defaults.ts), in memory; the next write saves them.
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 export type Conversation = {
   schemaVersion: number;
@@ -58,7 +58,8 @@ export type ImageSettings = {
  * Framing strings. Placeholders are literal, single-pass replacements: {{content}} {{brain}} {{prompt}} {{instruction}}
  * {{roll}} {{thought}}. Four are applied each time a request is built; `roll` (T09) once, when the server rolls: the
  * roll's message holds the line it makes, so every brain reads that line framed as a player message. `thought`
- * (T15) is a pre-fill: what a fresh take's box starts with, never applied by the request builder.
+ * (T15, T17) is a pre-fill: what a fresh take's note starts as, never applied by the request builder (the note is a
+ * ledger message, framed like any helper's).
  */
 export type Templates = {
   player: string;
@@ -68,9 +69,10 @@ export type Templates = {
   /** T09: a roll's message, with {{roll}} for the number. Default ROLL_TEMPLATE: "🎲 I rolled a d20: **{{roll}}**". */
   roll: string;
   /**
-   * T15: what the Fresh take box starts with (a ```hidden block by default), {{thought}} marking where the caret
-   * goes. The box's text is sent as it stands, so the request builder never renders this; only
-   * message.regenerate --wrap does, putting --thought where {{thought}} is.
+   * T15, T17: what a fresh take's note starts as: the Muse's note, a ```hidden block by default, {{thought}} marking
+   * where the caret goes and {{brain}} the brain the note is for. The box's text is saved as it stands (the note is
+   * a ledger message by the Muse, framed like any helper's), so the request builder never renders this; only
+   * message.regenerate --wrap does, putting --thought where {{thought}} is and the brain's name where {{brain}} is.
    */
   thought: string;
 };
@@ -228,11 +230,11 @@ export type MessageVersion = {
   /** With a steer: the index of the version the steer revised (the one that was active). Display only. */
   steeredFrom?: number;
   /**
-   * T15: a fresh take. The thought the user planted as the brain's own words: sent once, as an assistant message
-   * after the messages before this one, then the brain answered. Display only, never sent on its own. A text
-   * version's content is the thought, a blank line and the reply (saved merged, so later requests carry both);
-   * an image version's content is the prompt alone (it goes to the image model word for word), so this is the
-   * only place its thought is kept.
+   * A fresh take: the note this version answered, as it was sent. Display only, never sent from here. T17: the note
+   * is the Muse's, a ledger message of its own right before this one (every brain reads it there, and it can be
+   * edited, re-versioned or deleted apart from this); this version's content is the reply alone. T15 versions
+   * (before T17) planted it as the brain's own words: a text version's content starts with it (saved merged), an
+   * image version's is the prompt alone. Both still load and show as fresh takes.
    */
   thought?: string;
   /**

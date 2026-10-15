@@ -101,8 +101,8 @@ function versionBits(v: MessageVersion, kind: LedgerMessage["kind"] = "text"): s
   if (kind === "image") bits.push("image prompt", ...(v.image ? [imageLine(v.image)] : ["no image"]));
   if (v.roll) bits.push(rollLabel(v.roll, v.edited)); // what the die said (T09); the text below is what every brain reads
   if (v.steer !== undefined) bits.push(`steer "${v.steer}"${v.steeredFrom !== undefined ? ` on version ${v.steeredFrom + 1}` : ""}`);
-  // T15: the thought itself isn't put in the header (it is usually a hidden note): a text version starts with it,
-  // and an image version's is printed below its prompt (thoughtBlock).
+  // The note itself isn't put in the header (it is usually a hidden note): it is the Muse's message right before
+  // (T17), and message.get prints it below the version (thoughtBlock). A T15 text version starts with it.
   if (v.thought !== undefined) bits.push("fresh take");
   if (v.edited) bits.push("edited");
   if (v.costUsd) bits.push(usd(v.costUsd));
@@ -136,13 +136,13 @@ export function formatMessage({ conversationId, author, message: m }: MessageVie
 }
 
 /**
- * T15: an image version's fresh-take thought, which isn't in its content (the prompt alone goes to the image
- * model). Display only, so it is shown like a text message: hidden notes folded unless --reveal. A text version's
- * thought is the head of its content, already shown.
+ * A fresh take's note, as this version was asked with it (display only), shown like a text message: hidden notes
+ * folded unless --reveal. T17: it isn't in the version's content (the note is the Muse's message right before, which
+ * may have been edited or re-versioned since). A T15 text version starts with its thought, already shown.
  */
 function thoughtBlock(v: MessageVersion, kind: LedgerMessage["kind"], opts: FormatOpts | undefined, count: { folded: number }): string[] {
-  if (v.thought === undefined || kind !== "image") return [];
-  return ["(the thought it was given, display only:)", shown(v.thought, "text", opts, count)];
+  if (v.thought === undefined || (kind === "text" && v.content.startsWith(v.thought.trimEnd()))) return [];
+  return ["(the fresh take's note it answered, as sent; display only:)", shown(v.thought, "text", opts, count)];
 }
 
 /** The command that shows one message's hidden notes. */
@@ -163,8 +163,20 @@ export type Preview = {
    * right after the setup) and how it is sent. Absent when the brain has no pins this request holds.
    */
   pinned?: PinnedAt[];
-  /** Set for prompt.preview --regenerate: which message gets the new version, and how it is asked for. */
-  regenerate?: { messageId: string; newVersion: number; steer?: string; steeredFrom?: number; thought?: string };
+  /**
+   * Set for prompt.preview --regenerate: which message gets the new version, and how it is asked for. T17: a fresh
+   * take's `note`, the Muse's note the send saves right before the message (`version` 1-based; `isNew`: a new
+   * message, whose id comes when it is saved, so no `messageId`; `same`: the note already says this; `museCreated`:
+   * no brain is called Muse yet, so one is added).
+   */
+  regenerate?: {
+    messageId: string;
+    newVersion: number;
+    steer?: string;
+    steeredFrom?: number;
+    thought?: string;
+    note?: { messageId?: string; version: number; isNew: boolean; same: boolean; muse: string; museCreated: boolean };
+  };
   /**
    * Image brains (T05): the /image/generate request their prompt goes into. `params` is the exact body except
    * `prompt`, which is the prompt the generate_image call writes, word for word. `notes` say which image settings
@@ -182,7 +194,7 @@ export function formatPreview(p: Preview): string {
     ...(r
       ? [
           r.thought !== undefined
-            ? `Regenerating ${r.messageId} as version ${r.newVersion}: a fresh take, so the message is left out and your thought goes in as ${p.brainName}'s own words, verbatim.${p.image ? " The new prompt is saved alone; the thought is kept beside it, for display." : " The new version is the thought, a blank line, then the reply."}`
+            ? `Regenerating ${r.messageId} as version ${r.newVersion}: a fresh take, so the message is left out and ${p.brainName} answers the Muse's note right before it (see the note below). The new version is ${p.image ? "the new prompt" : "the reply"} alone.`
             : r.steer === undefined
               ? `Regenerating ${r.messageId} as version ${r.newVersion}: a plain re-roll, so the message is left out.`
               : `Regenerating ${r.messageId} as version ${r.newVersion}: version ${r.steeredFrom! + 1} stays in, then the steer. Only this request carries them both.`,

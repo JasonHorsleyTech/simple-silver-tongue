@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
-import type { Brain, ChatRequest, Conversation, LedgerMessage } from "../src/conversations/types.ts";
+import { SCHEMA_VERSION, type Brain, type ChatRequest, type Conversation, type LedgerMessage } from "../src/conversations/types.ts";
 import { readJson, writeJson } from "../src/storage/vault.ts";
 import { createUser } from "../src/storage/users.ts";
 import { startTestServer } from "./helpers.ts";
@@ -301,7 +301,7 @@ describe("brains that make brains, pinned messages, and who said what (T16): CLI
     }
     await writeJson(vault, file, old);
     const loaded = await get(c);
-    assert.equal(loaded.schemaVersion, 6);
+    assert.equal(loaded.schemaVersion, SCHEMA_VERSION);
     assert.ok(loaded.brains.every((b) => Array.isArray(b.pins) && b.pins.length === 0 && b.makes === undefined));
     await ok(["turn", "--conversation", c, "--content", "Hello"]);
   });

@@ -493,10 +493,12 @@ test("the browser names a maker's next brain by the server's own rule (T16)", ()
   assert.equal(isPatternName("Place ({{n}})", "Place 2"), false);
 });
 
-test("the Fresh take box starts with the thought template, the marker gone and the caret where it was (T15)", () => {
-  const { text, caret } = prefillThought(DEFAULT_TEMPLATES.thought);
-  assert.equal(text, "```hidden\n\n\nThat sounds good, I'll respond next.\n```");
-  assert.equal(caret, "```hidden\n".length);
+test("the Fresh take box starts with the thought template, the marker gone, the caret where it was and the brain named (T15, T17)", () => {
+  const { text, caret } = prefillThought(DEFAULT_TEMPLATES.thought, "Game Master");
+  const head = "```hidden\nAn idea for Game Master's next reply, which the player won't see:\n\n";
+  assert.equal(text, `${head}\n\`\`\``);
+  assert.equal(caret, head.length);
+  assert.deepEqual(prefillThought("{{brain}}: {{thought}}", "{{thought}}"), { text: "{{thought}}: ", caret: 13 }, "a name is never taken for the marker");
   assert.deepEqual(prefillThought("a {{thought}} b {{thought}}"), { text: "a  b ", caret: 2 }, "no marker is left to be sent");
   assert.deepEqual(prefillThought("no marker"), { text: "no marker", caret: 9 });
 });

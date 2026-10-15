@@ -78,7 +78,7 @@ export function SteerBox({
   // Opening a tab focuses its box; an empty Fresh take box is filled from the template first.
   useEffect(() => {
     if (fresh && !thought) {
-      const p = prefillThought(thoughtTemplate);
+      const p = prefillThought(thoughtTemplate, brainName);
       caret.current = { text: p.text, at: p.caret };
       onThought(p.text);
       return;

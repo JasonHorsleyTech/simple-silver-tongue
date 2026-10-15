@@ -97,12 +97,29 @@ export const ROLL_PREVIEW_NOTE =
   "The d20 isn't rolled yet. When you send, the server rolls it and puts the number (1 to 20) where {{roll}} is in your roll's line, the newest player message (a {{roll}} anywhere else is sent as written). The rest of this body is exactly what is sent.";
 
 /**
- * T15: the payload view's note for a fresh take whose request ends on the thought: a brain with no final reminder
- * (the plain "Assistant"), so nothing comes after the brain's own words and the model continues them (a prefill).
- * Measured live (2026-10-15, design.md, "Prompt assembly"); the send path allows this one trailing assistant message.
+ * T17: a fresh take's note is written by the brain called Muse: a brain like any other (its own system prompt, color
+ * and messages), which the first fresh take adds when the conversation has none (as message.add --as Muse does).
+ * The name is the link: every brain reads the note framed `<!-- from: Muse -->`, and the preset prompts say what
+ * "the Muse" is, so a renamed Muse is just another brain, and the next fresh take adds a new Muse.
  */
-export const THOUGHT_LAST_NOTE =
-  "This brain has no final reminder, so the request ends on your thought, as its own unfinished reply, and the model carries on from it. Live, that worked on DeepSeek V4.1 Flash about 2 runs in 3 (the others wrote code, answered with a tag, came back empty or gave the thought away), broke on GLM 5.3 and on Gemma with reasoning off, and held on Grok 4.7 and Kimi K3. With the final reminder on, a user message comes after the thought, and that worked 6 runs in 6.";
+export const MUSE_NAME = "Muse";
+/** Whether a brain is the Muse: the one called Muse (brain names are unique, ignoring case). */
+export const isMuse = (brain: { name: string }) => brain.name.trim().toLowerCase() === MUSE_NAME.toLowerCase();
+
+/**
+ * T17: the system prompt a new Muse brain starts with. It is sent only when the Muse itself is asked for a turn (it
+ * then writes a note of its own); a fresh take's note is your text, which no model writes. Editable like any prompt.
+ */
+export const MUSE_SYSTEM_PROMPT =
+  "You are the Muse, one of the helpers at this table: you think up twists. On your turn, write one idea for the next reply in the story: fresher than the obvious move, true to everything said so far, and leaving the player's choices to the player. Your whole answer is one hidden note, a ```hidden block closed with ```, that starts \"An idea for the next reply, which the player won't see:\". The player's screen folds it unread; the helper who answers next carries it out.";
+
+/**
+ * T17: the payload view's line for a fresh take: where the Muse's note goes, and what is added when you send.
+ * `noteId` and `version` (1-based): the note already right before the message, which gets a new version (or keeps
+ * the one it has, when your text is what it already says). A new note gets its id when it is saved.
+ */
+export const freshTakeNote = (o: { brain: string; messageId: string; noteId: string; muse: string; isNew: boolean; version: number; same: boolean; museCreated: boolean }) =>
+  `A fresh take: ${o.isNew ? `the Muse's note goes in as a new message, right before ${o.messageId}` : o.same ? `the Muse's note right before ${o.messageId} (${o.noteId}) already says this, so it stays as it is (version ${o.version})` : `the Muse's note right before ${o.messageId} (${o.noteId}) gets this as version ${o.version}`}. It is written by ${o.muse}, framed like any helper's: every brain reads it from now on, and the player sees it folded. ${o.messageId} itself is left out, so ${o.brain} never sees the reply it replaces; the new version is the reply alone.${o.museCreated ? ` This conversation has no brain called ${MUSE_NAME} yet, so one is added when you send (its system prompt is used only if you ask the Muse itself for a turn).` : ""}`;
 
 /**
  * T16: how a pinned message is sent to the brain it is pinned to, in words for the payload view, brain.list and the
