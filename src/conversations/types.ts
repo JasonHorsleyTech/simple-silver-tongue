@@ -7,10 +7,11 @@
 
 /**
  * 2 (T07 triage): every brain has `stop`. 3 (T09): templates.roll. 4 (T13): every setup message has a `role`.
- * 5 (T15): templates.thought. loadConversation upgrades older files (upgradeConversation, defaults.ts), in
- * memory; the next write saves them.
+ * 5 (T15): templates.thought. 6 (T16): every brain has `pins` (none, in an older file); `makes` and `madeFrom` are
+ * optional. loadConversation upgrades older files (upgradeConversation, defaults.ts), in memory; the next write
+ * saves them.
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export type Conversation = {
   schemaVersion: number;
@@ -109,7 +110,56 @@ export type Brain = {
   stop: string[];
   /** Image brains only. All of this text reaches the model. */
   tool?: BrainTool;
+  /**
+   * T16: ledger messages pinned to this brain, a live link (the message's active version, as it stands). In this
+   * brain's requests each one is sent right after the setup messages, in ledger order, and not again at its place;
+   * every other brain still sees it where it is. See design.md, "Pinned messages".
+   */
+  pins: Pin[];
+  /** T16: "Each new message makes a new brain": a brain made from every new message this brain gets. */
+  makes?: BrainMaker;
+  /**
+   * T16: the message this brain was made from (its author's `makes`, or brain.make), pinned to it. Deleting that
+   * message deletes this brain too while it has never spoken. Display and bookkeeping only: never sent.
+   */
+  madeFrom?: string;
 };
+
+/**
+ * T16: how a pinned message is sent to the brain it is pinned to, right after the setup messages. `ledger`: exactly
+ * as it would be at its place in the ledger from that brain's point of view (framed with its author's name, or the
+ * brain's own assistant words), just moved up. `system`: its text, verbatim, as a system message. `assistant`: its
+ * text, verbatim, as the brain's own words. No new wording in any of them.
+ */
+export const PIN_ROLES = ["ledger", "system", "assistant"] as const;
+export type PinRole = (typeof PIN_ROLES)[number];
+/**
+ * How a message is pinned when nobody says otherwise (brain.pin without --as, a new maker setting). Chosen on live
+ * probes (design.md, "Pinned messages"): the three held a character equally well, so the one with no new wording.
+ */
+export const DEFAULT_PIN_AS: PinRole = "ledger";
+export type Pin = { messageId: string; as: PinRole };
+
+/**
+ * T16: a brain that makes brains. Every new message this brain gets in the ledger (a generated reply, a stopped one
+ * included, or one written with message.add --as) makes a new brain in the same write: the blueprint, named from the
+ * pattern, with that message pinned to it. New versions of the message (regenerate, steer, fresh take, edit) make
+ * none: the pin follows the active version. Nothing in it knows what the made brains are for.
+ */
+export type BrainMaker = {
+  /** Off: the setting is kept, and brain.make still uses it, but new messages make nothing. */
+  enabled: boolean;
+  /** The new brain's name, with {{n}} where its number goes: "Character {{n}}". One line. */
+  name: string;
+  /** The number the next brain gets. It only counts up, so renaming "Character 1" never frees "1" again. */
+  next: number;
+  /** How the message is pinned to the brain it makes. */
+  pinAs: PinRole;
+  /** The new brain: everything brain.add takes but its name and color (it gets the next free color). */
+  blueprint: BrainBlueprint;
+};
+
+export type BrainBlueprint = Pick<Brain, "kind" | "systemPrompt" | "finalReminder" | "reasoning" | "stop" | "safeMode" | "shape" | "tool">;
 
 export type ImageShape = "portrait" | "square" | "landscape";
 

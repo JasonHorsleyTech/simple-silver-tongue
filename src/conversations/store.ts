@@ -5,7 +5,7 @@ import { listFiles, readJson, removeFile, writeJson, type Vault } from "../stora
 import type { UnreadableConversation } from "./format.ts";
 import { upgradeConversation } from "./defaults.ts";
 import { allPaintJobs, paintingIn, settleStaleImages } from "./images.ts";
-import type { Conversation, LedgerMessage } from "./types.ts";
+import type { Brain, Conversation, LedgerMessage } from "./types.ts";
 
 /**
  * Conversation files, through the vault (so they are ciphertext for encrypted users). There is no cache:
@@ -328,6 +328,8 @@ export type StopOutcome = {
    * its image is with Venice, being made and billed, so it is kept when it arrives (IMAGE_STOP_NOTE).
    */
   painting?: Array<{ messageId: string; imageId: string }>;
+  /** T16: the brain the stopped reply made, when its brain makes brains (a stopped reply is a new message too). */
+  made?: Brain;
 };
 
 /**
@@ -346,6 +348,8 @@ export async function stopGeneration(vault: Vault, id: string, waitMs = 10_000):
   // once the prompt is saved) the message its image_pending carried.
   const last = gen.live.log.findLast((ev) => ev.type === "done" || ev.type.startsWith("image_"));
   const outcome: StopOutcome = { stopped: true, message: (last?.message as LedgerMessage | null | undefined) ?? null };
+  const made = gen.live.log.find((ev) => ev.type === "brain_made");
+  if (made) outcome.made = made.brain as Brain;
   if (gen.live.failure) outcome.error = gen.live.failure.body;
   else if (!gen.live.ended) {
     outcome.error = { code: "still_saving", message: `The reply was stopped but hadn't finished saving after ${Math.round(waitMs / 1000)} s. Check what was saved with conversation.get.` };

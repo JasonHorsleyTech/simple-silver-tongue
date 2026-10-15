@@ -306,6 +306,12 @@ async function printStream(res: Response, opts: StreamOpts, io: Io, dim: (s: str
   const endText = () => {
     if (folder) out(folder.end());
   };
+  let made: { id?: string; name?: string } | undefined;
+  const sayMade = () => {
+    if (!made) return;
+    errOut(`Made a new brain, ${made.name} (${made.id}), with this reply pinned to it. Rename it once you know who it is: ./ss brain.update --conversation ${opts.conversation ?? "<conversation>"} --brain ${made.id} --name "..."\n`);
+    made = undefined;
+  };
   const handle = (line: string) => {
     if (!line.trim()) return;
     if (json) {
@@ -355,7 +361,12 @@ async function printStream(res: Response, opts: StreamOpts, io: Io, dim: (s: str
         errOut(dim(`[${ev.brainName ?? ev.brainId ?? "start"}${where}]\n`));
         break;
       }
+      case "brain_made":
+        // T16: said after the reply (at done or image_pending), so it never lands in the middle of the text.
+        made = ev.brain;
+        break;
       case "image_pending":
+        sayMade();
         errOut(dim(`\n(making image ${ev.imageId ?? ""} with ${ev.model ?? "the image model"}... the conversation is free meanwhile)\n`));
         break;
       case "image_done": {
@@ -374,6 +385,7 @@ async function printStream(res: Response, opts: StreamOpts, io: Io, dim: (s: str
         const id = typeof ev.message?.id === "string" ? ev.message.id : messageId;
         const conv = opts.conversation ?? "<conversation>";
         if (folder?.folded && id) errOut(dim(`${revealHint(folder.folded, `./ss message.get --conversation ${conv} --message ${id} --reveal`)}\n`));
+        sayMade();
         break;
       }
       case "error":

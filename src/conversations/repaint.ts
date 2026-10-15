@@ -3,6 +3,7 @@ import { nowIso } from "../lib/ids.ts";
 import type { Vault } from "../storage/vault.ts";
 import type { VeniceClient } from "../venice/client.ts";
 import { assertImageIdle, beginPainting, endPainting, newImageRecord } from "./images.ts";
+import { appendMessage } from "./makers.ts";
 import { painterFor, startPainting, type Painter } from "./paint.ts";
 import { activeVersion, resolveBrain } from "./prompt.ts";
 import { assertAcceptingWork, assertLedgerIdle, loadConversation, mutateConversation } from "./store.ts";
@@ -30,8 +31,11 @@ async function imageMessage(venice: VeniceClient, conv: Conversation, id: string
   return { message: m, brain, painter: await painterFor(venice, conv, brain) }; // an unknown image model: 400, nothing changed
 }
 
-/** What an edit, add or retry that makes an image answers: the conversation as saved, the message, and its new image. */
-export type Started = { conv: Conversation; message: LedgerMessage; brain: Brain; painting?: { imageId: string; model: string } };
+/**
+ * What an edit, add or retry that makes an image answers: the conversation as saved, the message, and its new image.
+ * `made` (T16): the brain an add made, when the image brain makes brains.
+ */
+export type Started = { conv: Conversation; message: LedgerMessage; brain: Brain; painting?: { imageId: string; model: string }; made?: Brain };
 
 /**
  * Save `change` (which gives the message a new pending image and returns it) and start painting that image.
@@ -98,16 +102,17 @@ export async function addImageMessage(vault: Vault, venice: VeniceClient, convId
   const conv = await loadConversation(vault, convId);
   const brain = resolveBrain(conv, as);
   const painter = await painterFor(venice, conv, brain);
+  let made = null as Brain | null; // set inside the save
   const saved = await saveAndPaint(vault, venice, convId, painter, (c) => {
     assertLedgerIdle(vault, c.id); // a reply being written would land after it, answering what came before it
     const now = c.brains.find((b) => b.id === brain.id);
     if (now?.kind !== "image") throw conflict(`${brain.name} changed while you were adding this. Try again.`);
     const image = newImageRecord({ model: painter.model.id, safeMode: painter.safeMode });
     const m = newMessage({ type: "brain", brainId: brain.id }, "image", { content, source: "authored", createdAt: nowIso(), image });
-    c.messages.push(m);
+    made = appendMessage(c, m); // T16: a maker's new message makes its brain in the same write
     return { message: m, image, prompt: content };
   });
-  return { conv: saved.conv, message: saved.message!, brain, painting: { imageId: saved.image!.id, model: saved.image!.model } };
+  return { conv: saved.conv, message: saved.message!, brain, painting: { imageId: saved.image!.id, model: saved.image!.model }, ...(made ? { made } : {}) };
 }
 
 /**

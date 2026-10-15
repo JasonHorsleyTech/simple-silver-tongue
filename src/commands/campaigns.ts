@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { ROOT, DEFAULT_IMAGE_MODEL, DEFAULT_TEXT_MODEL } from "../config.ts";
 import { rebuild } from "../conversations/campaign.ts";
-import { DEFAULT_TEMPLATES, newBrain, nextColor } from "../conversations/defaults.ts";
+import { DEFAULT_PIN_AS, DEFAULT_TEMPLATES, newBrain, nextColor } from "../conversations/defaults.ts";
 import { createConversationFile, loadConversation, mutateConversation } from "../conversations/store.ts";
 import { lookupModel } from "../conversations/turn.ts";
 import { SCHEMA_VERSION, SETUP_ROLES, type Brain, type Conversation, type ImageSettings, type LedgerMessage, type MessageVersion } from "../conversations/types.ts";
@@ -12,7 +12,7 @@ import { imageSettingsProblem } from "../images/request.ts";
 import { badRequest, CommandError, notFound } from "../lib/errors.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { command, type Ctx } from "../registry.ts";
-import { PLAYER, brainLine, brainName, checkName, color, finalReminder, kind, reasoning, reasoningNotes, safeMode, shape, stop, tool } from "./brains.ts";
+import { PLAYER, applyMakes, brainLine, brainName, checkName, color, finalReminder, kind, makes, pinAs, reasoning, reasoningNotes, safeMode, shape, stop, tool } from "./brains.ts";
 import { conversationId, imageSettings, systemPrompt, templates, title } from "./conversations.ts";
 
 /**
@@ -95,6 +95,12 @@ const campaignSchema = z.object({
         tool: tool.optional(),
         /** Absent (a file from before T07 triage): the kind's default, as for a new brain. */
         stop: stop.optional(),
+        /** T16: messages pinned to it, by their `id` in this file (import gives them fresh ids). */
+        pins: z.array(z.object({ messageId: z.string().min(1), as: pinAs.default(DEFAULT_PIN_AS) })).default([]),
+        /** T16: "Each new message makes a new brain" (checked as brain.update --makes checks it). */
+        makes: makes.optional(),
+        /** T16: the message (its `id` in this file) the brain was made from. */
+        madeFrom: z.string().min(1).optional(),
       }),
     )
     .min(1, "A campaign needs at least one brain"),
@@ -103,6 +109,8 @@ const campaignSchema = z.object({
   messages: z
     .array(
       z.object({
+        /** T16: only what pins and madeFrom refer to it by; import gives it a fresh id. */
+        id: z.string().min(1).optional(),
         author: z.union([z.object({ type: z.literal("player") }), z.object({ type: z.literal("brain"), brainId: z.string().min(1) })]),
         kind: kind.optional(),
         versions: z.array(version).min(1),
@@ -144,6 +152,13 @@ function toConversation(doc: Campaign, where: string): Conversation {
     if (b.shape !== undefined) brain.shape = b.shape;
     if (b.tool) Object.assign(brain.tool!, b.tool);
     if (b.stop) brain.stop = b.stop;
+    if (b.makes) {
+      try {
+        applyMakes(brain, b.makes);
+      } catch (err) {
+        throw bad(`brains.${i}.makes: ${(err as Error).message}`);
+      }
+    }
     if (b.id) {
       if (byId.has(b.id)) throw bad(`brains.${i}.id: two brains have the id ${b.id}.`);
       byId.set(b.id, brain);
@@ -153,6 +168,7 @@ function toConversation(doc: Campaign, where: string): Conversation {
   const defaultBrain = doc.defaultBrainId ? byId.get(doc.defaultBrainId) : shell.brains[0];
   if (!defaultBrain) throw bad(`defaultBrainId: no brain has the id ${doc.defaultBrainId}.`);
 
+  const msgIds = new Map<string, string>();
   const messages = doc.messages.map((m, i): LedgerMessage => {
     const at = `messages.${i}`;
     let author: LedgerMessage["author"] = { type: "player" };
@@ -180,8 +196,28 @@ function toConversation(doc: Campaign, where: string): Conversation {
       if (msgKind === "image") out.image = { id: "", status: "error", model: image?.model ?? doc.settings?.imageModel ?? DEFAULT_IMAGE_MODEL, safeMode: image?.safeMode ?? safe, createdAt: now };
       return out;
     });
-    return { id: newId("m"), author, kind: msgKind, versions, activeVersion: active, createdAt: m.createdAt ?? now, updatedAt: m.updatedAt ?? now };
+    const id = newId("m");
+    if (m.id !== undefined) {
+      if (msgIds.has(m.id)) throw bad(`${at}.id: two messages have the id ${m.id}.`);
+      msgIds.set(m.id, id);
+    }
+    return { id, author, kind: msgKind, versions, activeVersion: active, createdAt: m.createdAt ?? now, updatedAt: m.updatedAt ?? now };
   });
+
+  // T16: pins and madeFrom name messages by their id in the file; they get the fresh ones.
+  for (const [i, b] of doc.brains.entries()) {
+    const brain = shell.brains[i]!;
+    const fresh = (fileId: string, at: string) => {
+      const id = msgIds.get(fileId);
+      if (!id) throw bad(`brains.${i}.${at}: no message has the id ${fileId}.`);
+      return id;
+    };
+    for (const [j, p] of b.pins.entries()) {
+      const messageId = fresh(p.messageId, `pins.${j}.messageId`);
+      if (!brain.pins.some((x) => x.messageId === messageId)) brain.pins.push({ messageId, as: p.as });
+    }
+    if (b.madeFrom !== undefined) brain.madeFrom = fresh(b.madeFrom, "madeFrom");
+  }
 
   const s = doc.settings ?? {};
   const image: ImageSettings = { format: "webp", hideWatermark: true };
@@ -245,7 +281,8 @@ async function readCampaign(lib: Library, name: string): Promise<{ doc: Campaign
  * A brain's color is its badge (T07 frontend: the browser shows the cast before you start); `about` is its job (T10).
  * `reasoning` is its effort when the file switches reasoning on (T10 frontend): a labeled opt-in, so the pickers say so.
  */
-type BrainInfo = { name: string; kind: string; color?: string; about?: string; reasoning?: string };
+/** `makes` (T16): the name pattern of a brain that makes brains ("Character {{n}}"), when its setting is on. */
+type BrainInfo = { name: string; kind: string; color?: string; about?: string; reasoning?: string; makes?: string };
 type ExampleInfo = { name: string; title: string; about?: string; brains: BrainInfo[]; setup: string[]; messages: number; error?: string };
 type PresetInfo = { name: string; title: string; about?: string; brains: BrainInfo[]; error?: string };
 
@@ -268,6 +305,7 @@ async function listLibrary(lib: Library): Promise<ExampleInfo[]> {
           color: b.color,
           ...(doc.brains[i]?.about ? { about: doc.brains[i]!.about } : {}),
           ...(b.reasoning.enabled ? { reasoning: b.reasoning.effort } : {}),
+          ...(b.makes?.enabled ? { makes: b.makes.name } : {}),
         })),
         setup: doc.setup.map((s) => s.label),
         messages: doc.messages.length,
@@ -329,7 +367,7 @@ already have: ./ss brain.import --preset <name> --brain <brain>. Nothing here is
               : [
                   `${p.name}: ${p.title}`,
                   p.about ? `  ${p.about}` : "",
-                  ...p.brains.map((b) => `  · ${b.name}${b.kind === "image" ? " (image)" : ""}${b.reasoning ? ` (reasoning ${b.reasoning})` : ""}${b.about ? `: ${b.about}` : ""}`),
+                  ...p.brains.map((b) => `  · ${b.name}${b.kind === "image" ? " (image)" : ""}${b.reasoning ? ` (reasoning ${b.reasoning})` : ""}${b.makes ? ` (makes "${b.makes}" brains)` : ""}${b.about ? `: ${b.about}` : ""}`),
                   `  Start one: ./ss conversation.import --preset ${p.name} --title "..."`,
                   `  Add one brain: ./ss brain.import --conversation c_... --preset ${p.name} --brain "${p.brains[0]?.name ?? "..."}"`,
                 ]
@@ -443,7 +481,9 @@ learns secrets from hidden notes, never from another brain's system prompt: the 
     if (!found) throw notFound(`${lib === "preset" ? "The preset" : "The example"} "${title}" has no brain called "${args.brain.trim()}". Its brains: ${src.brains.map((b) => b.name).join(", ")}.`);
 
     const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
-      const brain: Brain = { ...structuredClone(found), id: newId("b"), name: args.name ?? found.name };
+      // T16: its pins and the message it was made from are that file's messages, so they stay behind; its maker setting comes.
+      const { pins: _pins, madeFrom: _from, ...whole } = structuredClone(found);
+      const brain: Brain = { ...whole, pins: [], id: newId("b"), name: args.name ?? found.name };
       checkName(c, brain.name, undefined, args.name === undefined ? ` Add this one under another name with --name (e.g. --name "${found.name} 2").` : "");
       if (c.brains.some((b) => b.color.toLowerCase() === brain.color.toLowerCase())) brain.color = nextColor(c);
       c.brains.push(brain);
@@ -458,6 +498,8 @@ learns secrets from hidden notes, never from another brain's system prompt: the 
       );
     }
     if (lib === "example") notes.push(`It was written for "${title}", so its prompt may name that campaign's world and people: brain.list shows it, and brain.update changes it.`);
+    if (found.pins.length) notes.push(`Its ${found.pins.length === 1 ? "pin" : `${found.pins.length} pins`} stayed behind: ${found.pins.length === 1 ? "it was a message" : "they were messages"} of "${title}". Pin one of yours with brain.pin.`);
+    if (result.makes?.enabled) notes.push(`${result.name} makes a brain from each new message ("${result.makes.name}", from ${result.makes.next}): brain.list shows the blueprint, and brain.update --no-makes.enabled stops it.`);
     // T10 QA-3: a preset brain learns secrets from hidden notes. A brain whose prompt doesn't know the convention
     // (the Gilded Goat's GM) may keep its secrets in that prompt, which no other brain reads.
     if (lib === "preset" && conv.brains.some((b) => b.id !== result.id && !/(```|~~~)hidden/i.test(b.systemPrompt))) {

@@ -13,6 +13,7 @@ import {
 import { beginPainting, endPainting, newImageRecord } from "../conversations/images.ts";
 import { followImages, imageNote, painterFor, startPainting, type Painter } from "../conversations/paint.ts";
 import { rollD20 } from "../conversations/dice.ts";
+import { appendMessage } from "../conversations/makers.ts";
 import { promptOf } from "../conversations/tool-call.ts";
 import {
   addSpend,
@@ -110,6 +111,7 @@ which is the one its generate_image call writes, word for word.`,
       ? planRegenerate(conv, { message: args.message, steer: args.steer, thought: args.thought, wrap: args.wrap }, model)
       : planTurn(conv, { brain: args.brain, content: args.content, roll: args.roll ? "unrolled" : undefined }, model);
     const preview: Preview = { conversationId: conv.id, brainId: plan.brain.id, brainName: plan.brain.name, body: plan.body, notes: plan.notes };
+    if (plan.pinned.length) preview.pinned = plan.pinned;
     if (plan.refusal) preview.refusal = plan.refusal;
     if (plan.brain.kind === "image") {
       const { body, notes } = (await painterFor(ctx.deps.venice, conv, plan.brain)).plan("");
@@ -208,17 +210,25 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
     const author = { type: "brain" as const, brainId: plan.brain.id };
     return yield* paintReply(ctx, gen, conv.id, reply, { painter, brain: plan.brain, textModel: plan.body.model, say, head: plan.brain.name }, (c, version) => {
       const message = newMessage(author, "image", version, messageId);
-      c.messages.push(message);
-      return message;
+      return { message, made: appendMessage(c, message) }; // T16: a maker's new message makes its brain in the same write
     });
   }
   const message = newMessage({ type: "brain", brainId: plan.brain.id }, "text", generatedVersion(reply, plan.body.model), messageId);
+  let made = null as Brain | null; // set inside the save (TS can't see a callback's assignment)
   const spentUsd = await saveReply(vault, conv.id, reply, (c) => {
-    c.messages.push(message);
+    made = appendMessage(c, message); // T16: a maker's new message makes its brain in the same write
     return { messageId, version: 0 };
   });
+  if (made) yield brainMade(made, message.id);
   yield { type: "done", message, note: replyNote(plan.brain.name, reply, plan.body.stop), spentUsd };
 }
+
+/**
+ * T16: the event that tells a client a brain was just made (its whole document), so its button can appear at once.
+ * Sent after the save that made it and before `done` (or, for an image brain, before `image_pending`, where a
+ * client stops reading). generation.follow replays it like any event.
+ */
+const brainMade = (brain: Brain, messageId: string): StreamEvent => ({ type: "brain_made", brain, messageId });
 
 const regenerateArgs = z.object({ conversation: conversationId, message: regenerateTarget, steer, thought, wrap });
 
@@ -299,7 +309,7 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
     m.updatedAt = nowIso(); // stamped in the write queue, so a later write always has a later updatedAt (the browser merges by it)
     return m;
   };
-  if (painter) return yield* paintReply(ctx, gen, conv.id, reply, { painter, brain: plan.brain, textModel: plan.body.model, say, head }, addVersion);
+  if (painter) return yield* paintReply(ctx, gen, conv.id, reply, { painter, brain: plan.brain, textModel: plan.body.model, say, head }, (c, v) => ({ message: addVersion(c, v) }));
 
   const version = generatedVersion(reply, plan.body.model);
   if (plan.thought !== undefined) version.content = freshTakeContent(plan.thought, reply.content);
@@ -346,7 +356,7 @@ async function* paintReply(
   convId: string,
   reply: Reply,
   opts: { painter: Painter; brain: Brain; textModel: string; say: Say; head: string },
-  put: (c: Conversation, version: MessageVersion) => LedgerMessage,
+  put: (c: Conversation, version: MessageVersion) => { message: LedgerMessage; made?: Brain | null },
 ): AsyncGenerator<StreamEvent, ImageStarted | void> {
   const { vault } = ctx.requireSession();
   const { painter, brain, say } = opts;
@@ -372,14 +382,16 @@ async function* paintReply(
   if (unfinished) Object.assign(image, { status: "error", error: unfinished, finishedAt: image.createdAt });
   version.image = image;
   let message!: LedgerMessage;
+  let made = null as Brain | null | undefined; // set inside the save
   const spentUsd = await saveReply(vault, convId, reply, (c) => {
-    message = put(c, version);
+    ({ message, made } = put(c, version));
     if (!unfinished) beginPainting(vault, image.id, { convId, messageId: message.id }); // owned before the pending record reaches disk
     return { messageId: message.id, version: message.versions.indexOf(version) };
   }).catch((err) => {
     endPainting(vault, image.id);
     throw err;
   });
+  if (made) yield brainMade(made, message.id);
   let extra = call.calls > 1 ? ` · it made ${call.calls} ${brain.tool?.name ?? "tool"} calls; only the first was used` : "";
   if (reply.content.trim()) extra += ` · it also wrote ${reply.content.trim().length} characters of text beside the call, not kept`;
   if (unfinished) {
@@ -583,6 +595,7 @@ conversation's total once Venice reports it. It returns once the stopped reply i
           : `Stopped. ${r.error ? r.error.message : "Nothing was saved."}`;
     const lines = [head];
     if (r.stopped && m && r.error) lines.push(r.error.message);
+    if (r.made) lines.push(`It made a new brain, ${r.made.name} (${r.made.id}), with the stopped reply pinned to it.`);
     if (r.painting) lines.push(`Still being made: ${r.painting.map((p) => `${p.imageId} (${p.messageId})`).join(", ")}. ${IMAGE_STOP_NOTE}`);
     if (r.note) lines.push(r.note);
     return lines.join("\n");

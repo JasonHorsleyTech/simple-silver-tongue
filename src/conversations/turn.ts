@@ -4,9 +4,10 @@ import type { StreamEvent } from "../registry.ts";
 import type { ChatEvent } from "../venice/chat.ts";
 import type { VeniceClient } from "../venice/client.ts";
 import type { ModelInfo } from "../venice/models.ts";
-import { buildRequest, endsOnThought, nothingToAnswer, REASONING_NOTE, reasoningOn, render, resolveBrain, templateProblem, type AnswerOpts, type ModelCaps } from "./prompt.ts";
+import { assembleRequest, endsOnThought, nothingToAnswer, REASONING_NOTE, reasoningOn, render, resolveBrain, templateProblem, type AnswerOpts, type ModelCaps, type PinnedAt } from "./prompt.ts";
+import { nextMadeName } from "./makers.ts";
 import { partialPrompt, type ToolCallParts } from "./tool-call.ts";
-import { ROLL_PREVIEW_NOTE, STOP_REASONING_NOTE, stopNote, THOUGHT_LAST_NOTE } from "./wording.ts";
+import { makesNote, pinnedNote, ROLL_PREVIEW_NOTE, STOP_REASONING_NOTE, stopNote, THOUGHT_LAST_NOTE } from "./wording.ts";
 import type { Brain, ChatRequest, Conversation, LedgerMessage, MessageVersion, Roll, Usage } from "./types.ts";
 
 /**
@@ -31,6 +32,8 @@ export type BodyReview = {
    * (reasoning on), and what the body's stop sequences do (T07 triage).
    */
   notes: string[];
+  /** T16: where the messages pinned to this brain went in the body (right after the setup). Empty without pins. */
+  pinned: PinnedAt[];
 };
 
 /**
@@ -47,9 +50,11 @@ export function planTurn(conv: Conversation, opts: { brain?: string; content?: s
   const roll = opts.roll ? rollMessage(conv, opts.roll === "unrolled" ? null : opts.roll, createdAt) : null;
   const added = [player, roll].filter((m): m is LedgerMessage => m !== null);
   const view = added.length ? { ...conv, messages: [...conv.messages, ...added] } : conv;
-  const body = buildRequest(view, brain.id, { model });
-  const review = reviewBody(brain, body, model);
+  const { body, pinned } = assembleRequest(view, brain.id, { model });
+  const review = reviewBody(brain, body, model, {}, { conv, pinned });
   if (opts.roll === "unrolled") review.notes.unshift(ROLL_PREVIEW_NOTE);
+  // T16: sending to a brain that makes brains has a side effect, so the payload view says what it will make.
+  if (brain.makes?.enabled) review.notes.push(makesNote(brain.name, nextMadeName(conv, brain.makes).name));
   return { brain, player, roll, body, ...review };
 }
 
@@ -131,10 +136,10 @@ export function planRegenerate(conv: Conversation, opts: { message?: string; ste
   if (!brain) throw new Error(`message ${message.id}: author brain ${brainId} is missing from conversation ${conv.id}`);
 
   const steer = opts.steer?.trim() || undefined;
-  const body = steer
-    ? buildRequest(conv, brain.id, { model, steer })
-    : buildRequest(conv, brain.id, { model, excludeFromMessageId: message.id, ...(thought !== undefined ? { thought } : {}) });
-  const review = reviewBody(brain, body, model, { thought });
+  const { body, pinned } = steer
+    ? assembleRequest(conv, brain.id, { model, steer })
+    : assembleRequest(conv, brain.id, { model, excludeFromMessageId: message.id, ...(thought !== undefined ? { thought } : {}) });
+  const review = reviewBody(brain, body, model, { thought }, { conv, pinned });
   if (review.refusal && !steer && thought === undefined && body.messages.at(-1)?.role === "assistant") {
     // A plain re-roll whose message comes right after the same brain's own reply. When nothing comes before
     // it at all, nothingToAnswer's "only its system prompt" already says why (T03 QA-4).
@@ -169,8 +174,23 @@ export const freshTakeContent = (thought: string, reply: string) => (reply.trim(
  * The send path re-checks the refusal on its own (assertAnswerable in openChatStream). A fresh take passes its
  * thought: a body that ends on it (no final reminder) is sent, with a note saying how that went live.
  */
-export function reviewBody(brain: Brain, body: ChatRequest, model: ModelCaps, opts: AnswerOpts = {}): BodyReview {
-  const review: BodyReview = { notes: [] };
+export function reviewBody(
+  brain: Brain,
+  body: ChatRequest,
+  model: ModelCaps,
+  opts: AnswerOpts = {},
+  pins: { conv: Pick<Conversation, "messages" | "brains">; pinned: PinnedAt[] } = { conv: { messages: [], brains: [] }, pinned: [] },
+): BodyReview {
+  const review: BodyReview = { notes: [], pinned: pins.pinned };
+  if (pins.pinned.length) {
+    const author = (id: string) => {
+      const m = pins.conv.messages.find((x) => x.id === id);
+      if (!m || m.author.type === "player") return "your";
+      const by = m.author.brainId;
+      return pins.conv.brains.find((b) => b.id === by)?.name ?? by;
+    };
+    review.notes.push(pinnedNote(brain.name, pins.pinned.map((p) => ({ messageId: p.messageId, as: p.as, author: author(p.messageId) }))));
+  }
   const refusal = nothingToAnswer(body, brain.name, opts);
   if (refusal) review.refusal = refusal;
   if (endsOnThought(body, opts.thought)) review.notes.push(THOUGHT_LAST_NOTE);

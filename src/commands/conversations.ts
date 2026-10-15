@@ -19,6 +19,8 @@ import { badRequest } from "../lib/errors.ts";
 import { command } from "../registry.ts";
 
 export const conversationId = z.string().regex(CONVERSATION_ID_RE, "Conversation ids look like c_k3j9x0q2ma").describe("Conversation id (c_...)");
+export const MESSAGE_ID_RE = /^m_[a-z0-9]{4,32}$/;
+export const messageId = z.string().regex(MESSAGE_ID_RE, "Message ids look like m_k3j9x0q2ma").describe("Message id (m_...), from conversation.get");
 
 /** A system prompt is required and must have real text in it (design.md hard rule 1). */
 export const systemPrompt = z

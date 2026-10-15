@@ -3,7 +3,7 @@
  * values themselves (as it imports types.ts's types) and can't drift from what the CLI prints.
  */
 
-import type { Roll } from "./types.ts";
+import type { PinRole, Roll } from "./types.ts";
 
 /** The same words wherever a stop is offered or reported (T03 QA-2: measured live, a stopped reply is billed in full). */
 export const STOP_BILL_NOTE =
@@ -85,3 +85,27 @@ export const ROLL_PREVIEW_NOTE =
  */
 export const THOUGHT_LAST_NOTE =
   "This brain has no final reminder, so the request ends on your thought, as its own unfinished reply, and the model carries on from it. Live, that worked on DeepSeek V4.1 Flash about 2 runs in 3 (the others wrote code, answered with a tag, came back empty or gave the thought away), broke on GLM 5.3 and on Gemma with reasoning off, and held on Grok 4.7 and Kimi K3. With the final reminder on, a user message comes after the thought, and that worked 6 runs in 6.";
+
+/**
+ * T16: how a pinned message is sent to the brain it is pinned to, in words for the payload view, brain.list and the
+ * brain card's pin list (design.md, "Pinned messages").
+ */
+export const PIN_AS_WORDS: Record<PinRole, string> = {
+  ledger: "as it appears in the ledger, framed with who wrote it",
+  system: "as a system message, its text verbatim",
+  assistant: "as the brain's own words, its text verbatim",
+};
+
+/** T16: the payload view's line for the messages pinned to this brain, which are sent right after the setup. */
+export const pinnedNote = (brain: string, pins: ReadonlyArray<{ messageId: string; as: PinRole; author: string }>) =>
+  `Pinned to ${brain}: ${pins.map((p) => `${p.messageId} (${p.author}'s), ${PIN_AS_WORDS[p.as]}`).join("; ")}. ${pins.length === 1 ? "It is" : "They are"} sent right after the setup messages, as ${pins.length === 1 ? "it stands" : "they stand"} now, and not again at ${pins.length === 1 ? "its place" : "their places"} in the ledger.`;
+
+/**
+ * T16: the payload view's line for a brain that makes brains (`makes`): sending to it is a side effect, since its
+ * reply makes a new brain. `name` is the name it would get now.
+ */
+export const makesNote = (brain: string, name: string) =>
+  `${brain} makes a brain from each new message: this reply will make a new brain, ${name}, with the reply pinned to it. A regenerate of the reply later makes none (the pin follows the version you pick).`;
+
+/** T16: where the number goes in a maker's name pattern ("Character {{n}}"). */
+export const MAKES_NUMBER = "{{n}}";

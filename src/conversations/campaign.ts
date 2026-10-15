@@ -1,5 +1,5 @@
 import { newId, nowIso } from "../lib/ids.ts";
-import type { Conversation, ImageRecord, LedgerMessage, MessageVersion } from "./types.ts";
+import type { Brain, Conversation, ImageRecord, LedgerMessage, MessageVersion } from "./types.ts";
 
 /**
  * A new conversation from another one's configuration (T07). conversation.clone copies one of yours ("we're
@@ -51,6 +51,7 @@ export function rebuild(
     return copy;
   };
 
+  const messageIds = new Map<string, string>(); // old → new, so pins and madeFrom (T16) follow their messages
   const messages: LedgerMessage[] = !opts.messages
     ? []
     : src.messages.map((m) => {
@@ -62,7 +63,9 @@ export function rebuild(
           if (m.kind === "image") copy.image = image(img, brain?.safeMode ?? true);
           return copy;
         });
-        return { ...m, id: newId("m"), author, versions };
+        const id = newId("m");
+        messageIds.set(m.id, id);
+        return { ...m, id, author, versions };
       });
 
   const conv: Conversation = {
@@ -74,7 +77,13 @@ export function rebuild(
     settings: structuredClone(src.settings),
     templates: { ...src.templates },
     setup: src.setup.map((s) => ({ ...s, id: newId("s") })),
-    brains: src.brains.map((b) => ({ ...structuredClone(b), id: brainIds.get(b.id)! })),
+    brains: src.brains.map((b) => {
+      // T16: pins and madeFrom point at the new copies of their messages; without the ledger there are none.
+      const { madeFrom, ...rest } = structuredClone(b);
+      const brain: Brain = { ...rest, id: brainIds.get(b.id)!, pins: (b.pins ?? []).flatMap((p) => (messageIds.has(p.messageId) ? [{ ...p, messageId: messageIds.get(p.messageId)! }] : [])) };
+      if (madeFrom && messageIds.has(madeFrom)) brain.madeFrom = messageIds.get(madeFrom)!;
+      return brain;
+    }),
     defaultBrainId: brainIds.get(src.defaultBrainId)!,
     messages,
     spentUsd: 0,

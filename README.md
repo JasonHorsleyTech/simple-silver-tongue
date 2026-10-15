@@ -40,46 +40,61 @@ The Game Master's system prompt holds the evening's secrets, so the Payload view
 
 ## Start from a preset
 
-A **preset** is a kit of brains with good instructions and no world: no World Bible and no story. The first one, **Tabletop RPG**, is seven genre-free brains for one player:
+A **preset** is a kit of brains with good instructions and no world: no World Bible and no story. The first one, **Tabletop RPG**, is six genre-free brains for one player, and a brain of their own for every character you meet:
 
 - **Game Master** (the default): narrates in the second person ("You step into the rain") up to your next choice, then stops. When you try something uncertain, it stops just before the outcome with *(That's a roll.)*.
 - **Co-GM**: answers your questions about the scene ("How far is the drop?") without moving the story.
 - **Show Me the Odds**: one sentence for your latest action: no chance, no roll needed, or a d20 target ("Roll a d20: 14 or higher succeeds, …"). You roll with the die, then send the roll to the Game Master, who narrates what it earned.
-- **Character Creator**: writes the newest character's full sheet (or the one your note names) as a hidden note, folded on your screen. Every brain reads it.
-- **Character Actor**: speaks as the person you're dealing with, in the first person, from their sheet. It thinks before it speaks (reasoning on, which adds a small hidden instruction from the provider; switch it off in its settings if you'd rather).
+- **Character Creator**: writes the full sheet of the newest person who has none yet (or the one your note names) as a hidden note, folded on your screen. Every brain reads it. **Each sheet makes that person a brain of their own**, named **Character 1**, **Character 2**, …, with the sheet pinned at the top of everything it reads.
+- **Character 1, 2, …** (made by the Creator): each one is one person, speaking in the first person, from their own sheet. Talk to the hooded figure with her brain, the barkeep with his: each keeps its own lines and its own sheet, so going back to someone fifty messages later still works. They think before they speak (reasoning on, which adds a small hidden instruction from the provider; switch it off in a brain's settings, or in the Creator's blueprint for the ones to come). Rename one once you know who they are ("Character 1" → "Hooded Figure"): every brain sees the new name from then on.
 - **Scene Painter** and **Character Portraitist**: paint the moment, or the newest character, from the sheets. The prompt is the picture's caption, so they keep the sheets' secrets out of it.
 
 Every brain reads every sheet, so a secret can slip out now and then; the prompts are written to keep that rare.
 
-In the browser: **New conversation** → **From a preset**. The Tabletop RPG card shows its seven brains (**What each brain does** lists their jobs). Type a title ("Chinatown") and press **Start from this preset**. The new conversation opens on **Write the World Bible first**: press **Write the World Bible**, and the Setup tab opens on it with the cursor ready. Say what kind of story it is, who you play and where tonight begins (three lines is plenty), then **Save** (⌘ Enter). Then play: type "I approach the hooded figure" and press Enter for the Game Master, or press **Send** with nothing typed and the Game Master opens the scene. The other brains are the chips beside Send (see **Play** below).
+In the browser: **New conversation** → **From a preset**. The Tabletop RPG card shows its six brains (**What each brain does** lists their jobs). Type a title ("Chinatown") and press **Start from this preset**. The new conversation opens on **Write the World Bible first**: press **Write the World Bible**, and the Setup tab opens on it with the cursor ready. Say what kind of story it is, who you play and where tonight begins (three lines is plenty), then **Save** (⌘ Enter). Then play: type "I approach the hooded figure" and press Enter for the Game Master, or press **Send** with nothing typed and the Game Master opens the scene. The other brains are the chips beside Send (see **Play** below).
 
 From the terminal:
 
 ```bash
 ./ss presets.list                                                   # the presets, and what each brain does
-./ss conversation.import --preset tabletop-rpg --title "Chinatown"  # seven brains, no World Bible, no story
+./ss conversation.import --preset tabletop-rpg --title "Chinatown"  # six brains, no World Bible, no story
 export SS_CONVERSATION=c_...
 ./ss setup.add --content @world.md                                  # your World Bible: the world, the tone, who you play
 ./ss turn --content "I approach the hooded figure."
-./ss turn --brain "Character Creator"                               # the figure's sheet, as a hidden note
-./ss turn --brain "Character Actor" --content "\"Seen this woman?\" I slide the photograph across."
+./ss turn --brain "Character Creator"                               # the figure's sheet, as a hidden note: it makes "Character 1"
+./ss turn --brain "Character 1" --content "\"Seen this woman?\" I slide the photograph across."
+./ss brain.update --brain "Character 1" --name "Hooded Figure"      # once you know who she is
 ./ss turn --brain "Show Me the Odds" --content "I try to talk him down to half price."
 ./ss turn --brain "Game Master" --roll                              # rolls a real d20 and sends it: the GM narrates what it earned
 ./ss turn --brain "Co-GM" --content "How far is the drop?"
 ./ss turn --brain "Character Portraitist"
 ```
 
-**Add one brain from a preset** to a conversation you already have (the Gilded Goat could use a Character Actor). In the browser: **Settings** → **Brains** → **Add a brain** → **From a preset**. Every preset's brains are listed with their jobs, and below them the example campaigns' brains. Click one, keep its name or change it (it suggests "Character Actor 2" if one by that name is already there), and press **Add brain**. Its card opens, with a note on what stayed behind (the conversation's own templates, for instance). From the terminal:
+**A character's own brain.** Every sheet the Character Creator writes (or one you write in its mouth with `message.add --as "Character Creator"`) makes a new brain in the same moment: a copy of the Creator's **blueprint** (its prompt, reminder and reasoning, all editable: `./ss brain.list` shows them), named from its pattern, with that sheet **pinned**. A pinned message is sent to that brain right after the World Bible instead of where it sits in the story, and it is a live link: edit the sheet, or regenerate it and pick a version, and the brain plays the new one. Regenerating a sheet makes no new brain. Deleting a sheet deletes its brain too, if that brain never spoke. `./ss prompt.preview --brain "Character 1"` shows exactly what it reads. Nothing here is special to characters: any brain can make brains (`brain.update --makes.name "Place {{n}}" --makes.blueprint.system-prompt @place.md`), and you can pin any message to any brain (`brain.pin --brain "Game Master" --message m_…`).
+
+**An older campaign** (one Character Actor playing everyone, its sheets written before the Creator made brains): give its Character Creator the preset's setting, make a brain from each old sheet, and move the Actor's lines onto the right brains.
 
 ```bash
-./ss brain.import --preset tabletop-rpg --brain "Character Actor"
-./ss brain.import --preset tabletop-rpg --brain "Character Actor" --name "Second Actor"   # if one by that name is already there
+jq '.brains[] | select(.name == "Character Creator").makes' presets/tabletop-rpg.json > /tmp/makes.json
+./ss brain.update --brain "Character Creator" --makes @/tmp/makes.json   # its blueprint, "Character {{n}}", from 1
+./ss brain.make --message m_…                                       # a brain from an old sheet (its author's blueprint): Character 1
+./ss brain.update --brain "Character 1" --name "Alice"
+./ss message.set-author --message m_… --as "Alice"                  # each of the Actor's lines that was hers
+```
+
+Once the Actor has no lines left, `brain.delete --brain "Character Actor"` removes it.
+
+**Add one brain from a preset** to a conversation you already have (the Gilded Goat could use a Character Creator). In the browser: **Settings** → **Brains** → **Add a brain** → **From a preset**. Every preset's brains are listed with their jobs, and below them the example campaigns' brains. Click one, keep its name or change it (it suggests "Character Creator 2" if one by that name is already there), and press **Add brain**. Its card opens, with a note on what stayed behind (the conversation's own templates, for instance). From the terminal:
+
+```bash
+./ss brain.import --preset tabletop-rpg --brain "Character Creator"
+./ss brain.import --preset tabletop-rpg --brain "Character Creator" --name "Sheet Writer"   # if one by that name is already there
 ./ss brain.import --example dnd-tavern --brain "Dice Master"                             # an example campaign's brains work too
 ```
 
 The whole brain comes over (its prompt, reminder, reasoning, stop sequence, and an image brain's tool text and safe mode), and nothing else: the conversation keeps its own World Bible and templates, and the command says when the templates differ.
 
-A preset brain learns what you haven't seen from hidden notes (the sheets), and no brain reads another brain's system prompt. The Gilded Goat keeps the hooded figure's secrets in its Game Master's prompt, so an imported Character Actor plays her from what the story shows, and may play her differently from the GM. To share her secrets, copy them into a hidden note in a setup message (Setup tab, or `setup.add`). Every brain reads it then, the Goat's Joke Teller and painters included, and they weren't written to keep secrets.
+A preset brain learns what you haven't seen from hidden notes (the sheets), and no brain reads another brain's system prompt. The Gilded Goat keeps the hooded figure's secrets in its Game Master's prompt, so a sheet an imported Character Creator writes for her comes from what the story shows, and her brain may play her differently from the GM. To share her secrets, copy them into a hidden note in a setup message (Setup tab, or `setup.add`). Every brain reads it then, the Goat's Joke Teller and painters included, and they weren't written to keep secrets.
 
 ## Play
 

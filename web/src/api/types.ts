@@ -8,6 +8,8 @@
  */
 import type {
   Brain,
+  BrainBlueprint,
+  BrainMaker,
   BrainTool,
   ChatMessage,
   ChatRequest,
@@ -17,6 +19,8 @@ import type {
   ImageShape,
   LedgerMessage,
   MessageVersion,
+  Pin,
+  PinRole,
   RetryRequest,
   Roll,
   SetupMessage,
@@ -25,10 +29,16 @@ import type {
 } from "../../../src/conversations/types.ts";
 import type { ModelInfo } from "../../../src/venice/models.ts";
 
-export type { Brain, BrainTool, ChatMessage, ChatRequest, Conversation, ImageRecord, ImageRequest, ImageShape, LedgerMessage, MessageVersion, ModelInfo, RetryRequest, Roll, SetupMessage, SetupRole, Templates };
+export type { Brain, BrainBlueprint, BrainMaker, BrainTool, ChatMessage, ChatRequest, Conversation, ImageRecord, ImageRequest, ImageShape, LedgerMessage, MessageVersion, ModelInfo, Pin, PinRole, RetryRequest, Roll, SetupMessage, SetupRole, Templates };
 
 /** T13: the roles a setup message can be sent with (user, assistant, system), in the server's order. */
 export { SETUP_ROLES } from "../../../src/conversations/types.ts";
+
+/**
+ * T16: how a pinned message is sent to its brain (ledger, system, assistant; PIN_AS_WORDS says each in words), and
+ * the one brain.pin and a new maker setting use when nobody says.
+ */
+export { DEFAULT_PIN_AS, PIN_ROLES } from "../../../src/conversations/types.ts";
 
 /**
  * The server's own image request rule: an image brain's shapes and what each is sent as, and what an image costs
@@ -54,6 +64,11 @@ export {
   STOP_REASONING_NOTE,
   stopNote,
   THOUGHT_LAST_NOTE,
+  /** T16: a pin's role in words, the payload view's notes for pins and makers, and the {{n}} of a name pattern. */
+  PIN_AS_WORDS,
+  pinnedNote,
+  makesNote,
+  MAKES_NUMBER,
 } from "../../../src/conversations/wording.ts";
 
 /**
@@ -127,13 +142,21 @@ export type Preview = {
   regenerate?: { messageId: string; newVersion: number; steer?: string; steeredFrom?: number; thought?: string };
   /** Image brains (T05): the /image/generate body their prompt goes into, minus `prompt` itself, and what was left out. */
   image?: { path: "/image/generate"; params: Omit<ImageRequest, "prompt">; notes: string[] };
+  /**
+   * T16: the messages pinned to this brain: where each went in body.messages (the index of its first chat message,
+   * right after the setup) and how it is sent. Absent without pins. `notes` says the same in words.
+   */
+  pinned?: Array<{ index: number; messageId: string; as: PinRole }>;
 };
 
 /** message.get, .edit and .select-version: the message, with every version, and who wrote it. */
 export type MessageView = { conversationId: string; author: string; message: LedgerMessage };
 
-/** message.edit and message.add: for an image message (T05), `painting` names the image being made for it now. */
-export type ImageMessageView = MessageView & { painting?: { imageId: string; model: string } };
+/**
+ * message.edit and message.add: for an image message (T05), `painting` names the image being made for it now.
+ * T16: `made` (message.add) is the brain the message made, when its author makes brains: add it to the brain list.
+ */
+export type ImageMessageView = MessageView & { painting?: { imageId: string; model: string }; made?: Brain };
 
 /**
  * generation.stop. `message` is what the stopped reply saved (null when no text had arrived; `error` says so).
@@ -145,6 +168,8 @@ export type StopOutcome = {
   error?: { code: string; message: string };
   note?: string;
   painting?: Array<{ messageId: string; imageId: string }>;
+  /** T16: the brain the stopped reply made (a stopped reply is a new message too). */
+  made?: Brain;
 };
 
 export type ConversationUpdate = {
@@ -181,7 +206,24 @@ export type BrainFields = {
   tool?: Partial<BrainTool>;
   /** T07 triage: the whole list (at most 4, none blank); [] clears it. Text brains start with ["<!-- from:"]. */
   stop?: string[];
+  /**
+   * T16: "Each new message makes a new brain". Merged like the brain's own fields; starting one needs `name` (with
+   * {{n}}) and `blueprint.systemPrompt`. `enabled: false` keeps it and makes nothing; null removes it.
+   */
+  makes?: MakesUpdate | null;
 };
+
+/** T16: what brain.add / brain.update take for the maker setting: any of its fields, the blueprint's merged. */
+export type MakesUpdate = Partial<Omit<BrainMaker, "blueprint">> & {
+  blueprint?: Partial<Omit<BrainBlueprint, "reasoning" | "finalReminder" | "tool">> & {
+    reasoning?: Partial<Brain["reasoning"]>;
+    finalReminder?: Partial<Brain["finalReminder"]>;
+    tool?: Partial<BrainTool>;
+  };
+};
+
+/** T16: brain.pin, brain.unpin and brain.make: the brain as it is now (replace it), and whether anything changed. */
+export type BrainPinned = { conversationId: string; brain: Brain; messageId: string; changed: boolean };
 
 export type BrainUpdate = BrainFields & { conversation: string; brain?: string };
 
@@ -192,7 +234,15 @@ export type SetupListing = { conversationId: string; setup: SetupMessage[]; chan
  * A brain as examples.list and presets.list show it: its badge, and (T10) one line on its job, for pickers.
  * `reasoning`: its effort, present only when the file switches reasoning on (a labeled opt-in: show it).
  */
-export type LibraryBrain = { name: string; kind: Brain["kind"]; color?: string; about?: string; reasoning?: string };
+export type LibraryBrain = {
+  name: string;
+  kind: Brain["kind"];
+  color?: string;
+  about?: string;
+  reasoning?: string;
+  /** T16: a brain that makes brains, its name pattern ("Character {{n}}"), when the setting is on. */
+  makes?: string;
+};
 
 /** examples.list (T07): a committed campaign in examples/, ready to import. `error`: the file can't be imported. */
 export type ExampleInfo = {
@@ -266,6 +316,17 @@ export type Commands = {
    * (case-insensitive). A brain here with that name is a 409 `conflict`; `name` adds it under another one.
    */
   "brain.import": { args: { conversation: string; preset?: string; example?: string; brain: string; name?: string }; result: BrainImport };
+  /**
+   * T16: pin a message to a brain (sent right after the setup in its requests, not at its place; a live link). `as`
+   * defaults to DEFAULT_PIN_AS; pinning again only changes `as`. Any time, mid-reply too (it isn't a ledger edit).
+   */
+  "brain.pin": { args: { conversation: string; brain: string; message: string; as?: PinRole }; result: BrainPinned };
+  "brain.unpin": { args: { conversation: string; brain: string; message: string }; result: BrainPinned };
+  /**
+   * T16: make a brain from a message by hand, with its author's maker setting (on or off): the next name, or `name`.
+   * 400 when the author has no setting; 409 when the message already made a brain that is still here.
+   */
+  "brain.make": { args: { conversation: string; message: string; name?: string }; result: BrainPinned };
   /** Without content: pre-filled "<!-- This is the <label>. -->" (label default "World Bible"). Positions are 1-based. */
   "setup.add": { args: { conversation: string; label?: string; role?: SetupRole; content?: string; position?: number }; result: SetupListing };
   "setup.update": { args: { conversation: string; setup: string; label?: string; role?: SetupRole; content?: string }; result: SetupListing };
@@ -292,8 +353,24 @@ export type Commands = {
    */
   "message.delete": {
     args: { conversation: string; message: string };
-    result: { conversationId: string; deleted: string; messageCount: number; imagesDeleted?: string[] };
+    /**
+     * T16: `brainsDeleted`, brains made from it that had never spoken (gone with it: drop them); `unpinned`, brains
+     * that lost their pin of it (`madeFrom`: made from it, kept because it spoke or is the default). Re-read or patch.
+     */
+    result: {
+      conversationId: string;
+      deleted: string;
+      messageCount: number;
+      imagesDeleted?: string[];
+      brainsDeleted?: Array<{ brainId: string; name: string }>;
+      unpinned?: Array<{ brainId: string; name: string; madeFrom?: true }>;
+    };
   };
+  /**
+   * T16: change who said a message ("Said by"): `as` is "player" or a brain (name or id) of the message's kind. A
+   * brain's message comes to you only with one version; a roll stays yours. 409 while a reply is being generated.
+   */
+  "message.set-author": { args: { conversation: string; message: string; as: string }; result: MessageView & { from: string; changed: boolean } };
   /** `version` is 1-based (what the pager shows); the document's activeVersion is 0-based. 409 while generating. */
   "message.select-version": { args: { conversation: string; message: string; version: number }; result: MessageView };
   "generation.stop": { args: { conversation: string }; result: StopOutcome };
@@ -363,6 +440,11 @@ export type StreamEvent =
   | { type: "image_done"; messageId: string; imageId: string; image: ImageRecord; message: LedgerMessage }
   /** The message is saved; its image isn't. `retry` is the image.retry request. The stream still ends with done. */
   | { type: "image_error"; messageId: string; imageId: string; error: string; image: ImageRecord; message: LedgerMessage; retry: RetryRequest }
+  /**
+   * T16: the reply just saved made a brain (its author makes brains): add `brain` to the cast at once. It comes
+   * after the save and before `done` (an image brain's: before `image_pending`, where a client stops reading).
+   */
+  | { type: "brain_made"; brain: Brain; messageId: string }
   /**
    * The saved brain message. Null only from generation.follow when nothing was running. `spentUsd` is the
    * conversation's running total once this reply's cost was added (a stopped reply's cost comes later).

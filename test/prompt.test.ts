@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { newBrain, newConversation, REMINDER_EXAMPLE } from "../src/conversations/defaults.ts";
 import {
+  assembleRequest,
   assertAnswerable,
   assertSendable,
   buildRequest,
@@ -370,5 +371,88 @@ describe("planTurn and helpers", () => {
   test("render: one literal pass, so placeholders or $ patterns inside values are never expanded", () => {
     assert.equal(render("{{brain}}: {{content}}", { brain: "GM", content: "x {{brain}} $& $1 $$" }), "GM: x {{brain}} $& $1 $$");
     assert.equal(render("{{prompt}} {{other}} {{content}}", { content: "c" }), "{{prompt}} {{other}} c");
+  });
+});
+
+describe("pinned messages (T16): a live link, sent right after the setup to the brain it is pinned to", () => {
+  test("ledger (the default): exactly as at its place, moved up, and not sent twice; every other brain sees it where it is", () => {
+    const { conv, gm, dice, img } = table();
+    const sheet = conv.messages[2]!; // the Dice Master's "Roll: 17."
+    gm.pins = [
+      { messageId: img.id, as: "ledger" },
+      { messageId: sheet.id, as: "ledger" }, // pinned second, sent first: ledger order
+    ];
+    const { body, pinned } = assembleRequest(conv, gm.id, { model: DEEPSEEK });
+    assert.deepEqual(body.messages, [
+      { role: "system", content: "You are the GM." },
+      BIBLE,
+      user("<!-- from: Dice Master -->\nRoll: 17."),
+      PAINTED,
+      assistant("A hooded figure waits."),
+      user("<!-- from: the user -->\nI approach."),
+      user("<!-- from: the user -->\nI sit down."),
+      assistant("The figure nods."),
+    ]);
+    assert.deepEqual(pinned, [
+      { index: 2, messageId: sheet.id, as: "ledger" },
+      { index: 3, messageId: img.id, as: "ledger" },
+    ]);
+    assert.deepEqual(buildRequest(conv, gm.id, { model: DEEPSEEK }), body, "buildRequest is the same body");
+    // The Dice Master has no pins: its own line is its own assistant words, at its place.
+    const theirs = buildRequest(conv, dice.id, { model: DEEPSEEK }).messages;
+    assert.deepEqual(theirs[4], assistant("Roll: 17."));
+    assert.equal(theirs.filter((m) => m.content === "Roll: 17.").length, 1);
+  });
+
+  test("system and assistant send the text verbatim with that role; the brain's own image call stays a call", () => {
+    const { conv, gm, painter, img } = table();
+    const opener = conv.messages[0]!;
+    painter.pins = [
+      { messageId: opener.id, as: "system" },
+      { messageId: conv.messages[1]!.id, as: "assistant" },
+      { messageId: img.id, as: "assistant" }, // its own image: sent as the call it made, whatever `as` says
+    ];
+    const m = buildRequest(conv, painter.id, { model: DEEPSEEK }).messages;
+    assert.deepEqual(m.slice(0, 6), [
+      { role: "system", content: "You paint scenes." },
+      BIBLE,
+      { role: "system", content: "A hooded figure waits." }, // no framing: the text as it is
+      assistant("I approach."),
+      { role: "assistant", content: "", tool_calls: [{ id: `call_${img.id}`, type: "function", function: { name: "generate_image", arguments: JSON.stringify({ prompt: "A hooded figure in a candle-lit tavern" }) } }] },
+      { role: "tool", tool_call_id: `call_${img.id}`, content: "It is on screen." },
+    ]);
+    assert.equal(m.filter((x) => x.content === "A hooded figure waits." || x.content === "I approach.").length, 2, "not again at their place");
+  });
+
+  test("a live link: the active version as it stands, an edit, another version; a regenerate leaves its message out here too", () => {
+    const { conv, dice, last } = table();
+    dice.pins = [{ messageId: last.id, as: "ledger" }];
+    const pinnedText = () => buildRequest(conv, dice.id, { model: DEEPSEEK }).messages[2]!.content;
+    assert.equal(pinnedText(), "<!-- from: Game Master -->\nThe figure nods.");
+    last.activeVersion = 0;
+    assert.equal(pinnedText(), "<!-- from: Game Master -->\nOLD-VERSION");
+    last.versions[0]!.content = "EDITED";
+    assert.equal(pinnedText(), "<!-- from: Game Master -->\nEDITED");
+    // The Game Master re-rolls its last message: pinned to it, it is left out of its own re-roll entirely.
+    const gm = conv.brains[0]!;
+    gm.pins = [{ messageId: last.id, as: "ledger" }];
+    const reroll = planRegenerate(conv, {}, DEEPSEEK);
+    assert.ok(!reroll.body.messages.some((m) => m.content === "EDITED"));
+    assert.deepEqual(reroll.pinned, []);
+    // A steer revises it in place, right before the steer, even though it is pinned to its own brain.
+    const steered = planRegenerate(conv, { steer: "Shorter." }, DEEPSEEK).body.messages;
+    assert.deepEqual(steered.at(-2), assistant("EDITED"));
+    assert.equal(steered.filter((m) => m.content === "EDITED").length, 1);
+  });
+
+  test("a blank text pinned as system or assistant is skipped, as a blank setup message is; the payload view says what is pinned", () => {
+    const { conv, gm } = table();
+    const empty = newMessage({ type: "brain", brainId: conv.brains[1]!.id }, "text", { content: "  ", source: "generated", createdAt: AT });
+    conv.messages.splice(1, 0, empty);
+    gm.pins = [{ messageId: empty.id, as: "system" }, { messageId: conv.messages[3]!.id, as: "ledger" }];
+    const plan = planTurn(conv, { content: "Hello" }, DEEPSEEK);
+    assert.equal(plan.body.messages.filter((m) => m.role === "system").length, 1);
+    assert.deepEqual(plan.pinned.map((p) => p.messageId), [conv.messages[3]!.id]);
+    assert.ok(plan.notes.some((n) => n.startsWith(`Pinned to Game Master: ${conv.messages[3]!.id} (Dice Master's), as it appears in the ledger`)), plan.notes.join("\n"));
   });
 });

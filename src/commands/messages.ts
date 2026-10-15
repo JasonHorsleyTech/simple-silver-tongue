@@ -7,14 +7,15 @@ import { addImageMessage, editImagePrompt, type Started } from "../conversations
 import { assertLedgerIdle, loadConversation, mutateConversation } from "../conversations/store.ts";
 import { rollD20 } from "../conversations/dice.ts";
 import { addSpend, newMessage, rollMessage } from "../conversations/turn.ts";
-import type { Author, Conversation, LedgerMessage } from "../conversations/types.ts";
+import type { Author, Brain, Conversation, LedgerMessage } from "../conversations/types.ts";
+import { appendMessage, forgetMessage, type Forgotten } from "../conversations/makers.ts";
 import { rollLabel } from "../conversations/wording.ts";
-import { CommandError, conflict, notFound } from "../lib/errors.ts";
+import { badRequest, CommandError, conflict, notFound } from "../lib/errors.ts";
 import { nowIso } from "../lib/ids.ts";
 import { removeImageFiles } from "../images/files.ts";
 import { command } from "../registry.ts";
 import { authorRef, PLAYER } from "./brains.ts";
-import { conversationId } from "./conversations.ts";
+import { conversationId, messageId } from "./conversations.ts";
 
 /**
  * Ledger edits (docs/design.md, "Turns, regeneration and edits"). Every brain reads the ledger fresh on each
@@ -23,8 +24,8 @@ import { conversationId } from "./conversations.ts";
  * Regenerating is a generating command, so it lives with turn in chat.ts.
  */
 
-export const MESSAGE_ID_RE = /^m_[a-z0-9]{4,32}$/;
-export const messageId = z.string().regex(MESSAGE_ID_RE, "Message ids look like m_k3j9x0q2ma").describe("Message id (m_...), from conversation.get");
+// Defined beside conversationId, so brains.ts can use it too without an import cycle (brains.ts ↔ messages.ts).
+export { MESSAGE_ID_RE, messageId } from "./conversations.ts";
 
 function findMessage(conv: Conversation, id: string): LedgerMessage {
   const m = conv.messages.find((x) => x.id === id);
@@ -37,10 +38,17 @@ export function viewOf(conv: Conversation, m: LedgerMessage): MessageView {
   return { conversationId: conv.id, author, message: m };
 }
 
-/** message.edit and message.add: the message, plus the image being made for it now, if they started one (T05). */
-export type ImageMessageView = MessageView & { painting?: { imageId: string; model: string } };
+/**
+ * message.edit and message.add: the message, plus the image being made for it now, if they started one (T05), and
+ * (T16, message.add) the brain it made, when its author makes brains.
+ */
+export type ImageMessageView = MessageView & { painting?: { imageId: string; model: string }; made?: Brain };
 
-const startedView = (s: Started): ImageMessageView => ({ ...viewOf(s.conv, s.message), ...(s.painting ? { painting: s.painting } : {}) });
+const startedView = (s: Started): ImageMessageView => ({ ...viewOf(s.conv, s.message), ...(s.painting ? { painting: s.painting } : {}), ...(s.made ? { made: s.made } : {}) });
+
+/** The CLI's line for a brain a new message made (T16). */
+export const madeLine = (b: Brain, conversationId: string) =>
+  `It made a new brain, ${b.name} (${b.id}), with this message pinned to it. Rename it once you know who it is: ./ss brain.update --conversation ${conversationId} --brain ${b.id} --name "..."`;
 
 /** The CLI's words for an edit or add of an image message. */
 function paintingLine(r: ImageMessageView): string {
@@ -64,6 +72,7 @@ export const messageAdd = command({
 --as player adds it as your own message. --as <brain> puts the words in that brain's mouth, e.g. the Game
 Master's opening scene: that brain sees them as its own past reply (assistant), every other brain sees them
 framed with its name, exactly as if it had written them. Then send a turn, to any brain, to carry on.
+In the mouth of a brain that makes brains (T16, brain.update --makes), it makes a new brain, as a reply would.
 --as <image brain> makes the content its image prompt, and its image is made from it: this answers at once,
 and the image is painted after (image.follow watches it; conversation.get shows its state).
 Refused while a reply is being generated (it would land after your message, answering what came before it).`,
@@ -92,14 +101,13 @@ Refused while a reply is being generated (it would land after your message, answ
         author = { type: "brain", brainId: brain.id };
       }
       const m = newMessage(author, "text", { content: args.content, source: "authored", createdAt: nowIso() });
-      c.messages.push(m);
-      return m;
+      return { m, made: appendMessage(c, m) }; // T16: in a maker's mouth, it makes a brain in the same write
     });
-    return viewOf(conv, result);
+    return { ...viewOf(conv, result.m), ...(result.made ? { made: result.made } : {}) };
   },
   format: (r: ImageMessageView) => {
     const who = r.message.author.type === "player" ? "your message" : r.message.kind === "image" ? `an image prompt in ${r.author}'s mouth` : `in ${r.author}'s mouth`;
-    return `Added ${r.message.id} (${who}). Every brain sees it from the next request.${r.message.kind === "image" ? paintingLine(r) : ""}`;
+    return `Added ${r.message.id} (${who}). Every brain sees it from the next request.${r.message.kind === "image" ? paintingLine(r) : ""}${r.made ? `\n${madeLine(r.made, r.conversationId)}` : ""}`;
   },
 });
 
@@ -187,28 +195,54 @@ export const messageDelete = command({
   name: "message.delete",
   description: `Delete a message, with all its versions: any message, yours or a brain's, at any depth.
 From the next request on, it is as if it was never there. What it cost stays in the conversation's total.
+T16: every pin of it goes too, and a brain made from it (brain.update --makes, brain.make) is deleted with it while
+that brain has never spoken; one that has spoken stays and only loses the pin. The answer says which brain lost what.
 An image message's image files (every version's) are deleted with it. Refused while a reply is being generated,
 and while any of the message's images is still being made (Venice is making and billing it: wait for it to land).`,
   args: z.object(target),
   examples: ["./ss message.delete --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a"],
   handler: async (args, ctx) => {
     const { vault } = ctx.requireSession();
-    const { conv, result: gone } = await mutateConversation(vault, args.conversation, (c) => {
+    const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
       assertLedgerIdle(vault, c.id);
       const m = findMessage(c, args.message);
       assertImageIdle(vault, m, "all", "delete");
       addSpend(c); // pin the running total first: the money is spent, even when the message goes (T03 QA-2)
       c.messages.splice(c.messages.indexOf(m), 1);
-      return m;
+      // T16: its pins go, and a brain made from it goes too while it has never spoken. In the same write.
+      return { gone: m, forgotten: forgetMessage(c, m.id) };
     });
     // After the save: a failed removal leaves an unreferenced file, never a message whose image is missing.
-    const images = imageIdsOf([gone]);
+    const images = imageIdsOf([result.gone]);
     await removeImageFiles(vault, images);
-    return { conversationId: conv.id, deleted: args.message, messageCount: conv.messages.length, ...(images.length ? { imagesDeleted: images } : {}) };
+    const { brainsDeleted, unpinned } = result.forgotten;
+    return {
+      conversationId: conv.id,
+      deleted: args.message,
+      messageCount: conv.messages.length,
+      ...(images.length ? { imagesDeleted: images } : {}),
+      ...(brainsDeleted.length ? { brainsDeleted } : {}),
+      ...(unpinned.length ? { unpinned } : {}),
+    };
   },
-  format: (r: { deleted: string; messageCount: number; imagesDeleted?: string[] }) =>
-    `Deleted ${r.deleted}${r.imagesDeleted ? ` and its image${r.imagesDeleted.length === 1 ? "" : "s"} (${r.imagesDeleted.join(", ")})` : ""}. ${r.messageCount} message${r.messageCount === 1 ? "" : "s"} left.`,
+  format: (r: MessageDeleted) => {
+    const out = [
+      `Deleted ${r.deleted}${r.imagesDeleted ? ` and its image${r.imagesDeleted.length === 1 ? "" : "s"} (${r.imagesDeleted.join(", ")})` : ""}. ${r.messageCount} message${r.messageCount === 1 ? "" : "s"} left.`,
+    ];
+    for (const b of r.brainsDeleted ?? []) out.push(`Deleted brain ${b.name} (${b.brainId}) too: it was made from this message and had never spoken.`);
+    for (const b of r.unpinned ?? []) {
+      out.push(
+        b.madeFrom
+          ? `${b.name} (${b.brainId}) was made from this message and stays (it has spoken, or is the default brain); it no longer has it pinned.`
+          : `${b.name} (${b.brainId}) had it pinned; the pin is gone.`,
+      );
+    }
+    return out.join("\n");
+  },
 });
+
+/** What message.delete answers. T16: the brains it deleted with the message, and the brains that lost their pin of it. */
+export type MessageDeleted = { conversationId: string; deleted: string; messageCount: number; imagesDeleted?: string[] } & Partial<Forgotten>;
 
 export const messageSelectVersion = command({
   name: "message.select-version",
@@ -247,4 +281,55 @@ Refused while a reply is being generated.`,
   },
 });
 
-export default [messageAdd, messageRoll, messageGet, messageEdit, messageDelete, messageSelectVersion];
+export const messageSetAuthor = command({
+  name: "message.set-author",
+  description: `Change who said a message: any message, at any depth, to another brain of its kind, or to or from you.
+An edit like any other: from the next request on, history "always was" that way. The new author reads the message
+as its own words (assistant), and every other brain sees it framed with the new name. A text message can go to any
+text brain or to you ("player"); an image prompt only to another image brain. A brain's message comes to you only
+with a single version (yours have one), and a roll the server made stays yours. Its versions, pins and the brain it
+made (if any) stay as they are, and it makes no new brain (brain.make does that by hand). Refused while a reply is
+being generated.`,
+  args: z.object({
+    ...target,
+    as: authorRef.describe(`Who said it now: "${PLAYER}" (you), or a brain's name or id`),
+  }),
+  examples: [
+    './ss message.set-author --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --as "Character 2"',
+    "./ss message.set-author --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --as player",
+  ],
+  handler: async (args, ctx): Promise<MessageView & { from: string; changed: boolean }> => {
+    const { vault } = ctx.requireSession();
+    const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
+      assertLedgerIdle(vault, c.id);
+      const m = findMessage(c, args.message);
+      const from = viewOf(c, m).author;
+      const player = args.as.trim().toLowerCase() === PLAYER;
+      const to: Author = player ? { type: "player" } : { type: "brain", brainId: resolveBrain(c, args.as).id };
+      const same = to.type === m.author.type && (to.type === "player" || to.brainId === (m.author as { brainId: string }).brainId);
+      if (same) return { m, from, changed: false };
+      if (to.type === "player") {
+        if (m.kind === "image") throw badRequest(`${m.id} is an image prompt, and only an image brain can say one. Move it to another image brain.`);
+        if (m.versions.length > 1) {
+          throw badRequest(`${m.id} has ${m.versions.length} versions, and a message of yours has exactly one. Move it to another brain instead, or copy the version you want into a message of yours (message.add --as player).`);
+        }
+      } else {
+        const brain = c.brains.find((b) => b.id === to.brainId)!;
+        if (brain.kind !== m.kind) {
+          throw badRequest(`${m.id} is ${m.kind === "image" ? "an image prompt" : "a text message"}, and ${brain.name} is ${brain.kind === "image" ? "an image" : "a text"} brain. A message moves only to a brain of its kind.`);
+        }
+        if (m.versions.some((v) => v.roll)) throw badRequest(`${m.id} is a roll the server made for you, so it stays yours. Edit or delete it instead.`);
+      }
+      m.author = to;
+      m.updatedAt = nowIso(); // stamped in the write queue (the browser keeps the newer copy)
+      return { m, from, changed: true };
+    });
+    return { ...viewOf(conv, result.m), from: result.from, changed: result.changed };
+  },
+  format: (r: MessageView & { from: string; changed: boolean }) =>
+    r.changed
+      ? `${r.message.id} is now said by ${r.author} (was ${r.from}). Every brain sees it that way from the next request: ${r.author === "you" ? "framed as yours" : `${r.author} reads it as its own words, and the other brains see it framed with that name`}.`
+      : `${r.message.id} is already said by ${r.author}. Nothing changed.`,
+});
+
+export default [messageAdd, messageRoll, messageGet, messageEdit, messageDelete, messageSelectVersion, messageSetAuthor];

@@ -1,5 +1,5 @@
 import { badRequest, CommandError, notFound } from "../lib/errors.ts";
-import type { Brain, ChatMessage, ChatRequest, Conversation, LedgerMessage, Templates } from "./types.ts";
+import type { Brain, ChatMessage, ChatRequest, Conversation, LedgerMessage, PinRole, Templates } from "./types.ts";
 
 /**
  * Prompt assembly (docs/design.md, "Prompt assembly"). buildRequest is a pure function from the conversation
@@ -86,6 +86,17 @@ export function activeVersion(m: LedgerMessage) {
 
 /** The exact request body for brain `brainId` (docs/design.md steps 1-5). */
 export function buildRequest(conv: Conversation, brainId: string, opts: BuildOptions): ChatRequest {
+  return assembleRequest(conv, brainId, opts).body;
+}
+
+/** T16: where a pinned message landed in a body: the index of its (first) chat message. Display only. */
+export type PinnedAt = { index: number; messageId: string; as: PinRole };
+
+/**
+ * buildRequest, plus where each pinned message went (T16), for prompt.preview to point out. The body is the same
+ * object buildRequest returns, so the preview and the send can't differ.
+ */
+export function assembleRequest(conv: Conversation, brainId: string, opts: BuildOptions): { body: ChatRequest; pinned: PinnedAt[] } {
   const brain = conv.brains.find((b) => b.id === brainId);
   if (!brain) throw notFound(`No brain ${brainId} in conversation ${conv.id}.`);
   if (!brain.systemPrompt.trim()) throw emptySystemPrompt(brain, conv.id);
@@ -108,6 +119,38 @@ export function buildRequest(conv: Conversation, brainId: string, opts: BuildOpt
     return render(t[name], vars);
   };
 
+  // The ledger this request sees: everything before the message a regenerate leaves out.
+  let ledger = conv.messages;
+  if (opts.excludeFromMessageId !== undefined) {
+    const at = conv.messages.findIndex((m) => m.id === opts.excludeFromMessageId);
+    if (at < 0) throw notFound(`No message ${opts.excludeFromMessageId} in this conversation.`);
+    ledger = conv.messages.slice(0, at);
+  }
+
+  /** One ledger message as this brain sees it at its place (step 3). */
+  const view = (m: LedgerMessage): ChatMessage[] => {
+    const { content } = activeVersion(m);
+    if (m.author.type === "player") return [{ role: "user", content: frame("player", { content }) }];
+    if (m.author.brainId === brain.id) {
+      if (m.kind === "text") return [{ role: "assistant", content }];
+      // Its own image: the forced tool call it made, then the (user-editable) tool result.
+      if (!brain.tool) throw new CommandError(400, "bad_brain", `Brain "${brain.name}" has image messages but no tool text.`);
+      const id = `call_${m.id}`;
+      return [
+        { role: "assistant", content: "", tool_calls: [{ id, type: "function", function: { name: brain.tool.name, arguments: JSON.stringify({ prompt: content }) } }] },
+        { role: "tool", tool_call_id: id, content: brain.tool.resultContent },
+      ];
+    }
+    const other = conv.brains.find((b) => b.id === (m.author as { brainId: string }).brainId);
+    if (!other) throw new Error(`message ${m.id}: author brain is missing from conversation ${conv.id}`);
+    return [
+      {
+        role: "user",
+        content: m.kind === "text" ? frame("otherBrainText", { brain: other.name, content }) : frame("otherBrainImage", { brain: other.name, prompt: content }),
+      },
+    ];
+  };
+
   // 1. System prompt, verbatim.
   const messages: ChatMessage[] = [{ role: "system", content: brain.systemPrompt }];
 
@@ -115,43 +158,29 @@ export function buildRequest(conv: Conversation, brainId: string, opts: BuildOpt
   // never merged into the prompt above. Blank ones are skipped rather than sent as empty messages.
   for (const s of conv.setup) if (s.content.trim()) messages.push({ role: s.role, content: s.content });
 
-  // 3. The ledger, from this brain's point of view, using each message's active version.
-  let excluded = false;
-  for (const m of conv.messages) {
-    if (m.id === opts.excludeFromMessageId) {
-      excluded = true;
-      break;
-    }
+  // 2b. T16: the messages pinned to this brain, in ledger order, right after the setup: a live link (the active
+  // version as it stands), sent here instead of at their place. Only those this request's ledger holds (a
+  // regenerate's message, and whatever follows it, is left out here too). `system` and `assistant` send the text
+  // verbatim with that role, and skip it when blank, as setup messages are; `ledger` sends what step 3 would.
+  const pinAs = new Map((brain.pins ?? []).map((p) => [p.messageId, p.as]));
+  // A steer revises the last message, which must stay right before the steer ("write your previous response
+  // again"), even when it is pinned to its own brain.
+  if (opts.steer !== undefined && ledger.length) pinAs.delete(ledger.at(-1)!.id);
+  const pinned: PinnedAt[] = [];
+  for (const m of ledger) {
+    const as = pinAs.get(m.id);
+    if (!as) continue;
     const { content } = activeVersion(m);
-    if (m.author.type === "player") {
-      messages.push({ role: "user", content: frame("player", { content }) });
-    } else if (m.author.brainId === brain.id) {
-      if (m.kind === "text") {
-        messages.push({ role: "assistant", content });
-      } else {
-        // Its own image: the forced tool call it made, then the (user-editable) tool result.
-        if (!brain.tool) throw new CommandError(400, "bad_brain", `Brain "${brain.name}" has image messages but no tool text.`);
-        const id = `call_${m.id}`;
-        messages.push({
-          role: "assistant",
-          content: "",
-          tool_calls: [{ id, type: "function", function: { name: brain.tool.name, arguments: JSON.stringify({ prompt: content }) } }],
-        });
-        messages.push({ role: "tool", tool_call_id: id, content: brain.tool.resultContent });
-      }
-    } else {
-      const other = conv.brains.find((b) => b.id === (m.author as { brainId: string }).brainId);
-      if (!other) throw new Error(`message ${m.id}: author brain is missing from conversation ${conv.id}`);
-      messages.push({
-        role: "user",
-        content:
-          m.kind === "text"
-            ? frame("otherBrainText", { brain: other.name, content })
-            : frame("otherBrainImage", { brain: other.name, prompt: content }),
-      });
-    }
+    const own = m.author.type === "brain" && m.author.brainId === brain.id;
+    // The brain's own image call can only be sent as the call it was (a bare prompt as "its words" would be a reply it never wrote).
+    const sent: ChatMessage[] = as === "ledger" || (own && m.kind === "image") ? view(m) : content.trim() ? [{ role: as, content }] : [];
+    if (!sent.length) continue;
+    pinned.push({ index: messages.length, messageId: m.id, as });
+    messages.push(...sent);
   }
-  if (opts.excludeFromMessageId !== undefined && !excluded) throw notFound(`No message ${opts.excludeFromMessageId} in this conversation.`);
+
+  // 3. The ledger, from this brain's point of view, using each message's active version. Pinned ones are above.
+  for (const m of ledger) if (!pinAs.has(m.id)) messages.push(...view(m));
 
   // 3b. A fresh take (T15): the thought, verbatim, as the brain's own words. Before the reminder, so the request
   // still ends with a user message when the brain has one (live, that worked every time; see assertAnswerable).
@@ -208,7 +237,7 @@ export function buildRequest(conv: Conversation, brainId: string, opts: BuildOpt
   }
 
   assertSendable(body);
-  return body;
+  return { body, pinned };
 }
 
 /**

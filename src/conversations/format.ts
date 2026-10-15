@@ -2,8 +2,8 @@ import { table } from "../lib/text.ts";
 import type { FormatOpts } from "../registry.ts";
 import { usd } from "../venice/models.ts";
 import { foldHidden, revealHint } from "./hidden.ts";
-import { rollLabel } from "./wording.ts";
-import { activeVersion } from "./prompt.ts";
+import { PIN_AS_WORDS, rollLabel } from "./wording.ts";
+import { activeVersion, type PinnedAt } from "./prompt.ts";
 import { totalCost } from "./turn.ts";
 import type { ChatRequest, Conversation, ImageRecord, ImageRequest, LedgerMessage, MessageVersion } from "./types.ts";
 
@@ -74,7 +74,10 @@ export function formatConversation(c: Conversation, opts?: FormatOpts): string {
     `Brains: ${c.brains
       .map((b) => {
         const reminder = b.finalReminder.enabled && b.finalReminder.content.trim() ? ", reminder" : "";
-        return `${b.name}${b.id === c.defaultBrainId ? " (default)" : ""} [${b.id}, ${b.kind}, reasoning ${b.reasoning.enabled ? b.reasoning.effort : "off"}${reminder}]`;
+        // T16: what brain.list shows in full, in a word: its pins, and the brains it makes.
+        const pins = b.pins?.length ? `, ${b.pins.length} pinned` : "";
+        const makes = b.makes?.enabled ? `, makes "${b.makes.name}"` : "";
+        return `${b.name}${b.id === c.defaultBrainId ? " (default)" : ""} [${b.id}, ${b.kind}, reasoning ${b.reasoning.enabled ? b.reasoning.effort : "off"}${reminder}${pins}${makes}]`;
       })
       .join(", ")}`,
   ];
@@ -155,6 +158,11 @@ export type Preview = {
   notes: string[];
   /** turn (or message.regenerate) would refuse to send this body as it stands, and why. */
   refusal?: string;
+  /**
+   * T16: the messages pinned to this brain, where each went in `body.messages` (the index of its first chat message,
+   * right after the setup) and how it is sent. Absent when the brain has no pins this request holds.
+   */
+  pinned?: PinnedAt[];
   /** Set for prompt.preview --regenerate: which message gets the new version, and how it is asked for. */
   regenerate?: { messageId: string; newVersion: number; steer?: string; steeredFrom?: number; thought?: string };
   /**
@@ -184,8 +192,10 @@ export function formatPreview(p: Preview): string {
     JSON.stringify(rest),
     `${messages.length} messages:`,
   ];
+  const pinAt = new Map((p.pinned ?? []).map((x) => [x.index, x]));
   messages.forEach((m, i) => {
-    const extra = m.role === "tool" ? ` (tool_call_id ${m.tool_call_id})` : "";
+    const pin = pinAt.get(i);
+    const extra = (m.role === "tool" ? ` (tool_call_id ${m.tool_call_id})` : "") + (pin ? ` · pinned ${pin.messageId}, ${PIN_AS_WORDS[pin.as]}` : "");
     out.push("", `── [${i}] ${m.role}${extra} ──`);
     if (m.content !== "" || m.role !== "assistant") out.push(m.content);
     if (m.role === "assistant" && m.tool_calls) out.push(`tool_calls: ${JSON.stringify(m.tool_calls)}`);

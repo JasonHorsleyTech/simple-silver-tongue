@@ -1,7 +1,7 @@
 import { DEFAULT_IMAGE_MODEL, DEFAULT_TEXT_MODEL } from "../config.ts";
 import { DEFAULT_SHAPE } from "../images/request.ts";
 import { newId, nowIso } from "../lib/ids.ts";
-import { SCHEMA_VERSION, SETUP_ROLES, type Brain, type Conversation, type SetupMessage, type SetupRole, type Templates } from "./types.ts";
+import { DEFAULT_PIN_AS, SCHEMA_VERSION, SETUP_ROLES, type Brain, type Conversation, type SetupMessage, type SetupRole, type Templates } from "./types.ts";
 import { BRAIN_COLORS, DEFAULT_SETUP_LABEL, DEFAULT_TOOL, FRAMING_STOP, REMINDER_EXAMPLE, setupPrefill } from "./wording.ts";
 
 /**
@@ -29,6 +29,8 @@ export const DEFAULT_BRAIN_NAME = "Assistant";
 // The pre-fills (reminder, tool text, setup) are in wording.ts, which has no dependencies, so the web imports them too.
 // So is the badge palette, which the browser's color picker offers.
 export { BRAIN_COLORS, DEFAULT_SETUP_LABEL, DEFAULT_TOOL, FRAMING_STOP, REMINDER_EXAMPLE, setupPrefill };
+/** T16: in types.ts (dependency-free), so the browser imports the same value. */
+export { DEFAULT_PIN_AS };
 
 /**
  * A new brain's stop sequences (T07 triage): a text brain stops before a framing line it would write for someone
@@ -53,6 +55,7 @@ export function newBrain(opts: { name: string; systemPrompt: string; color?: str
     systemPrompt: opts.systemPrompt,
     finalReminder: { enabled: !opts.isDefault, content: REMINDER_EXAMPLE },
     stop: defaultStop(opts.kind ?? "text"),
+    pins: [],
   };
   if (brain.kind === "image") makeImageBrain(brain);
   return brain;
@@ -66,14 +69,15 @@ export function newBrain(opts: { name: string; systemPrompt: string; color?: str
  * every conversation can roll. Since 2026-10-14 an image brain has a shape (landscape if it has none), and the
  * conversation-wide width, height and aspect ratio it replaced are dropped. Version 4 (T13): a setup message
  * without a role gets `user`, which is how it was always sent. Version 5 (T15): templates without `thought` get
- * the default, so every conversation can take a fresh take. Tolerates a partial document (listConversations
- * reports those).
+ * the default, so every conversation can take a fresh take. Version 6 (T16): a brain without `pins` gets none (a
+ * file from before pinned messages). Tolerates a partial document (listConversations reports those).
  */
 export function upgradeConversation(conv: Conversation): Conversation {
   if (typeof conv !== "object" || conv === null) return conv;
   for (const b of Array.isArray(conv.brains) ? conv.brains : []) {
     if (b && !Array.isArray(b.stop)) b.stop = defaultStop(b.kind === "image" ? "image" : "text");
     if (b?.kind === "image") b.shape ??= DEFAULT_SHAPE;
+    if (b && !Array.isArray(b.pins)) b.pins = []; // version 6 (T16)
   }
   if (conv.templates && typeof conv.templates === "object") {
     if (typeof conv.templates.roll !== "string") conv.templates.roll = DEFAULT_TEMPLATES.roll;

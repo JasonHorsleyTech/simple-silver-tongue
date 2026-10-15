@@ -41,6 +41,8 @@ const PHRASES = {
   rollTemplate: "Hexmoor roll template", // T09: in the template and in the roll's message it makes
   thought: "Gloamreach fresh take thought", // T15: in the merged version and its `thought`
   thoughtTemplate: "Wyrmglass thought template",
+  makerPattern: "Quarrystone", // T16: a maker's name pattern, and the name of the brain it made
+  blueprint: "Hollowmere blueprint prompt", // T16: in the maker's blueprint and the made brain's prompt
 };
 /** Only ever in requests that fail: never stored, and never logged either. */
 const FAILING = { brain: "Nosuch Velzaroth brain", template: "Placeholderless Thornvale template" };
@@ -99,6 +101,9 @@ async function play(cli: Cli, username: string, password: string) {
   await ok(["turn", "--conversation", c, "--brain", P.painterName]); // its prompt quotes the last message; the stream waits for the image
   await ok(["conversation.update", "--id", c, "--templates.roll", `${P.rollTemplate}: {{roll}}`, "--templates.thought", `${P.thoughtTemplate}: {{thought}}`]);
   await ok(["message.roll", "--conversation", c]);
+  // T16: a brain that makes brains, and the brain its new message makes.
+  await ok(["brain.update", "--conversation", c, "--brain", P.brainName, "--makes.name", `${P.makerPattern} {{n}}`, "--makes.blueprint.system-prompt", P.blueprint]);
+  await ok(["message.add", "--conversation", c, "--as", P.brainName, "--content", "A sheet, which makes a brain."]);
 
   // Requests that fail, carrying text of their own: the client hears why, the log only the code.
   assert.equal((await cli(["turn", "--conversation", c, "--brain", FAILING.brain])).code, 1);
