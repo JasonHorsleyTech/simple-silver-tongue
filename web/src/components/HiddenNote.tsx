@@ -1,8 +1,7 @@
 import { ChevronDown, EyeOff } from "lucide-react";
-import { useContext, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { hiddenSummary } from "../api/types.ts";
 import { cx } from "../lib/cx.ts";
-import { ScrollPin } from "../lib/scrollPin.ts";
 
 /**
  * T08: a hidden note, folded. The bar says that it is hidden and how much ("Hidden · 14 lines", the same words
@@ -30,24 +29,28 @@ export function HiddenNote({
 }) {
   const [open, setOpen] = useState(false);
   const id = useId();
-  const pin = useContext(ScrollPin);
   const root = useRef<HTMLDivElement>(null);
   const folding = useRef(false);
   const shown = open && !locked;
 
-  // Folded from its header deep inside a long note: bring the bar back into view, before paint.
+  // Folded from its header deep inside a long note: the note shrinks away above the view, which would leave you past
+  // the rest of its message. Bring the bar back to the top, where you clicked, before paint. This is the click's own
+  // scroll; opening a note moves nothing (it grows below its bar).
   useLayoutEffect(() => {
     if (shown || !folding.current) return;
     folding.current = false;
-    if (root.current) pin?.folded(root.current);
-  }, [shown, pin]);
+    const el = root.current;
+    const box = el && scrollBoxOf(el);
+    if (!el || !box) return;
+    const above = el.getBoundingClientRect().top - box.getBoundingClientRect().top;
+    if (above < 0) box.scrollTop += above - 16;
+  }, [shown]);
 
   const toggle = () => {
     if (shown) {
       folding.current = true;
       setOpen(false);
     } else {
-      if (root.current) pin?.opening(root.current);
       setOpen(true);
     }
   };
@@ -96,4 +99,12 @@ export function HiddenNote({
       )}
     </div>
   );
+}
+
+/** The nearest ancestor that scrolls vertically (the scrollback), so only it moves, never the page. */
+function scrollBoxOf(el: HTMLElement): HTMLElement | null {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    if (/auto|scroll/.test(getComputedStyle(p).overflowY) && p.scrollHeight > p.clientHeight) return p;
+  }
+  return null;
 }

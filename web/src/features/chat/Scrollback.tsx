@@ -1,7 +1,6 @@
 import { ArrowDown, ArrowUp, ImageIcon, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Conversation } from "../../api/types.ts";
-import { ScrollPin, type ScrollPinApi } from "../../lib/scrollPin.ts";
 import { GalleryContext, type GalleryItem } from "./ImageCard.tsx";
 import { LiveReply } from "./LiveReply.tsx";
 import { MessageItem } from "./MessageItem.tsx";
@@ -10,13 +9,16 @@ import { MessageText } from "./MessageText.tsx";
 import { PendingRoll } from "./RollCard.tsx";
 import type { Chat } from "./useChat.ts";
 
-/** Within this many pixels of the bottom counts as "at the bottom": new text keeps it pinned there. */
-const STICK_PX = 96;
+/** More than this many pixels below the view (the column's own bottom padding is 40) brings up "Latest". */
+const AWAY_PX = 64;
+/** How long after opening a conversation it is kept at its end while things settle, unless you act first. */
+const SETTLE_MS = 1500;
 
 /**
  * The ledger, top to bottom, then the optimistic player message, a roll on its way (T09) and the live reply. A regenerate's live reply
- * goes in the slot of the message it rewrites instead. It follows the stream while you are at the bottom,
- * and leaves you alone once you scroll up (a "Latest" button brings you back).
+ * goes in the slot of the message it rewrites instead. It opens at the end, and from then on scrolls the browser's
+ * way: new text comes in below without moving the view ("Latest" appears when there is more below), and only you,
+ * "Latest" and the picture-is-ready pill scroll it.
  */
 export function Scrollback({
   conv,
@@ -32,9 +34,6 @@ export function Scrollback({
   empty: ReactNode;
 }) {
   const box = useRef<HTMLDivElement>(null);
-  const stuck = useRef(true);
-  /** A jump to a landed picture is under way: scroll events don't re-pin to the bottom meanwhile. */
-  const jumping = useRef(false);
   const [away, setAway] = useState(false);
   const brains = new Map(conv.brains.map((b) => [b.id, b]));
   const { live, pendingPlayer, pendingRoll } = chat;
@@ -69,92 +68,61 @@ export function Scrollback({
     const card = landed && document.getElementById(landed.messageId);
     setLanded(null);
     if (!el || !card) return;
-    // Unpin, and stay unpinned while the smooth scroll runs: its first steps are still "at the bottom", and
-    // re-pinning there would snap back. The box itself scrolls, not the page (scrollIntoView would move both).
-    stuck.current = false;
-    jumping.current = true;
-    const done = () => {
-      el.removeEventListener("scrollend", done);
-      if (!jumping.current) return;
-      jumping.current = false;
-      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_PX;
-      stuck.current = atBottom;
-      setAway(!atBottom);
-    };
-    el.addEventListener("scrollend", done);
-    setTimeout(done, 1500); // in case no scrollend comes (already there)
-    setAway(true);
+    // The box itself scrolls, not the page (scrollIntoView would move both).
     const b = el.getBoundingClientRect();
     const r = card.getBoundingClientRect();
     el.scrollTo({ top: el.scrollTop + r.top - b.top - Math.max(16, (el.clientHeight - r.height) / 2), behavior: "smooth" });
   }, [landed]);
 
-  // T08: a hidden note opening in place keeps its top where it is, instead of the pin scrolling it away, and
-  // shows as much of itself as fits.
-  const pin = useMemo<ScrollPinApi>(
-    () => ({
-      opening(target) {
-        stuck.current = false;
-        requestAnimationFrame(() => {
-          const el = box.current;
-          if (!el) return;
-          const b = el.getBoundingClientRect();
-          const r = target.getBoundingClientRect();
-          const by = Math.min(r.bottom - b.bottom + 16, r.top - b.top - 16);
-          if (by > 0) el.scrollTo({ top: el.scrollTop + by, behavior: "smooth" });
-          const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_PX;
-          stuck.current = atBottom;
-          setAway(!atBottom);
-        });
-      },
-      folded(target) {
-        const el = box.current;
-        if (!el) return;
-        const b = el.getBoundingClientRect();
-        const r = target.getBoundingClientRect();
-        if (r.top < b.top) el.scrollTo({ top: el.scrollTop + r.top - b.top - 16 });
-      },
-    }),
-    [],
-  );
+  const toBottom = () => box.current?.scrollTo({ top: box.current.scrollHeight, behavior: "smooth" });
 
-  const toBottom = useCallback((smooth = false) => {
+  /** "Latest" shows while there is more below the view. It only shows: nothing here moves the box. */
+  const measure = useCallback(() => {
     const el = box.current;
-    if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "instant" });
-    stuck.current = true;
-    setAway(false);
+    if (el) setAway(el.scrollHeight - el.scrollTop - el.clientHeight > AWAY_PX);
   }, []);
 
-  // Sending (or rolling) always brings you to the bottom.
+  // A conversation opens at its end: the one scroll the scrollback makes by itself (ChatView is keyed by the
+  // conversation, so a mount is a new one). Whatever settles in the next moment (a picture taking its own shape, a
+  // reply re-attached after a reload) keeps it at the end, until you scroll, click, type or touch, or SETTLE_MS pass.
+  // From then on only you and the two buttons move it: new text, an editor, a note opening all grow in place, and the
+  // browser's own scroll anchoring keeps what you are looking at still.
   useLayoutEffect(() => {
-    if (pendingPlayer !== null || pendingRoll || live?.origin === "turn") toBottom();
-  }, [pendingPlayer, pendingRoll, live?.origin, toBottom]);
+    const el = box.current;
+    const inner = el?.firstElementChild;
+    if (!el || !inner || conv.messages.length === 0) return;
+    const end = () => {
+      el.scrollTop = el.scrollHeight;
+    };
+    end();
+    const ro = new ResizeObserver(end);
+    ro.observe(inner);
+    const inputs = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+    const settled = () => {
+      ro.disconnect();
+      clearTimeout(timer);
+      for (const t of inputs) window.removeEventListener(t, settled, true);
+    };
+    for (const t of inputs) window.addEventListener(t, settled, { capture: true, passive: true });
+    const timer = setTimeout(settled, SETTLE_MS);
+    return settled;
+  }, []); // once, on open
 
-  // New text while pinned: stay pinned. Runs after every render that changes what is shown. Not while you type
-  // in the scrollback itself (T14): there the box moves only as any textarea's box would, to keep the caret in view.
-  useLayoutEffect(() => {
-    if (stuck.current && !typingIn(box.current)) box.current?.scrollTo({ top: box.current.scrollHeight });
-  });
-
-  // Content can also grow without a render of ours (a code block's font loading, the window narrowing, an editor
-  // growing as you type in it, which is why the same exception applies).
+  // Content grows and shrinks under a still box (a reply streaming in off the bottom, the window narrowing).
   useEffect(() => {
     const el = box.current;
     const inner = el?.firstElementChild;
     if (!el || !inner) return;
-    const ro = new ResizeObserver(() => stuck.current && !typingIn(el) && el.scrollTo({ top: el.scrollHeight }));
+    const ro = new ResizeObserver(measure);
     ro.observe(inner);
+    ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [measure]);
 
   const onScroll = () => {
     const el = box.current;
     if (!el) return;
-    if (jumping.current) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_PX;
-    stuck.current = atBottom;
-    setAway(!atBottom);
+    measure();
     if (landed) {
       const at = whereIs(el, landed.messageId);
       if (at === "in view") setLanded(null);
@@ -179,7 +147,6 @@ export function Scrollback({
             empty
           ) : (
             <GalleryContext value={gallery}>
-              <ScrollPin value={pin}>
                 <ol className="space-y-7">
                   {conv.messages.map((m) => (
                     <li key={m.id} id={m.id}>
@@ -219,7 +186,6 @@ export function Scrollback({
                     </li>
                   )}
                 </ol>
-              </ScrollPin>
             </GalleryContext>
           )}
         </div>
@@ -253,7 +219,7 @@ export function Scrollback({
         {away && (
           <button
             type="button"
-            onClick={() => toBottom(true)}
+            onClick={toBottom}
             aria-label="Latest"
             title="Jump to the latest"
             className="pointer-events-auto grid size-9 shrink-0 place-items-center rounded-full border border-line-strong bg-raised/95 text-muted shadow-lg shadow-black/40 backdrop-blur transition-colors hover:text-fg"
@@ -264,15 +230,6 @@ export function Scrollback({
       </div>
     </div>
   );
-}
-
-/**
- * A text field in the scrollback has the focus (a message's editor, the steer box). The pin to the bottom then holds
- * still: following the editor's growth, or a reply below it, would move the line you are typing on (T14).
- */
-function typingIn(box: HTMLElement | null): boolean {
-  const a = document.activeElement;
-  return !!box && !!a && box.contains(a) && a.matches("textarea, input");
 }
 
 /** Where a message is, seen from the scroll box: at least partly on screen, or above or below it. */
