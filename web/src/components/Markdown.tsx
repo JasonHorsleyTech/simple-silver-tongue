@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import { isHiddenInfo } from "../api/types.ts";
 import { cx } from "../lib/cx.ts";
 import { copyText } from "../lib/clipboard.ts";
+import { rehypeQuotes } from "../lib/quotes.ts";
 import { HiddenNote } from "./HiddenNote.tsx";
 
 /**
@@ -21,11 +22,22 @@ import { HiddenNote } from "./HiddenNote.tsx";
  * Hidden notes (T08) are cut out before text gets here (features/chat/MessageText.tsx). As a backstop, a code
  * block whose language is `hidden` folds here too: the shared rule hides everything Markdown would parse as one,
  * so this should never fire, but a word of a note must never show if it does.
+ *
+ * `quotes`: wrap quoted dialogue in `.md-quote` (lib/quotes.ts), colored by the `--quote` a parent sets; "writing"
+ * while the reply streams, so its open quote is colored as it arrives.
  */
-export const Markdown = memo(function Markdown({ text, className }: { text: string; className?: string }) {
+export const Markdown = memo(function Markdown({
+  text,
+  className,
+  quotes,
+}: {
+  text: string;
+  className?: string;
+  quotes?: "done" | "writing";
+}) {
   return (
     <div className={cx("md", className)}>
-      <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={REHYPE} components={COMPONENTS}>
+      <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={quotes ? REHYPE_QUOTES[quotes] : REHYPE} components={COMPONENTS}>
         {text}
       </ReactMarkdown>
     </div>
@@ -55,7 +67,12 @@ function remarkVisibleHtml() {
 
 // remark-breaks: a single newline is a line break, as typed in the composer (and as a haiku needs).
 const REMARK = [remarkGfm, remarkBreaks, remarkVisibleHtml];
-const REHYPE = [[rehypeHighlight, { detect: false }]] as ComponentProps<typeof ReactMarkdown>["rehypePlugins"];
+type Plugins = NonNullable<ComponentProps<typeof ReactMarkdown>["rehypePlugins"]>;
+const REHYPE = [[rehypeHighlight, { detect: false }]] as Plugins;
+const REHYPE_QUOTES = {
+  done: [...REHYPE, [rehypeQuotes, { open: false }]] as Plugins,
+  writing: [...REHYPE, [rehypeQuotes, { open: true }]] as Plugins,
+};
 
 type HastNode = {
   type: string;

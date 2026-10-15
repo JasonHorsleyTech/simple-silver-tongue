@@ -312,7 +312,7 @@ export const MessageItem = memo(function MessageItem({
             {/* T15: a fresh take's thought isn't in an image prompt (that goes to the image model word for word): it is kept beside it. */}
             {v.thought !== undefined && mode !== "edit" && (
               <div key={message.activeVersion} className="mb-3">
-                <MessageText text={v.thought} />
+                <MessageText text={v.thought} color={brain?.color} />
               </div>
             )}
           <ImageBody
@@ -329,7 +329,7 @@ export const MessageItem = memo(function MessageItem({
           editor()
         ) : (
           // Keyed by version: another version's notes start folded.
-          <BrainBody key={message.activeVersion} version={v} />
+          <BrainBody key={message.activeVersion} version={v} color={brain?.color} />
         )}
       </BrainMessageFrame>
       {hintLine}
@@ -371,11 +371,11 @@ export const MessageItem = memo(function MessageItem({
 });
 
 /** A brain's text: Markdown, with its hidden notes folded. A reply that is all note is just its fold, not "No reply text". */
-function BrainBody({ version: v }: { version: MessageVersion }) {
+function BrainBody({ version: v, color }: { version: MessageVersion; color?: string }) {
   if (!v.content.trim()) return <EmptyReply version={v} />;
   return (
     <>
-      <MessageText text={v.content} />
+      <MessageText text={v.content} color={color} />
       {v.finishReason === "length" && <CutOffNote />}
     </>
   );

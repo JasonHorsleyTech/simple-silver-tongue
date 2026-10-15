@@ -99,6 +99,12 @@
   .md del {
     color: var(--color-faint);
   }
+  /* Quoted dialogue in the speaker's color (lib/quotes.ts; MessageText sets --quote). The palette is 7:1 or more
+     on the canvas as is; the floor only lifts a dark custom color to the same lightness, keeping its hue. */
+  .md .md-quote {
+    color: var(--quote);
+    color: oklch(from var(--quote) max(l, 0.7) c h);
+  }
   .md a {
     color: #a9c4f5;
     text-decoration: underline;

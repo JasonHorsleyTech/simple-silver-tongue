@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { useMemo, type CSSProperties, type ReactNode } from "react";
 import { HiddenNote } from "../../components/HiddenNote.tsx";
 import { Markdown } from "../../components/Markdown.tsx";
 import { containersOf, messageParts } from "../../lib/hiddenParts.ts";
@@ -11,16 +11,29 @@ import { containersOf, messageParts } from "../../lib/hiddenParts.ts";
  * `writing`: the reply is still streaming. Its notes can't be opened yet, and its unfinished last line waits
  * while it could still become a note's opening fence (`messageParts`). `empty` is shown while nothing is.
  *
+ * `color`: the brain's color. Quoted dialogue in the visible text shows in it (lib/quotes.ts); notes stay as they are.
+ * The player's messages have none.
+ *
  * Image prompts don't come here: they are plain captions, never folded (ImageCard).
  */
-export function MessageText({ text, writing = false, empty = null }: { text: string; writing?: boolean; empty?: ReactNode }) {
+export function MessageText({
+  text,
+  writing = false,
+  empty = null,
+  color,
+}: {
+  text: string;
+  writing?: boolean;
+  empty?: ReactNode;
+  color?: string;
+}) {
   const parts = useMemo(() => messageParts(text, { writing }), [text, writing]);
   if (parts.length === 0) return <>{empty}</>;
   return (
-    <div className="md-flow flex flex-col gap-3">
+    <div className="md-flow flex flex-col gap-3" style={color ? ({ "--quote": color } as CSSProperties) : undefined}>
       {parts.map((p, i) =>
         p.type === "text" ? (
-          <Markdown key={i} text={p.text} />
+          <Markdown key={i} text={p.text} quotes={!color ? undefined : writing && i === parts.length - 1 ? "writing" : "done"} />
         ) : (
           <InPlace key={i} prefix={p.block.prefix}>
             <HiddenNote lines={p.block.lines} label={p.block.label} writing={writing && p.block.open} locked={writing}>

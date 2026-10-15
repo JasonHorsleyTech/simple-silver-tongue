@@ -69,14 +69,14 @@ export function LiveReply({
             {/* T15: an image fresh take's thought sits above the picture, as it will once saved. */}
             {live.thought !== null && (
               <div className="mb-3">
-                <MessageText text={live.thought} />
+                <MessageText text={live.thought} color={brain?.color} />
               </div>
             )}
             <LiveImage prompt={live.content} aspect={expectedAspect(brain)} color={brain?.color} failed={failed} />
           </>
         ) : live.content ? (
           <div className={failed ? "opacity-55" : "ss-caret"}>
-            <MessageText text={live.content} writing={!failed} empty={<TypingDots />} />
+            <MessageText text={live.content} writing={!failed} empty={<TypingDots />} color={brain?.color} />
           </div>
         ) : !failed && live.phase !== "reasoning" ? (
           <TypingDots />
