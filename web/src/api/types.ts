@@ -58,6 +58,8 @@ export { buildImageRequest, DEFAULT_SHAPE, IMAGE_SHAPES, imagePriceUsd, SHAPE_SI
  * message pre-fill's default label.
  */
 export {
+  /** 2026-10-19: what reasoning off does on a model that always reasons (src/venice/curated.ts, ALWAYS_REASONS). */
+  alwaysReasonsNote,
   BRAIN_COLORS,
   DEFAULT_SETUP_LABEL,
   FRAMING_STOP,

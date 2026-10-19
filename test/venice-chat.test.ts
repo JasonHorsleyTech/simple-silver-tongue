@@ -31,6 +31,9 @@ test("sseData: events survive any chunking, CRLF, comments and split multi-byte 
 test("chunkEvents: reasoning, content on the finishing chunk, tool fragments and usage with cost", () => {
   assert.deepEqual(chunkEvents({ choices: [{ delta: { role: "assistant" }, finish_reason: null }], usage: null }), []);
   assert.deepEqual(chunkEvents({ choices: [{ delta: { reasoning_content: "hmm" } }] }), [{ type: "reasoning", delta: "hmm" }]);
+  // Abliterated Large V2 streams its reasoning as delta.reasoning (reasoning_content absent or null); never both at once.
+  assert.deepEqual(chunkEvents({ choices: [{ delta: { reasoning: "hm", reasoning_content: null } }] }), [{ type: "reasoning", delta: "hm" }]);
+  assert.deepEqual(chunkEvents({ choices: [{ delta: { reasoning: "hm", reasoning_content: "hm" } }] }), [{ type: "reasoning", delta: "hm" }]);
   // Live Venice puts the last words in the same chunk as finish_reason when max_tokens cuts the reply.
   assert.deepEqual(chunkEvents({ choices: [{ delta: { content: "end" }, finish_reason: "length" }] }), [
     { type: "content", delta: "end" },

@@ -1,7 +1,8 @@
 /**
  * The models the pickers offer: Jason's picks (2026-10-14) from Venice's ~130 text and ~45 image models.
  * Private only (Venice keeps no data), one per family (its newest or best), plus an uncensored twin where
- * there is one. Left out on purpose: anonymized models (proxied to OpenAI, Anthropic, Google, ...), the e2ee-*
+ * there is one (one anonymized exception, Jason's pick: Abliterated Large V2, GLM 5.3's uncensored twin). Left out
+ * on purpose: anonymized models (proxied to OpenAI, Anthropic, Google, ...), the e2ee-*
  * models (they need client-side encryption and can't call tools), models being retired, and text models that
  * can't call tools (an image brain needs one). models.list shows these, in this order; `models.list --all`
  * shows everything Venice has, and conversation.update still takes any Venice model by id.
@@ -21,11 +22,17 @@ export const CURATED_TEXT: readonly string[] = [
   "kimi-k2-5",
   "qwen-3-8-2-4t-a95b",
   "qwen-3-8-27b", // uncensored
-  // GLM (z-ai-glm-5-3, olafangensan-glm-4.7-flash-heretic) is parked until we look into it (T15, 2026-10-15). GLM 5.3
-  // is thinking-only: with reasoning off (every brain starts so) Venice answers 400 "GLM-5.3 is a thinking-only
-  // model; disabling thinking (reasoning_effort='none') is not supported". With thinking on, a request ending on
-  // its own message leaked </think> into the reply once and came back empty once. Still usable by id
-  // (models.list --all, conversation.update --settings.text-model).
+  // GLM 5.3 and its uncensored twin (2026-10-19, back from T15's parking, so Jason can compare them in play). Both
+  // always reason (ALWAYS_REASONS below): give their brains reasoning on. T15's failures (</think> in the reply
+  // once, empty once) came from a request ending on the brain's own words, which T17 removed. Live with reasoning on
+  // (docs/design.md, "Models"), both clean: a GM turn, an image brain's forced tool call, a hidden note; GLM 5.3 a
+  // T17 fresh take too. At their default depth a long task can think for 10k+ tokens. The 4.7 heretic stays out.
+  "z-ai-glm-5-3",
+  // Uncensored, and the one exception to "private only", at Jason's request (2026-10-19): its privacy is
+  // "anonymized", Venice proxies it to Abliteration AI. GLM 5.3 abliterated and fine-tuned. Its reasoning streams
+  // as delta.reasoning, not reasoning_content (chunkEvents reads either); it counted the same prompt tokens as GLM 5.3
+  // for the same body, so its proxy adds no system prompt.
+  "abliteration-abliterated-model-large-v2",
   "minimax-m3-preview",
   "venice-uncensored-1-2",
   "venice-uncensored-role-play",
@@ -35,6 +42,20 @@ export const CURATED_TEXT: readonly string[] = [
   "llama-3.3-70b",
   "inkling",
 ];
+
+/**
+ * Text models that reason whatever a brain's Reasoning switch says, and what reasoning off does to them, measured
+ * live (2026-10-19). Venice's capabilities can't tell (both say supportsReasoning, supportsReasoningEffort: false),
+ * so the payload view and the brain editor learn it here (ModelInfo.reasoning.always). Nothing sent changes.
+ * - "refused": Venice answers 400 (GLM 5.3: "a thinking-only model; disabling thinking (reasoning_effort='none') is
+ *   not supported").
+ * - "ignored": Venice takes disable_thinking and the model reasons anyway (Abliterated Large V2: a one-word answer
+ *   came with 20 reasoning tokens).
+ */
+export const ALWAYS_REASONS: Readonly<Record<string, "refused" | "ignored">> = {
+  "z-ai-glm-5-3": "refused",
+  "abliteration-abliterated-model-large-v2": "ignored",
+};
 
 export const CURATED_IMAGE: readonly string[] = [
   "z-image-turbo", // the default

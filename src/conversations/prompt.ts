@@ -8,7 +8,10 @@ import type { Brain, ChatMessage, ChatRequest, Conversation, LedgerMessage, PinR
  */
 
 /** What buildRequest needs to know about settings.textModel (from GET /models). null: unknown, so no reasoning params. */
-export type ModelCaps = { reasoning?: { supported: boolean; effortOptions: string[] | null } } | null;
+export type ModelCaps = {
+  name?: string;
+  reasoning?: { supported: boolean; effortOptions: string[] | null; always?: "refused" | "ignored" };
+} | null;
 
 export type BuildOptions = {
   model: ModelCaps;

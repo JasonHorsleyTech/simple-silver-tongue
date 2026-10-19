@@ -9,7 +9,7 @@ import { newMuse } from "./defaults.ts";
 import { nextMadeName } from "./makers.ts";
 import { partialPrompt, type ToolCallParts } from "./tool-call.ts";
 import { findHidden, isAllHidden } from "./hidden.ts";
-import { freshTakeNote, isMuse, makesNote, MUSE_NAME, museMakesNote, PIN_AS_WORDS, pinnedNote, ROLL_PREVIEW_NOTE, STOP_REASONING_NOTE, stopNote } from "./wording.ts";
+import { alwaysReasonsNote, freshTakeNote, isMuse, makesNote, MUSE_NAME, museMakesNote, PIN_AS_WORDS, pinnedNote, ROLL_PREVIEW_NOTE, STOP_REASONING_NOTE, stopNote } from "./wording.ts";
 import type { Brain, ChatRequest, Conversation, LedgerMessage, MessageVersion, Roll, Usage } from "./types.ts";
 
 /**
@@ -267,6 +267,8 @@ export function reviewBody(
   const refusal = nothingToAnswer(body, brain.name);
   const lastPin = endsOnPin(body, pins.pinned);
   if (refusal) review.refusal = lastPin ? pinnedLastRefusal(brain.name, lastPin) : refusal;
+  const always = model?.reasoning?.supported ? model.reasoning.always : undefined;
+  if (always && !brain.reasoning.enabled) review.notes.push(alwaysReasonsNote(model?.name ?? body.model, always, brain.name));
   if (reasoningOn(brain, model)) review.notes.push(REASONING_NOTE);
   if (body.stop?.length) review.notes.push(stopNote(body.stop));
   if (body.stop?.length && reasoningOn(brain, model)) review.notes.push(STOP_REASONING_NOTE);

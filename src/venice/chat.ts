@@ -160,6 +160,8 @@ type Chunk = {
     delta?: {
       content?: unknown;
       reasoning_content?: unknown;
+      /** Some models' reasoning comes here instead (Abliterated Large V2, live 2026-10-19), reasoning_content null. */
+      reasoning?: unknown;
       tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }>;
     };
     finish_reason?: string | null;
@@ -188,7 +190,9 @@ export function chunkEvents(raw: unknown): ChatEvent[] {
   const choice = chunk.choices?.[0];
   if (choice) {
     const d = choice.delta ?? {};
-    if (typeof d.reasoning_content === "string" && d.reasoning_content) out.push({ type: "reasoning", delta: d.reasoning_content });
+    // reasoning_content first; `reasoning` only when it is absent, so a provider that sent both can't double it.
+    const reasoning = typeof d.reasoning_content === "string" && d.reasoning_content ? d.reasoning_content : typeof d.reasoning === "string" ? d.reasoning : "";
+    if (reasoning) out.push({ type: "reasoning", delta: reasoning });
     if (typeof d.content === "string" && d.content) out.push({ type: "content", delta: d.content });
     for (const tc of d.tool_calls ?? []) {
       const ev: ChatEvent = { type: "tool_call", index: tc.index ?? 0, argsDelta: tc.function?.arguments ?? "" };

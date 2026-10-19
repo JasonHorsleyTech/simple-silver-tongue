@@ -70,7 +70,7 @@ export function ConversationTab({
             m.price,
             m.privacy,
             m.contextLength ? `${m.contextLength >= 1e6 ? `${Number((m.contextLength / 1e6).toFixed(1))}M` : compactNumber(m.contextLength)} context` : null,
-            m.reasoning?.supported ? (m.reasoning.effortOptions ? `reasoning: ${m.reasoning.effortOptions.join(", ")}` : "reasons") : "no reasoning",
+            m.reasoning?.supported ? (m.reasoning.effortOptions ? `reasoning: ${m.reasoning.effortOptions.join(", ")}` : m.reasoning.always ? "always reasons" : "reasons") : "no reasoning",
           ]
             .filter(Boolean)
             .join(" · ")

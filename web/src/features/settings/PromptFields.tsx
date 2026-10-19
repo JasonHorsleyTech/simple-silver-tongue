@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { DEFAULT_SHAPE, REASONING_NOTE, STOP_REASONING_NOTE, type Brain, type BrainFields, type ModelInfo } from "../../api/types.ts";
+import { alwaysReasonsNote, DEFAULT_SHAPE, REASONING_NOTE, STOP_REASONING_NOTE, type Brain, type BrainFields, type ModelInfo } from "../../api/types.ts";
 import { Notice } from "../../components/Notice.tsx";
 import { SavedLine } from "../../components/SavedLine.tsx";
 import { SavedText } from "../../components/SavedText.tsx";
@@ -87,6 +87,9 @@ export function PromptFields({
           busy={busy === "reasoning"}
           onChange={(enabled) => void save({ reasoning: { enabled } }, "reasoning")}
         />
+        {!value.reasoning.enabled && canReason && r?.always && model && (
+          <Notice tone="warn">{alwaysReasonsNote(model.name, r.always, blueprint ? "each new brain" : name)}</Notice>
+        )}
         {value.reasoning.enabled && canReason && (
           <>
             {effortChoices.length > 0 && (

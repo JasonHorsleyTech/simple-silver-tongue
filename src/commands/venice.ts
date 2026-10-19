@@ -10,7 +10,7 @@ type ModelsResult = { models: ModelInfo[]; defaults: { text: string; image: stri
 
 function textRow(m: ModelInfo) {
   const r = m.reasoning;
-  const reasoning = !r?.supported ? "-" : r.effortOptions ? r.effortOptions.join("/") : "on";
+  const reasoning = !r?.supported ? "-" : r.effortOptions ? r.effortOptions.join("/") : r.always ? "always" : "on";
   return [mark(m), m.name, m.privacy, m.price, reasoning, m.contextLength ? (m.contextLength >= 1e6 ? `${m.contextLength / 1e6}M` : `${Math.round(m.contextLength / 1000)}k`) : ""];
 }
 
@@ -32,9 +32,9 @@ const mark = (m: ModelInfo) =>
 export const modelsList = command({
   name: "models.list",
   description: `List the Venice text and image models the pickers offer, with price and privacy (cached ~10 minutes).
-That is a curated few (src/venice/curated.ts): private, one per family. --all lists every model Venice has, and
-conversation.update takes any of them by id. "private" models keep no data; "anonymized" ones are proxied to a
-third party. * marks the app default.`,
+That is a curated few (src/venice/curated.ts): private (one anonymized exception), one per family. --all lists
+every model Venice has, and conversation.update takes any of them by id. "private" models keep no data;
+"anonymized" ones are proxied to a third party. * marks the app default.`,
   auth: false,
   args: z.object({
     type: z.enum(["text", "image"]).optional().describe("Only this type (default: both)"),

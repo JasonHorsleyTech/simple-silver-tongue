@@ -69,6 +69,19 @@ export const stopNote = (stops: readonly string[]) =>
 export const STOP_REASONING_NOTE =
   "Reasoning is on, and Venice applies stop sequences to the reasoning too: if this brain thinks about a framing line, its reply ends right there, with no text. Turn reasoning off, or clear its stop sequences, if that happens.";
 
+/**
+ * 2026-10-19: a model that reasons whatever a brain's switch says (src/venice/curated.ts, ALWAYS_REASONS), for a brain
+ * whose reasoning is off. The payload view and the brain editor say what Venice then does; nothing sent changes.
+ */
+export const alwaysReasonsNote = (model: string, how: "refused" | "ignored", brain: string) =>
+  how === "refused"
+    ? `${model} always reasons: Venice refuses a request with reasoning off (a 400, "thinking-only"). Turn reasoning on for ${brain}.`
+    : `${model} always reasons, even with reasoning off: Venice takes disable_thinking and the model reasons anyway (shown above its reply, and cut by stop sequences like any reasoning). Turning reasoning on for ${brain} only stops sending disable_thinking.`;
+
+/** Added to Venice's own 400 when it refuses reasoning off for a thinking-only model (GLM 5.3), so the fix is in the error. */
+export const reasoningRefusedHint = (brain: string) =>
+  `Turn reasoning on for ${brain}: the Reasoning switch in its settings, or ./ss brain.update --brain "${brain}" --reasoning.enabled.`;
+
 /** Image brains' tool text (T05 sends it). All of it reaches the model, and all of it is editable per brain. */
 export const DEFAULT_TOOL = {
   name: "generate_image",

@@ -28,7 +28,7 @@ import {
   type Reply,
 } from "../conversations/turn.ts";
 import type { Brain, ChatRequest, Conversation, LedgerMessage, MessageVersion, RetryRequest, Usage } from "../conversations/types.ts";
-import { IMAGE_STOP_NOTE, isMuse, MUSE_NAME, STOP_BILL_NOTE } from "../conversations/wording.ts";
+import { IMAGE_STOP_NOTE, isMuse, MUSE_NAME, reasoningRefusedHint, STOP_BILL_NOTE } from "../conversations/wording.ts";
 import { badRequest, CommandError, notFound } from "../lib/errors.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { activeVersion } from "../conversations/prompt.ts";
@@ -185,7 +185,7 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
   // An image brain's image model is checked now, before its prompt is asked for (and paid for).
   const painter = plan.brain.kind === "image" ? await painterFor(ctx.deps.venice, conv, plan.brain) : null;
   // Up-front refusals (no balance, bad model) throw here, before anything is saved.
-  const upstream = await openUpstream(ctx, conv.id, plan.body, gen, "Stopped before the reply started. Nothing was saved.");
+  const upstream = await openUpstream(ctx, conv.id, plan.body, plan.brain.name, gen, "Stopped before the reply started. Nothing was saved.");
 
   // Your message, then your roll (T09), saved together; each is a `message` event, so a client shows the roll
   // before the reply starts streaming.
@@ -286,7 +286,7 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
   const painter = plan.brain.kind === "image" ? await painterFor(ctx.deps.venice, conv, plan.brain) : null;
   const id = plan.message.id;
   const keeps = `${id} keeps its current version.`;
-  const upstream = await openUpstream(ctx, conv.id, plan.body, gen, `Stopped before the new version started. ${keeps}`);
+  const upstream = await openUpstream(ctx, conv.id, plan.body, plan.brain.name, gen, `Stopped before the new version started. ${keeps}`);
 
   // T17: a fresh take's note, saved now that Venice has the request (as a turn's message is), right before the message.
   let noteSaved: LedgerMessage | null = null;
@@ -467,10 +467,12 @@ async function* imageTail(ctx: Ctx, s: ImageStarted): AsyncGenerator<StreamEvent
  * A stop that lands before Venice answers says what it left behind; the request itself goes on to a drain,
  * since Venice may well be writing (and billing) it already. A stop before anything was sent sends nothing.
  */
-async function openUpstream(ctx: Ctx, convId: string, body: ChatRequest, gen: GenerationHandle, stoppedText: string) {
+async function openUpstream(ctx: Ctx, convId: string, body: ChatRequest, brain: string, gen: GenerationHandle, stoppedText: string) {
   if (gen.stopSignal.aborted) throw stopped(stoppedText);
   const { vault } = ctx.requireSession();
-  const pending = openChatStream(ctx.deps.venice, body, { signal: gen.upstreamSignal });
+  const pending = openChatStream(ctx.deps.venice, body, { signal: gen.upstreamSignal }).catch((err: unknown) => {
+    throw withReasoningHint(err, body, brain);
+  });
   const events = await Promise.race([pending, untilAborted(gen.stopSignal).then(() => null)]);
   if (events) return events;
   gen.keepUpstream();
@@ -479,6 +481,18 @@ async function openUpstream(ctx: Ctx, convId: string, body: ChatRequest, gen: Ge
 }
 
 const stopped = (message: string) => new CommandError(499, "stopped", message);
+
+/**
+ * Venice refuses reasoning off for a thinking-only model (GLM 5.3: 400 "GLM-5.3 is a thinking-only model; disabling
+ * thinking (reasoning_effort='none') is not supported"). Its words stay; ours add which switch to flip.
+ */
+function withReasoningHint(err: unknown, body: ChatRequest, brain: string): unknown {
+  const off = body.venice_parameters.disable_thinking === true || body.reasoning_effort === "none";
+  const status = (err as CommandError)?.details as { status?: unknown } | undefined;
+  if (!off || !(err instanceof CommandError) || err.code !== "venice_error" || status?.status !== 400) return err;
+  if (!/thinking[- ]only|disabling thinking/i.test(err.message)) return err;
+  return new CommandError(err.status, err.code, `${err.message} ${reasoningRefusedHint(brain)}`, err.details);
+}
 
 /** The same words wherever a stop is reported; the browser shows them next to its Stop button too. */
 export { STOP_BILL_NOTE };

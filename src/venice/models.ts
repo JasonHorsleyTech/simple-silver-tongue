@@ -1,3 +1,5 @@
+import { ALWAYS_REASONS } from "./curated.ts";
+
 /** Normalized view of Venice's GET /models entries: what the pickers and later tickets need. */
 export type ModelType = "text" | "image";
 
@@ -15,7 +17,13 @@ export type ModelInfo = {
   // text models
   contextLength?: number;
   maxCompletionTokens?: number;
-  reasoning?: { supported: boolean; effortOptions: string[] | null; defaultEffort: string | null };
+  reasoning?: {
+    supported: boolean;
+    effortOptions: string[] | null;
+    defaultEffort: string | null;
+    /** It reasons whatever the brain's switch says, and what reasoning off does to it (curated.ts, ALWAYS_REASONS). */
+    always?: "refused" | "ignored";
+  };
   functionCalling?: boolean;
   vision?: boolean;
   // image models: raw constraints (widthHeightDivisor, resolutions, aspectRatios, steps, promptCharacterLimit, ...)
@@ -67,6 +75,8 @@ export function normalizeModel(raw: RawModel): ModelInfo | null {
           : null,
       defaultEffort: typeof caps.defaultReasoningEffort === "string" ? caps.defaultReasoningEffort : null,
     };
+    const always = Object.hasOwn(ALWAYS_REASONS, raw.id) ? ALWAYS_REASONS[raw.id] : undefined;
+    if (always && m.reasoning.supported) m.reasoning.always = always;
     m.functionCalling = caps.supportsFunctionCalling === true;
     m.vision = caps.supportsVision === true;
   } else {

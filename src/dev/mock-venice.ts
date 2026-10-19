@@ -126,7 +126,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     messages?: Msg[];
     stream?: boolean;
     stream_options?: { include_usage?: boolean };
-    venice_parameters?: { include_venice_system_prompt?: boolean };
+    venice_parameters?: { include_venice_system_prompt?: boolean; disable_thinking?: boolean };
     reasoning_effort?: string;
     max_tokens?: number;
     stop?: string | string[];
@@ -158,8 +158,16 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     const brain = system ? excerpt(contentText(system), 30) : "(no system prompt)";
 
     const effort = body.reasoning_effort;
+    // Live (2026-10-19): GLM 5.3 refuses reasoning off, and Abliterated Large V2 takes it and reasons anyway, its
+    // reasoning streamed as `reasoning` rather than `reasoning_content` (src/venice/curated.ts, ALWAYS_REASONS).
+    const off = effort === "none" || body.venice_parameters?.disable_thinking === true;
+    if (off && model.id === "z-ai-glm-5-3") {
+      return json(res, 400, { error: "GLM-5.3 is a thinking-only model; disabling thinking (reasoning_effort='none') is not supported." });
+    }
+    const reasonsAnyway = model.id === "abliteration-abliterated-model-large-v2";
+    const reasoningKey = reasonsAnyway ? "reasoning" : "reasoning_content";
     const fullReasoning =
-      caps.supportsReasoning && effort !== "none"
+      caps.supportsReasoning && (reasonsAnyway || !off)
         ? `MOCK reasoning (effort: ${effort ?? caps.defaultReasoningEffort ?? "default"}) over ${messages.length} messages.`
         : "";
 
@@ -238,7 +246,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
 
     if (!body.stream) {
       const message: Record<string, unknown> = { role: "assistant", content: toolName ? null : content };
-      if (reasoning) message.reasoning_content = reasoning;
+      if (reasoning) message[reasoningKey] = reasoning;
       if (toolName) message.tool_calls = [{ id: callId, type: "function", function: { name: toolName, arguments: toolArgs } }];
       return json(res, 200, {
         id,
@@ -256,7 +264,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
       ({ id, object: "chat.completion.chunk", created, model: model.id, choices: [{ index: 0, delta, finish_reason }], usage: null });
     // Live sends content: "" in the role chunk for models without reasoning.
     const deltas: unknown[] = [chunk(caps.supportsReasoning ? { role: "assistant" } : { role: "assistant", content: "" })];
-    for (const w of reasoningWords) deltas.push(chunk({ reasoning_content: w }));
+    for (const w of reasoningWords) deltas.push(chunk({ [reasoningKey]: w }));
     if (toolName) {
       deltas.push(chunk({ tool_calls: [{ index: 0, id: callId, type: "function", function: { name: toolName, arguments: "" } }] }));
       const first = argPieces;
