@@ -18,6 +18,7 @@ import { MOCK_MODELS } from "./mock-models.ts";
  *
  * Triggers inside the last message (chat) or the prompt (image):
  *   MOCK_ERROR            → HTTP error before anything streams
+ *   MOCK_ECHO_ERROR       → a 400 whose error quotes the last message, as a validation error may (the log masks it)
  *   MOCK_SLOW             → much slower stream / image (handy for 409 and stop tests)
  *   MOCK_MIDSTREAM_ERROR  → the connection drops halfway through the stream
  *   MOCK_MARKDOWN         → the echo line, then a long Markdown reply (code, a table, quotes, lists; mock-markdown.ts)
@@ -135,6 +136,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
   };
 
   async function chat(res: ServerResponse, body: ChatBody, n: number) {
+    res.setHeader("x-request-id", `mock-req-${n}`); // like a live request id, for a failure's diagnostics to quote
     if (body?.venice_parameters?.include_venice_system_prompt !== false) {
       return json(res, 400, {
         error: "mock: venice_parameters.include_venice_system_prompt must be false (hard rule: no hidden text)",
@@ -152,6 +154,9 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     }
     const lastText = contentText(messages.at(-1));
     if (lastText.includes("MOCK_ERROR")) return json(res, 500, { error: "mock: forced error (MOCK_ERROR)" });
+    if (lastText.includes("MOCK_ECHO_ERROR")) {
+      return json(res, 400, { error: { message: `Invalid request: messages.${messages.length - 1}.content: input_value='${lastText.slice(0, 200)}' was refused`, type: "BadRequestError" } });
+    }
     const stepMs = lastText.includes("MOCK_SLOW") ? slowDelayMs : delayMs;
     const caps = model.model_spec.capabilities ?? {};
     const system = messages.find((m) => m.role === "system");

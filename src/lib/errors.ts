@@ -3,6 +3,12 @@ export class CommandError extends Error {
   status: number;
   code: string;
   details?: unknown;
+  /**
+   * For the server log only (app.ts, logFailure): a record of the failure that names nothing and holds no word of
+   * any conversation (a failed chat request's diagnostics, diagnose.ts forLog). Never sent to a client; code that
+   * re-throws a CommandError with new words must carry it over.
+   */
+  log?: string;
 
   constructor(status: number, code: string, message: string, details?: unknown) {
     super(message);

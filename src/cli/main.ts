@@ -7,6 +7,7 @@ import { DEFAULT_PORT, ROOT } from "../config.ts";
 import { createHiddenFolder, foldHidden, hiddenMarker, hiddenSummary, isAllHidden, revealHint, type HiddenBlock } from "../conversations/hidden.ts";
 import { rollLabel } from "../conversations/wording.ts";
 import { renderCommandHelp, renderCommandList } from "../lib/help-text.ts";
+import { formatDiagnostics, type ChatDiagnostics } from "../venice/diagnose.ts";
 import type { CommandInfo, JsonSchema } from "../registry.ts";
 import { parseFlags, splitArgv, UsageError } from "./args.ts";
 import { promptHidden, readAllStdin } from "./prompt.ts";
@@ -119,7 +120,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       if (why && (stale === "invalid" || (res.ok && name !== "auth.login"))) err(dim(`(${yours} ${why})`));
     }
     if (!res.ok) {
-      const code = await printError(res, saved, err, stale);
+      const code = await printError(res, saved, err, stale, { json: global.json, stdout: io.stdout, dim });
       if (usedEnv && res.status === 404) err(dim(`(The conversation id came from SS_CONVERSATION=${fromEnv}: export another one, or pass --${envKey === "id" ? "id" : "conversation"}.)`));
       return code;
     }
@@ -237,20 +238,44 @@ const STALE_SESSION: Record<string, string> = {
   deleted: "ended: this user was deleted.",
 };
 
-async function printError(res: Response, saved: SavedSession | null, err: (s: string) => void, stale: string | null): Promise<number> {
+async function printError(
+  res: Response,
+  saved: SavedSession | null,
+  err: (s: string) => void,
+  stale: string | null,
+  out: { json: boolean; stdout: Io["stdout"]; dim: (s: string) => string },
+): Promise<number> {
   let message = `HTTP ${res.status}`;
   let code = "";
+  let diagnostics: string | null = null;
   try {
-    const body = (await res.json()) as { error?: { code?: string; message?: string } };
+    const body = (await res.json()) as { error?: { code?: string; message?: string; details?: unknown } };
     message = body.error?.message ?? message;
     code = body.error?.code ?? "";
+    diagnostics = diagnosticsText(body.error?.details);
+    if (out.json) out.stdout.write(`${JSON.stringify(body, null, 2)}\n`); // --json: the error as the server sent it
   } catch {
     /* not JSON */
   }
   err(`error: ${message}`);
+  if (diagnostics && !out.json) err(out.dim(`\n${diagnostics}`));
   const loggedOut = code === "unauthenticated" || code === "session_expired" || (code === "session_ended" && stale !== null);
   if (loggedOut && stale !== "deleted" && saved?.username) err(`Log in again: ./ss auth.login --username ${saved.username}`);
   return EXIT.failed;
+}
+
+/**
+ * A failed chat request's diagnostics (details.diagnostics, diagnose.ts) as the readable block printed under the
+ * error, or null when the error has none. --json prints them as data instead, in the error itself.
+ */
+function diagnosticsText(details: unknown): string | null {
+  const d = (details as { diagnostics?: ChatDiagnostics } | undefined)?.diagnostics;
+  if (!d || typeof d !== "object" || !d.request) return null;
+  try {
+    return formatDiagnostics(d);
+  } catch {
+    return null; // a shape from another version of the server: the error line still says what failed
+  }
 }
 
 /** What a stream prints in place of a brain's reasoning, unless --reveal. */
@@ -409,10 +434,13 @@ ${foldHidden(text).text}
         sayMade();
         break;
       }
-      case "error":
+      case "error": {
         endText();
         errOut(`\nerror: ${ev.error?.message ?? JSON.stringify(ev.error)}\n`);
+        const block = diagnosticsText(ev.error?.details);
+        if (block) errOut(dim(`\n${block}\n`));
         break;
+      }
     }
   };
   try {

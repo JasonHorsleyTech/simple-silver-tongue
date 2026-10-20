@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { formatPreview, type Preview } from "../conversations/format.ts";
 import {
@@ -35,7 +36,8 @@ import { activeVersion } from "../conversations/prompt.ts";
 import { command, streamCommand, type Ctx, type StreamEvent } from "../registry.ts";
 import { closeVault, forkVault, type Vault } from "../storage/vault.ts";
 import { openChatStream, type ChatEvent } from "../venice/chat.ts";
-import { usd } from "../venice/models.ts";
+import { formatDiagnostics, forLog, forUser, type ChatDiagnostics, type LastWorked } from "../venice/diagnose.ts";
+import { usd, type ModelInfo } from "../venice/models.ts";
 import { brainRef } from "./brains.ts";
 import { conversationId } from "./conversations.ts";
 import { messageId } from "./messages.ts";
@@ -185,7 +187,7 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
   // An image brain's image model is checked now, before its prompt is asked for (and paid for).
   const painter = plan.brain.kind === "image" ? await painterFor(ctx.deps.venice, conv, plan.brain) : null;
   // Up-front refusals (no balance, bad model) throw here, before anything is saved.
-  const upstream = await openUpstream(ctx, conv.id, plan.body, plan.brain.name, gen, "Stopped before the reply started. Nothing was saved.");
+  const upstream = await openUpstream(ctx, { conv, body: plan.body, brain: plan.brain, model }, gen, "Stopped before the reply started. Nothing was saved.");
 
   // Your message, then your roll (T09), saved together; each is a `message` event, so a client shows the roll
   // before the reply starts streaming.
@@ -286,7 +288,7 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
   const painter = plan.brain.kind === "image" ? await painterFor(ctx.deps.venice, conv, plan.brain) : null;
   const id = plan.message.id;
   const keeps = `${id} keeps its current version.`;
-  const upstream = await openUpstream(ctx, conv.id, plan.body, plan.brain.name, gen, `Stopped before the new version started. ${keeps}`);
+  const upstream = await openUpstream(ctx, { conv, body: plan.body, brain: plan.brain, model }, gen, `Stopped before the new version started. ${keeps}`);
 
   // T17: a fresh take's note, saved now that Venice has the request (as a turn's message is), right before the message.
   let noteSaved: LedgerMessage | null = null;
@@ -462,23 +464,82 @@ async function* imageTail(ctx: Ctx, s: ImageStarted): AsyncGenerator<StreamEvent
   yield { type: "done", message, note: img ? `${s.note} · ${imageNote(img)}` : s.note, spentUsd: Math.max(spentUsd, s.spentUsd) };
 }
 
+/** What a request is for: the conversation as planned, the body sent, who answers and the model's capabilities. */
+type Upstream = { conv: Conversation; body: ChatRequest; brain: Brain; model: ModelInfo };
+
 /**
  * Open the Venice stream and wait for its headers, so an up-front refusal throws before anything is saved.
  * A stop that lands before Venice answers says what it left behind; the request itself goes on to a drain,
  * since Venice may well be writing (and billing) it already. A stop before anything was sent sends nothing.
+ * A failure, up front or mid-stream, comes out explained (explainFailure).
  */
-async function openUpstream(ctx: Ctx, convId: string, body: ChatRequest, brain: string, gen: GenerationHandle, stoppedText: string) {
+async function openUpstream(ctx: Ctx, up: Upstream, gen: GenerationHandle, stoppedText: string) {
   if (gen.stopSignal.aborted) throw stopped(stoppedText);
   const { vault } = ctx.requireSession();
-  const pending = openChatStream(ctx.deps.venice, body, { signal: gen.upstreamSignal }).catch((err: unknown) => {
-    throw withReasoningHint(err, body, brain);
+  const explain = (err: unknown) => explainFailure(err, up, ctx);
+  const pending = openChatStream(ctx.deps.venice, up.body, { signal: gen.upstreamSignal }).catch((err: unknown) => {
+    throw explain(withReasoningHint(err, up.body, up.brain.name));
   });
   const events = await Promise.race([pending, untilAborted(gen.stopSignal).then(() => null)]);
-  if (events) return events;
+  if (events) return explained(events, explain);
   gen.keepUpstream();
-  drainStopped(vault, convId, pending, null);
+  drainStopped(vault, up.conv.id, pending, null);
   throw stopped(stoppedText);
 }
+
+/** The stream as is, with a failure explained on its way out. */
+async function* explained(events: AsyncGenerator<ChatEvent>, explain: (err: unknown) => unknown): AsyncGenerator<ChatEvent> {
+  try {
+    yield* events;
+  } catch (err) {
+    throw explain(err);
+  }
+}
+
+/**
+ * A failed chat request's diagnostics (diagnose.ts), in two views. The user's goes in the error's
+ * `details.diagnostics`: who each message is from, the brain asked, Venice's whole answer. The log's goes in
+ * `log` (CommandError), which the server log prints and no client ever sees: ids only (the user as a pseudonym),
+ * the request described afresh from the body, and Venice's words masked wherever they repeat the request. Both get
+ * the model's limits and the newest reply in this conversation that worked, for scale.
+ */
+function explainFailure(err: unknown, up: Upstream, ctx: Ctx): unknown {
+  if (!(err instanceof CommandError)) return err;
+  const details = (err.details && typeof err.details === "object" ? err.details : {}) as { diagnostics?: ChatDiagnostics };
+  if (!details.diagnostics) return err;
+  const core: ChatDiagnostics = { ...details.diagnostics };
+  const limits = { contextLength: up.model.contextLength, maxCompletionTokens: up.model.maxCompletionTokens, alwaysReasons: up.model.reasoning?.always };
+  const model = Object.fromEntries(Object.entries(limits).filter(([, v]) => v !== undefined)) as ChatDiagnostics["model"];
+  if (model && Object.keys(model).length) core.model = model;
+  const last = lastWorked(up.conv);
+  if (last) core.lastWorked = last;
+  const session = ctx.requireSession();
+  const ids = { conversation: up.conv.id, brain: up.brain.id, user: userPseudonym(session.username), encrypted: session.encrypted };
+  const out = new CommandError(err.status, err.code, err.message, { ...details, diagnostics: forUser(core, up.body, up.brain.name) });
+  out.log = formatDiagnostics(forLog(core, up.body, ids));
+  return out;
+}
+
+/** The newest reply in the conversation with Venice's token count: what a request that worked measured. */
+function lastWorked(conv: Conversation): LastWorked | undefined {
+  for (let i = conv.messages.length - 1; i >= 0; i--) {
+    const m = conv.messages[i]!;
+    const v = [...m.versions].reverse().find((x) => x.usage);
+    if (!v?.usage) continue;
+    const w: LastWorked = { messageId: m.id, messagesAgo: conv.messages.length - 1 - i, at: v.createdAt, promptTokens: v.usage.promptTokens, completionTokens: v.usage.completionTokens };
+    if (v.model) w.model = v.model;
+    if (v.usage.reasoningTokens) w.reasoningTokens = v.usage.reasoningTokens;
+    return w;
+  }
+  return undefined;
+}
+
+/**
+ * The user in the log: "u_" and the first 10 hex digits of the username's SHA-256, so the log names nobody, yet
+ * tells one user's failures from another's (printf %s <name> | shasum -a 256 | cut -c1-10). The conversation id
+ * finds the user's folder anyway.
+ */
+export const userPseudonym = (username: string) => `u_${createHash("sha256").update(username).digest("hex").slice(0, 10)}`;
 
 const stopped = (message: string) => new CommandError(499, "stopped", message);
 
@@ -491,7 +552,9 @@ function withReasoningHint(err: unknown, body: ChatRequest, brain: string): unkn
   const status = (err as CommandError)?.details as { status?: unknown } | undefined;
   if (!off || !(err instanceof CommandError) || err.code !== "venice_error" || status?.status !== 400) return err;
   if (!/thinking[- ]only|disabling thinking/i.test(err.message)) return err;
-  return new CommandError(err.status, err.code, `${err.message} ${reasoningRefusedHint(brain)}`, err.details);
+  const out = new CommandError(err.status, err.code, `${err.message} ${reasoningRefusedHint(brain)}`, err.details);
+  out.log = err.log;
+  return out;
 }
 
 /** The same words wherever a stop is reported; the browser shows them next to its Stop button too. */
@@ -517,7 +580,9 @@ async function* collectReply(
   } catch (err) {
     if (err instanceof CommandError && err.code === "venice_error") {
       const details = { ...(err.details && typeof err.details === "object" ? err.details : {}), retry: say.again };
-      throw new CommandError(err.status, err.code, `${err.message} ${say.kept} ${say.retry}`, details);
+      const out = new CommandError(err.status, err.code, `${err.message} ${say.kept} ${say.retry}`, details);
+      out.log = err.log; // the failure's record for the server log (explainFailure)
+      throw out;
     }
     throw err;
   }

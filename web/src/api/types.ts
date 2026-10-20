@@ -101,6 +101,13 @@ export {
 } from "../../../src/conversations/hidden.ts";
 
 /**
+ * 2026-10-20: a failed chat request's diagnostics (`details.diagnostics` on a venice_error from turn or
+ * message.regenerate): everything about the request but its words. `formatDiagnostics` is the block the CLI prints
+ * under the error, so the browser's Details shows the same text. See design.md, "Diagnosing a failed chat request".
+ */
+export { formatDiagnostics, type ChatDiagnostics } from "../../../src/venice/diagnose.ts";
+
+/**
  * T06 triage: the server ends a session after `minutes` without activity, `secondsLeft` from now if nothing uses it
  * (auth.whoami doesn't count as use). Null: sessions never time out (SS_SESSION_IDLE_MINUTES=0).
  */

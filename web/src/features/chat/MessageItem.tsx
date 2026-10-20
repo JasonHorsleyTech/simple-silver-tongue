@@ -16,7 +16,7 @@ import { MessageText } from "./MessageText.tsx";
 import { Reasoning } from "./Reasoning.tsx";
 import { RollBubble } from "./RollCard.tsx";
 import { SteerBox, type RegenerateMode } from "./SteerBox.tsx";
-import { IMAGE_BUSY, imagePending, type LiveReply as Live, type MessageActions, type RegenerateAsk } from "./useChat.ts";
+import { IMAGE_BUSY, imagePending, type LiveReply as Live, type MessageActions, type Problem, type RegenerateAsk } from "./useChat.ts";
 
 export { BrainMessageFrame, PlayerBubble } from "./MessageFrame.tsx";
 
@@ -107,7 +107,7 @@ export const MessageItem = memo(function MessageItem({
     writeLocal(REGEN_MODE_KEY, m);
   };
   const [thought, setThought] = useState("");
-  const [steerError, setSteerError] = useState<string | null>(null);
+  const [steerError, setSteerError] = useState<string | Problem | null>(null);
   const [regenerating, setRegenerating] = useState(false);
   const [pending, setPending] = useState(false);
   /** "Paint again" is on its way (image.retry of a finished image). */

@@ -1,4 +1,5 @@
 import { CommandError, upstreamError } from "../lib/errors.ts";
+import { pickHeaders, VENICE_BODY_CHARS } from "./diagnose.ts";
 import { normalizeModel, type ModelInfo, type ModelType } from "./models.ts";
 
 /**
@@ -45,7 +46,14 @@ export function createVeniceClient(opts: { baseUrl: string; apiKey: string; fetc
       const why = err instanceof Error ? err.message : String(err);
       throw upstreamError(`Could not reach Venice at ${host}: ${why}`);
     }
-    if (!res.ok) throw upstreamError(`Venice ${res.status} on ${path.split("?")[0]}: ${await errorMessage(res)}`, { status: res.status });
+    if (!res.ok) {
+      // The message is one line; the whole body and the request-id headers ride along in details.venice, for the
+      // failure's diagnostics (diagnose.ts). They reach only the user who made the request, never the log as is.
+      const text = await res.text().catch(() => "");
+      const venice: VeniceResponse = { body: text.slice(0, VENICE_BODY_CHARS), headers: pickHeaders(res.headers) };
+      if (text.length > VENICE_BODY_CHARS) venice.bodyChars = text.length;
+      throw upstreamError(`Venice ${res.status} on ${path.split("?")[0]}: ${errorMessage(text, res.statusText)}`, { status: res.status, venice });
+    }
     return res;
   }
 
@@ -87,9 +95,11 @@ export function createVeniceClient(opts: { baseUrl: string; apiKey: string; fetc
   };
 }
 
+/** What a non-2xx answer carried, in an upstreamError's details.venice. */
+export type VeniceResponse = { body: string; bodyChars?: number; headers: Record<string, string> };
+
 /** Venice errors come as {"error": "..."} or {"error": {"message": ...}} or plain text. */
-async function errorMessage(res: Response): Promise<string> {
-  const text = await res.text().catch(() => "");
+function errorMessage(text: string, statusText: string): string {
   try {
     const j = JSON.parse(text);
     const e = j?.error ?? j?.message ?? j;
@@ -97,6 +107,6 @@ async function errorMessage(res: Response): Promise<string> {
     if (typeof e?.message === "string") return e.message;
     return JSON.stringify(e).slice(0, 300);
   } catch {
-    return text.slice(0, 300) || res.statusText;
+    return text.slice(0, 300) || statusText;
   }
 }

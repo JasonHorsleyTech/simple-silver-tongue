@@ -1,12 +1,14 @@
 import type { ChatRequest, Usage } from "../conversations/types.ts";
 import { assertAnswerable, assertSendable } from "../conversations/prompt.ts";
 import { CommandError, upstreamError } from "../lib/errors.ts";
-import type { VeniceClient } from "./client.ts";
+import type { VeniceClient, VeniceResponse } from "./client.ts";
+import { describeRequest, pickHeaders, redact, VENICE_BODY_CHARS, type ChatDiagnostics, type Received } from "./diagnose.ts";
 
 /**
  * Streaming /chat/completions. The body goes out exactly as given (after the hard-rule and nothing-to-answer
  * checks), and the SSE reply is parsed by hand into a few plain events. No content is ever put into an error
- * message or a log line, since errors end up in .run/server.log.
+ * message or a log line, since errors end up in .run/server.log. A failure carries `details.diagnostics`
+ * (diagnose.ts): the request's shape without its words, what had arrived, the timing and what Venice said.
  */
 
 export type ChatEvent =
@@ -54,6 +56,8 @@ export async function openChatStream(
     opts.signal?.removeEventListener("abort", onAbort);
   };
 
+  const seen: Seen = { t0: performance.now(), received: { chunks: 0, contentChars: 0, reasoningChars: 0, toolCallChars: 0, done: false } };
+  const fail = (err: unknown) => diagnosed(err, body, seen);
   arm(connectTimeoutMs);
   let res: Response;
   try {
@@ -66,11 +70,15 @@ export async function openChatStream(
     });
   } catch (err) {
     cleanup();
-    throw abortError(ctl.signal, "Venice did not start answering within") ?? err;
+    // An HTTP refusal is an answer: its time (body read included) stands in for the response headers'.
+    if (err instanceof CommandError && typeof (err.details as { status?: unknown } | undefined)?.status === "number") seen.headersAt = performance.now();
+    throw fail(abortError(ctl.signal, "Venice did not start answering within") ?? err);
   }
+  seen.headersAt = performance.now();
+  seen.headers = pickHeaders(res.headers);
   if (!res.body) {
     cleanup();
-    throw upstreamError("Venice answered the chat request with an empty body.");
+    throw fail(upstreamError("Venice answered the chat request with an empty body."));
   }
   arm(idleTimeoutMs);
 
@@ -84,12 +92,15 @@ export async function openChatStream(
   return (async function* events(): AsyncGenerator<ChatEvent> {
     let complete = false;
     let finished = false;
+    const got = seen.received;
     try {
       for await (const data of sseData(bytes, () => arm(idleTimeoutMs))) {
+        seen.firstChunkAt ??= performance.now();
         if (data === "[DONE]") {
-          complete = true;
+          complete = got.done = true;
           break;
         }
+        got.chunks++;
         let chunk: unknown;
         try {
           chunk = JSON.parse(data);
@@ -98,19 +109,69 @@ export async function openChatStream(
         }
         for (const ev of chunkEvents(chunk)) {
           if (ev.type === "finish") finished = true;
+          count(got, ev);
           yield ev;
         }
       }
       // Some servers skip [DONE]; a finish_reason is enough to know the reply is whole.
       if (!complete && !finished) throw upstreamError("The Venice stream ended before the reply was complete.");
     } catch (err) {
-      if (err instanceof CommandError) throw err;
-      throw abortError(ctl.signal, "Venice stopped sending for") ?? upstreamError(`The Venice stream broke off (${describe(err)}).`);
+      if (err instanceof CommandError) throw fail(err);
+      throw fail(abortError(ctl.signal, "Venice stopped sending for") ?? upstreamError(`The Venice stream broke off (${describe(err)}).`));
     } finally {
       cleanup();
       if (!complete) ctl.abort(); // close the connection if we stopped early
     }
   })();
+}
+
+/** What a request's diagnostics need from its life so far: when things happened, and what had arrived. */
+type Seen = { t0: number; headersAt?: number; firstChunkAt?: number; headers?: Record<string, string>; received: Received };
+
+function count(got: Received, ev: ChatEvent) {
+  if (ev.type === "content") got.contentChars += ev.delta.length;
+  else if (ev.type === "reasoning") got.reasoningChars += ev.delta.length;
+  else if (ev.type === "tool_call") got.toolCallChars += ev.argsDelta.length;
+  else if (ev.type === "finish") got.finishReason = String(redact(ev.reason, "type"));
+  else if (ev.type === "usage") {
+    got.usage = { promptTokens: ev.usage.promptTokens, completionTokens: ev.usage.completionTokens };
+    if (ev.usage.reasoningTokens) got.usage.reasoningTokens = ev.usage.reasoningTokens;
+  }
+}
+
+/**
+ * A Venice failure (venice_error) with its diagnostics in `details.diagnostics`. Anything else (a stop, a local
+ * refusal) passes through as is. Venice's own error text moves from `details.venice` / `details.chunkError` into
+ * the diagnostics, which keep it out of `what` (our words only), so the log's view can mask it (diagnose.ts, forLog).
+ */
+function diagnosed(err: unknown, body: ChatRequest, seen: Seen): unknown {
+  if (!(err instanceof CommandError) || err.code !== "venice_error") return err;
+  const { venice: response, chunkError, ...details } = (err.details && typeof err.details === "object" ? err.details : {}) as {
+    status?: unknown;
+    venice?: VeniceResponse;
+    chunkError?: unknown;
+    [k: string]: unknown;
+  };
+  const status = typeof details.status === "number" ? details.status : undefined;
+  const now = performance.now();
+  const at = (t: number | undefined) => (t === undefined ? undefined : Math.round(t - seen.t0));
+  const d: ChatDiagnostics = {
+    stage: typeof chunkError === "string" ? "stream" : status !== undefined ? "refused" : seen.headersAt === undefined ? "no-answer" : "stream",
+    what: typeof chunkError === "string" ? "Venice sent an error in the stream." : status !== undefined ? `It answered HTTP ${status}.` : err.message,
+    request: describeRequest(body),
+    timing: { failedMs: Math.round(now - seen.t0) },
+    venice: {},
+  };
+  if (seen.headersAt !== undefined) d.timing.headersMs = at(seen.headersAt);
+  if (seen.firstChunkAt !== undefined) d.timing.firstChunkMs = at(seen.firstChunkAt);
+  if (status !== undefined) d.venice.status = status;
+  const text = typeof chunkError === "string" ? chunkError : response?.body;
+  if (text !== undefined) d.venice.error = text;
+  if (response?.bodyChars) d.venice.errorChars = response.bodyChars;
+  const headers = response?.headers ?? seen.headers;
+  if (headers && Object.keys(headers).length) d.venice.headers = headers;
+  if (d.stage === "stream") d.received = { ...seen.received, ...(seen.received.usage ? { usage: { ...seen.received.usage } } : {}) };
+  return new CommandError(err.status, err.code, err.message, { ...details, diagnostics: d });
 }
 
 function abortError(signal: AbortSignal, timeoutText: string): CommandError | null {
@@ -184,7 +245,9 @@ export function chunkEvents(raw: unknown): ChatEvent[] {
   if (chunk.error !== undefined) {
     const e = chunk.error as { message?: unknown } | string;
     const msg = typeof e === "string" ? e : typeof e?.message === "string" ? e.message : "unknown error";
-    throw upstreamError(`Venice reported an error mid-stream: ${msg.slice(0, 300)}`);
+    // The whole error, for the failure's diagnostics (which keep it out of the log as is).
+    const whole = typeof e === "string" ? e : (JSON.stringify(e) ?? String(e));
+    throw upstreamError(`Venice reported an error mid-stream: ${msg.slice(0, 300)}`, { chunkError: whole.slice(0, VENICE_BODY_CHARS) });
   }
   const out: ChatEvent[] = [];
   const choice = chunk.choices?.[0];

@@ -20,6 +20,7 @@ import { ChatHeader } from "./ChatHeader.tsx";
 import { DamagedFile } from "./DamagedFile.tsx";
 import { AS_PLAYER, Composer } from "./Composer.tsx";
 import { Scrollback } from "./Scrollback.tsx";
+import { FailureDetails } from "./FailureDetails.tsx";
 import { useChat, type RegenerateAsk } from "./useChat.ts";
 
 const SETTINGS_OPEN_KEY = "ss.settingsOpen";
@@ -286,9 +287,10 @@ export function ChatView({ id }: { id: string }) {
           <div className="mx-auto w-full max-w-3xl px-4 pb-2 sm:px-6">
             <Notice tone={notice.tone}>
               <div className="flex items-start gap-2">
-                <div className="flex-1">
+                <div className="min-w-0 flex-1">
                   <p className={notice.tone === "info" ? "text-fg" : undefined}>{notice.message}</p>
                   {notice.note && <p className="mt-0.5 text-faint">{notice.note}</p>}
+                  {notice.diagnostics && <FailureDetails diagnostics={notice.diagnostics} />}
                 </div>
                 <button type="button" onClick={chat.dismissNotice} aria-label="Dismiss" className="-m-0.5 rounded p-0.5 opacity-70 hover:opacity-100">
                   <X aria-hidden className="size-3.5" />

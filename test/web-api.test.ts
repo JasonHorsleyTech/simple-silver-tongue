@@ -5,7 +5,7 @@ import { commands as allCommands } from "../src/commands/index.ts";
 import { conflict } from "../src/lib/errors.ts";
 import { command, streamCommand } from "../src/registry.ts";
 import { createClient } from "../web/src/api/client.ts";
-import { ApiError, errorMessage, retryOf } from "../web/src/api/errors.ts";
+import { ApiError, diagnosticsOf, errorMessage, retryOf } from "../web/src/api/errors.ts";
 import { readNdjson } from "../web/src/api/ndjson.ts";
 import { forBrowser } from "../web/src/lib/format.ts";
 import { brainActivity, fitRow, madeFromIndex, makerOf, pinsByMessage } from "../web/src/lib/cast.ts";
@@ -21,6 +21,7 @@ import { IMAGE_STOP_NOTE as SERVER_IMAGE_STOP_NOTE } from "../src/conversations/
 import type { Brain, Conversation, LedgerMessage } from "../src/conversations/types.ts";
 import {
   BRAIN_COLORS,
+  formatDiagnostics,
   freeMadeName,
   IMAGE_STOP_NOTE,
   isPatternName,
@@ -286,6 +287,16 @@ describe("web API client against the real server", () => {
     const broken = await collectStream(api.stream("turn", { conversation: conv.id, brain: dice.id, content: "MOCK_MIDSTREAM_ERROR roll" })).catch((e: unknown) => e);
     assert.deepEqual(retryOf(broken), { command: "turn", args: { conversation: conv.id, brain: dice.id } });
     assert.equal(retryOf(new ApiError(409, "conflict", "busy")), null);
+    // 2026-10-20: and its diagnostics, for the failed reply's Details: the same block the CLI prints.
+    const diag = diagnosticsOf(broken);
+    assert.equal(diag?.stage, "stream");
+    assert.equal(diag?.brain, "Dice Master");
+    assert.match(formatDiagnostics(diag!), /Received before it broke: \d+ chunks/);
+    assert.equal(diagnosticsOf(new ApiError(409, "conflict", "busy")), null);
+    // Refused up front (no stream yet): an HTTP error whose details carry them too.
+    const refused = await collectStream(api.stream("turn", { conversation: conv.id, brain: dice.id, content: "MOCK_ERROR roll" })).catch((e: unknown) => e);
+    assert.ok(refused instanceof ApiError && refused.status === 502);
+    assert.equal(diagnosticsOf(refused)?.venice.status, 500);
 
     assert.equal(REASONING_NOTE, SERVER_REASONING_NOTE, "the brain editor shows the server's own sentence");
     assert.deepEqual(BRAIN_COLORS, SERVER_COLORS, "the color picker offers the server's palette");

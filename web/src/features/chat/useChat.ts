@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client.ts";
-import { ApiError, errorMessage, isAbortError, retryOf } from "../../api/errors.ts";
-import { IMAGE_STOP_NOTE, type Brain, type Conversation, type LedgerMessage, type PinRole, type RetryRequest, type StreamYield } from "../../api/types.ts";
+import { ApiError, diagnosticsOf, errorMessage, isAbortError, retryOf } from "../../api/errors.ts";
+import { IMAGE_STOP_NOTE, type Brain, type ChatDiagnostics, type Conversation, type LedgerMessage, type PinRole, type RetryRequest, type StreamYield } from "../../api/types.ts";
 import { forBrowser } from "../../lib/format.ts";
 import { refreshConversations } from "../conversations/store.ts";
 
@@ -58,6 +58,8 @@ export type LiveReply = {
    * brain for a turn, the same message and steer for a regenerate. Null when the server sent none.
    */
   retry: RetryRequest | null;
+  /** A failed reply's diagnostics (`details.diagnostics`): everything about the request but its words, for Details. */
+  diagnostics: ChatDiagnostics | null;
   /** An image brain's reply: `content` is its image prompt, streaming in; the image is made once it is saved. */
   image: boolean;
 };
@@ -69,8 +71,23 @@ export type LiveReply = {
  */
 export type Unsent = { text: string; roll: boolean };
 
-/** A line above the composer: an up-front send failure (error), or what a stop did and didn't save (info). */
-export type ChatNotice = { tone: "error" | "info"; message: string; note?: string };
+/**
+ * A line above the composer: an up-front send failure (error), or what a stop did and didn't save (info). A failed
+ * chat request's `diagnostics` show under it, folded (FailureDetails).
+ */
+export type ChatNotice = { tone: "error" | "info"; message: string; note?: string; diagnostics?: ChatDiagnostics };
+
+/** An action's failure when it was a chat request Venice failed: its words, and its diagnostics for Details. */
+export type Problem = { message: string; diagnostics: ChatDiagnostics };
+
+/** A failure as the browser shows it: the plain message, or a Problem when the error carries diagnostics. */
+export function problemOf(err: unknown): string | Problem {
+  const diagnostics = diagnosticsOf(err);
+  return diagnostics ? { message: errorMessage(err), diagnostics } : errorMessage(err);
+}
+
+/** The words of a failure, and its diagnostics if any, as a notice. */
+export const errorNotice = (p: string | Problem): ChatNotice => (typeof p === "string" ? { tone: "error", message: p } : { tone: "error", ...p });
 
 /** How a regenerate is asked: a steer (Revise; blank = a plain re-roll), or a fresh take's thought (T15: the Muse's note, T17), sent as typed. */
 export type RegenerateAsk = { steer?: string; thought?: string };
@@ -90,8 +107,11 @@ export type MessageActions = {
   setAuthor(messageId: string, as: string): Promise<string | null>;
   /** T16: rename a brain (brain.update), from the message it was made from. */
   renameBrain(brainId: string, name: string): Promise<string | null>;
-  /** A new version of the last message, streaming in its place. Resolves to an up-front failure's message. */
-  regenerate(messageId: string, ask?: RegenerateAsk): Promise<string | null>;
+  /**
+   * A new version of the last message, streaming in its place. Resolves to an up-front failure: its message, or a
+   * Problem when Venice refused the request (its diagnostics, for Details).
+   */
+  regenerate(messageId: string, ask?: RegenerateAsk): Promise<string | Problem | null>;
   /**
    * image.retry: paint an image message's prompt again. A failed, blurred or flagged image is replaced; a
    * finished one is kept and the repaint becomes a new version. With `safeModeOff`, the brain's safe mode is
@@ -313,6 +333,7 @@ export function useChat(id: string): Chat {
             phase: "waiting",
             error: null,
             retry: null,
+            diagnostics: null,
             image: false,
           });
           break;
@@ -329,7 +350,7 @@ export function useChat(id: string): Chat {
           flush();
           setNotice((n) => (n?.tone === "info" ? null : n));
           setLive((l) => ({
-            ...(l ?? { origin: "follow", content: "", reasoning: "", phase: "waiting", error: null, retry: null }),
+            ...(l ?? { origin: "follow", content: "", reasoning: "", phase: "waiting", error: null, retry: null, diagnostics: null }),
             kind: ev.regenerate ? "regenerate" : "turn",
             steer: ev.steer ?? null,
             thought: ev.thought ?? null,
@@ -399,7 +420,7 @@ export function useChat(id: string): Chat {
   const fail = useCallback(
     (err: unknown) => {
       flush();
-      setLive((l) => (l ? { ...l, phase: "failed", error: forBrowser(errorMessage(err)), retry: retryOf(err) } : l));
+      setLive((l) => (l ? { ...l, phase: "failed", error: forBrowser(errorMessage(err)), retry: retryOf(err), diagnostics: diagnosticsOf(err) } : l));
     },
     [flush],
   );
@@ -599,6 +620,7 @@ export function useChat(id: string): Chat {
         phase: "waiting",
         error: null,
         retry: null,
+        diagnostics: null,
         image: target?.kind === "image",
       });
       let saved = false;
@@ -621,7 +643,7 @@ export function useChat(id: string): Chat {
         } else {
           flush();
           setLive(null);
-          setNotice({ tone: "error", message: errorMessage(err) });
+          setNotice(errorNotice(problemOf(err)));
           // Someone else (another tab, the CLI) is replying right now: show that reply as it streams.
           if (err instanceof ApiError && err.code === "conflict") void follow();
         }
@@ -634,7 +656,7 @@ export function useChat(id: string): Chat {
   );
 
   const regenerate = useCallback(
-    async (messageId: string, ask: RegenerateAsk = {}): Promise<string | null> => {
+    async (messageId: string, ask: RegenerateAsk = {}): Promise<string | Problem | null> => {
       const c = convRef.current;
       if (!c || busyRef.current) return BUSY_LEDGER;
       const m = c.messages.find((x) => x.id === messageId);
@@ -658,6 +680,7 @@ export function useChat(id: string): Chat {
         phase: "waiting",
         error: null,
         retry: null,
+        diagnostics: null,
         image: m?.kind === "image",
       });
       let started = false;
@@ -680,7 +703,7 @@ export function useChat(id: string): Chat {
           void follow();
           return BUSY_LEDGER;
         }
-        return errorMessage(err);
+        return problemOf(err);
       }
     },
     [apply, fail, flush, follow, stoppedEarly, id],
@@ -903,7 +926,7 @@ export function useChat(id: string): Chat {
     const r = l.retry;
     if (r?.command === "message.regenerate") {
       const problem = await regenerate(r.args.message, r.args.thought !== undefined ? { thought: r.args.thought } : { steer: r.args.steer ?? "" });
-      if (problem) setNotice({ tone: "error", message: problem });
+      if (problem) setNotice(errorNotice(problem));
       return;
     }
     if (r?.command === "image.retry") {

@@ -5,7 +5,9 @@ import { Notice } from "../../components/Notice.tsx";
 import { cx } from "../../lib/cx.ts";
 import { prefillThought, type FreshTakeTarget } from "../../lib/thought.ts";
 import { useAutosize } from "../../lib/useAutosize.ts";
+import { FailureDetails } from "./FailureDetails.tsx";
 import { Kbd } from "./MessageEditor.tsx";
+import type { Problem } from "./useChat.ts";
 
 /** The two ways to regenerate (T15): revise the version on screen with a steer, or a fresh take from an idea of yours. */
 export type RegenerateMode = "revise" | "fresh";
@@ -56,7 +58,8 @@ export function SteerBox({
   onSubmit(): void;
   onCancel(): void;
   onPreview(): void;
-  error: string | null;
+  /** Why the last try was refused; a Problem when Venice refused it (its Details show under it). */
+  error: string | Problem | null;
   /** The version this will add (1-based). */
   nextVersion: number;
   /** The version on screen, which a steer revises (1-based), when the message has more than one. */
@@ -232,7 +235,14 @@ export function SteerBox({
       )}
       {error && (
         <Notice tone="error" className="mt-2">
-          {error}
+          {typeof error === "string" ? (
+            error
+          ) : (
+            <>
+              {error.message}
+              <FailureDetails diagnostics={error.diagnostics} />
+            </>
+          )}
         </Notice>
       )}
       <div className="mt-2.5 flex items-center gap-1.5">

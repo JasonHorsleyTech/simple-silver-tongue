@@ -1,6 +1,7 @@
 import { RotateCw, X } from "lucide-react";
 import { isMuse, type Brain } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
+import { FailureDetails } from "./FailureDetails.tsx";
 import { expectedAspect, LiveImage } from "./ImageCard.tsx";
 import { BrainMessageFrame, SteerNote } from "./MessageFrame.tsx";
 import { MessageText } from "./MessageText.tsx";
@@ -11,7 +12,8 @@ import type { LiveReply as Live } from "./useChat.ts";
  * The reply being generated, in the same frame a saved brain message uses, so nothing jumps when it is saved.
  * Waiting: three dots. Reasoning: a collapsed "Thinking…". Writing: Markdown, token by token, with a caret;
  * a hidden note (T08) is its fold, counting up, never its words ("Hidden · 3 lines so far"), and it can be
- * opened once the reply is saved. Failed: the partial text (not saved), the server's error, Retry and Dismiss.
+ * opened once the reply is saved. Failed: the partial text (not saved), the server's error, Retry and Dismiss, and
+ * for a request Venice failed, its Details (everything about the request but its words).
  *
  * A regenerate renders in the regenerated message's own slot (`slot`): its header says which version is
  * being written and with what steer (or "fresh take": T17, the Muse's note it answers is already in its place
@@ -91,6 +93,7 @@ export function LiveReply({
                 <X aria-hidden className="size-3.5" /> {slot ? "Show the saved version" : "Dismiss"}
               </Button>
             </div>
+            {live.diagnostics && <FailureDetails diagnostics={live.diagnostics} />}
           </div>
         )}
       </BrainMessageFrame>

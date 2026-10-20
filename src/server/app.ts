@@ -5,7 +5,7 @@ import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { stream } from "hono/streaming";
 import type { z } from "zod";
-import { toErrorBody } from "../lib/errors.ts";
+import { CommandError, toErrorBody } from "../lib/errors.ts";
 import { toText } from "../lib/text.ts";
 import { describeCommand, indexCommands, requireSessionFrom, type AnyCommand, type Ctx, type Deps } from "../registry.ts";
 import { safeJoin } from "../storage/files.ts";
@@ -29,7 +29,8 @@ export const consoleLogger: Logger = (line) => console.log(`${new Date().toISOSt
  *   GET  /api/<name>  binary commands (and health), args from the query string.
  * Sending `x-ss-cli: 1` wraps JSON results as {result, text}, where text is the command's CLI rendering;
  * `x-ss-reveal: 1` asks that rendering to show hidden notes instead of folding them (./ss --reveal, T08).
- * We never log args, results or bodies: only method, path, status and timing.
+ * We never log args, results or bodies: only method, path, status and timing, and for a failed chat request a
+ * record without its words (diagnose.ts).
  */
 export function createApp(base: Omit<Deps, "commands">, commands: AnyCommand[], log: Logger = consoleLogger): Hono {
   const index = indexCommands(commands);
@@ -196,10 +197,17 @@ function apiError(c: Context, status: number, code: string, message: string, det
   return c.json({ error: details === undefined ? { code, message } : { code, message, details } }, status as 400);
 }
 
+/**
+ * The status and code of a failure; never its message, which may quote content. A failed chat request adds its
+ * content-free record (CommandError.log: ids, sizes, roles, timing, Venice's masked words), indented below.
+ */
 function logFailure(log: Logger, name: string, err: unknown) {
   const { status, body } = toErrorBody(err);
   if (status >= 500 && body.code === "internal") log(`ERROR ${name}: ${err instanceof Error ? err.stack : String(err)}`);
-  else log(`${name} failed: ${status} ${body.code}`);
+  else {
+    const record = err instanceof CommandError && err.log ? `\n${err.log.replace(/^/gm, "    ")}` : "";
+    log(`${name} failed: ${status} ${body.code}${record}`);
+  }
 }
 
 function formatIssues(issues: z.core.$ZodIssue[]): { path: string; message: string }[] {

@@ -1,4 +1,4 @@
-import type { RetryRequest } from "./types.ts";
+import type { ChatDiagnostics, RetryRequest } from "./types.ts";
 
 /**
  * Every failure the API client reports is an ApiError, so a view can always show `message`.
@@ -28,6 +28,15 @@ export class ApiError extends Error {
 export function retryOf(err: unknown): RetryRequest | null {
   const retry = err instanceof ApiError ? (err.details as { retry?: RetryRequest } | undefined)?.retry : undefined;
   return retry && typeof retry === "object" ? retry : null;
+}
+
+/**
+ * A failed chat request's diagnostics, from the error itself (`details.diagnostics`): everything about the request
+ * but its words, for a Details disclosure (formatDiagnostics). Null for any other error.
+ */
+export function diagnosticsOf(err: unknown): ChatDiagnostics | null {
+  const d = err instanceof ApiError ? (err.details as { diagnostics?: ChatDiagnostics } | undefined)?.diagnostics : undefined;
+  return d && typeof d === "object" && d.request ? d : null;
 }
 
 /** True for the error fetch throws when its AbortSignal fires. Callers that cancel usually want to ignore it. */
