@@ -1,4 +1,5 @@
 import { newId, nowIso } from "../lib/ids.ts";
+import { freeNumber } from "./makers.ts";
 import type { Brain, Conversation, ImageRecord, LedgerMessage, MessageVersion } from "./types.ts";
 
 /**
@@ -6,6 +7,10 @@ import type { Brain, Conversation, ImageRecord, LedgerMessage, MessageVersion } 
  * doing Pathfinder", from the D&D campaign's brains and setup); conversation.import builds one from a campaign
  * file (examples/*.json, or a conversation.get --json). Either way it gets fresh ids and today's dates, and it
  * has cost nothing yet (spentUsd 0). Each version's history (steer, model, usage) comes along as it was.
+ *
+ * `keep` is how many of the ledger's messages come, from the start: all of them, none (--without-messages), or the
+ * ledger up to and including one message (conversation.clone --through: the story as it stood there, to play the
+ * next turn with another model). What hangs off the messages left behind stays behind with them (see below).
  */
 
 /**
@@ -23,7 +28,7 @@ export const FILE_MISSING = "This image's file was missing when the campaign was
 
 export function rebuild(
   src: Conversation,
-  opts: { title: string; messages: boolean; images: "copy" | "none" },
+  opts: { title: string; keep: number; images: "copy" | "none" },
 ): { conv: Conversation; copies: ImageCopy[] } {
   const now = nowIso();
   const brainIds = new Map(src.brains.map((b) => [b.id, newId("b")]));
@@ -52,26 +57,29 @@ export function rebuild(
   };
 
   const messageIds = new Map<string, string>(); // old → new, so pins and madeFrom (T16) follow their messages
-  const messages: LedgerMessage[] = !opts.messages
-    ? []
-    : src.messages.map((m) => {
-        const author: LedgerMessage["author"] = m.author.type === "player" ? { type: "player" } : { type: "brain", brainId: brainIds.get(m.author.brainId)! };
-        const brain = m.author.type === "brain" ? src.brains.find((b) => b.id === (m.author as { brainId: string }).brainId) : undefined;
-        const versions = m.versions.map((v): MessageVersion => {
-          const { image: img, ...rest } = v;
-          const copy: MessageVersion = structuredClone(rest);
-          if (m.kind === "image") copy.image = image(img, brain?.safeMode ?? true);
-          return copy;
-        });
-        const id = newId("m");
-        messageIds.set(m.id, id);
-        return { ...m, id, author, versions };
-      });
+  const keptMessages = src.messages.slice(0, Math.max(0, opts.keep));
+  const whole = keptMessages.length === src.messages.length;
+  const messages: LedgerMessage[] = keptMessages.map((m) => {
+    const author: LedgerMessage["author"] = m.author.type === "player" ? { type: "player" } : { type: "brain", brainId: brainIds.get(m.author.brainId)! };
+    const brain = m.author.type === "brain" ? src.brains.find((b) => b.id === (m.author as { brainId: string }).brainId) : undefined;
+    const versions = m.versions.map((v): MessageVersion => {
+      const { image: img, ...rest } = v;
+      const copy: MessageVersion = structuredClone(rest);
+      if (m.kind === "image") copy.image = image(img, brain?.safeMode ?? true);
+      return copy;
+    });
+    const id = newId("m");
+    messageIds.set(m.id, id);
+    return { ...m, id, author, versions };
+  });
 
-  // T16 QA-4: without the ledger, a brain made from one of its messages stays behind with it (its prompt is about a
-  // pinned message that isn't coming), and each maker counts from 1 again: a fresh start on the same kit. If that
-  // would leave no brain at all, they all come.
-  const kept = opts.messages ? src.brains : src.brains.filter((b) => !b.madeFrom);
+  // T16 QA-4: a brain made from a message that doesn't come stays behind with it (its prompt is about a pinned
+  // message that isn't coming), unless it speaks in what does come (message.set-author can give it an earlier
+  // message): then it comes without that pin, as a message delete would leave it. If that would leave no brain at
+  // all, they all come.
+  const spoke = new Set(keptMessages.flatMap((m) => (m.author.type === "brain" ? [m.author.brainId] : [])));
+  const behind = whole ? [] : src.brains.filter((b) => b.madeFrom !== undefined && !messageIds.has(b.madeFrom) && !spoke.has(b.id));
+  const kept = src.brains.filter((b) => !behind.includes(b));
   const brains = kept.length ? kept : src.brains;
   const defaultBrain = brains.find((b) => b.id === src.defaultBrainId) ?? brains[0]!;
 
@@ -89,13 +97,17 @@ export function rebuild(
       const { madeFrom, ...rest } = structuredClone(b);
       const brain: Brain = { ...rest, id: brainIds.get(b.id)!, pins: (b.pins ?? []).flatMap((p) => (messageIds.has(p.messageId) ? [{ ...p, messageId: messageIds.get(p.messageId)! }] : [])) };
       if (madeFrom && messageIds.has(madeFrom)) brain.madeFrom = messageIds.get(madeFrom)!;
-      if (!opts.messages && brain.makes) brain.makes.next = 1;
+      // Without the ledger each maker counts from 1 again: a fresh start on the same kit.
+      if (!keptMessages.length && brain.makes) brain.makes.next = 1;
       return brain;
     }),
     defaultBrainId: brainIds.get(defaultBrain.id)!,
     messages,
     spentUsd: 0,
   };
+  // Cut after a message: the brains left behind hand their numbers back, newest first, as deleting their messages
+  // from the end would (freeNumber, T16 QA-8), so the copy's next "Character {{n}}" is the one the story was at.
+  if (keptMessages.length && brains === kept) for (const b of [...behind].reverse()) freeNumber(conv, b);
   return { conv, copies };
 }
 

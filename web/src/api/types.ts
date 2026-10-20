@@ -333,7 +333,7 @@ export type Commands = {
     result: Conversation;
   };
   /** T07: a new conversation from one of yours: same brains, setup, templates and settings; the ledger and images too unless withoutMessages. */
-  "conversation.clone": { args: { id: string; title?: string; withoutMessages?: boolean }; result: Conversation };
+  "conversation.clone": { args: { id: string; title?: string; withoutMessages?: boolean; through?: string; textModel?: string }; result: Conversation };
   "brain.update": { args: BrainUpdate; result: Brain };
   /** Without color: the first unused badge color. Without finalReminder: on, pre-filled with REMINDER_EXAMPLE. */
   "brain.add": { args: BrainFields & { conversation: string; name: string; systemPrompt: string }; result: Brain };

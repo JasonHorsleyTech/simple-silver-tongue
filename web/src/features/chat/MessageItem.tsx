@@ -6,6 +6,7 @@ import { activeVersion, clockTime, fullTime } from "../../lib/format.ts";
 import { rollView } from "../../lib/rolls.ts";
 import { readLocal, writeLocal } from "../../lib/storage.ts";
 import { mergedThought, type FreshTakeTarget } from "../../lib/thought.ts";
+import { CloneMenu, type CloneSource } from "./CloneMenu.tsx";
 import { expectedAspect, ImageBody } from "./ImageCard.tsx";
 import { LiveReply } from "./LiveReply.tsx";
 import { MessageEditor } from "./MessageEditor.tsx";
@@ -43,6 +44,7 @@ const REGEN_MODE_KEY = "ss.regenerateMode";
  * and the die's own number is only history in the footer ("🎲 d20 said 12").
  * T16: under the body, the brain this message made (Rename) and the brains it is pinned to (Unpin) (LinksBand); in
  * the footer, Pin to a brain, Said by… (change who said it), and "Make a brain" on a maker's message that has none.
+ * Clone from here (CloneMenu): a new conversation with the story up to and including this message.
  * Actions show on hover or keyboard focus, and stay shown on the last message. During a reply they explain
  * why they can't run instead of failing with the server's 409, and so do those that would replace or remove
  * an image still being made (its prompt edit, its retry, the message's delete).
@@ -66,6 +68,8 @@ export const MessageItem = memo(function MessageItem({
   pins,
   freshMade,
   onOpenBrain,
+  cloneSource,
+  position,
 }: {
   message: LedgerMessage;
   brain?: Brain;
@@ -79,6 +83,9 @@ export const MessageItem = memo(function MessageItem({
   freshMade: boolean;
   /** T16: open a brain's card in Settings → Brains. */
   onOpenBrain(brainId: string): void;
+  /** "Clone from here": the conversation this message is in, and the message's place in it (1-based). */
+  cloneSource: CloneSource;
+  position: number;
   /** The last thing in the scrollback: its footer stays shown. */
   isLast: boolean;
   /** The last ledger message, a brain's text: it can be regenerated. */
@@ -197,6 +204,7 @@ export const MessageItem = memo(function MessageItem({
   const authorMenu = (
     <AuthorMenu message={message} brains={brains} busy={busy} busyHint={BUSY_HINT} onSet={(as) => actions.setAuthor(message.id, as)} onOpenChange={setMenuOpen} />
   );
+  const cloneMenu = <CloneMenu source={cloneSource} position={position} messageId={message.id} onOpenChange={setMenuOpen} />;
   /** A maker's message with no brain of its own (written before the setting, or with it off): "Make a brain". */
   const canMake = !!brain?.makes && !made;
   const links = (
@@ -238,6 +246,7 @@ export const MessageItem = memo(function MessageItem({
             </IconAction>
             {pinMenu}
             {!roll && authorMenu}
+            {cloneMenu}
             <IconAction label={roll ? "Delete the roll" : "Delete"} blocked={busy} onClick={unlessBusy(() => setMode("delete"))}>
               <Trash2 aria-hidden className="size-3.5" />
             </IconAction>
@@ -392,6 +401,7 @@ export const MessageItem = memo(function MessageItem({
                   </IconAction>
                   {pinMenu}
                   {authorMenu}
+                  {cloneMenu}
                   <IconAction label="Delete" blocked={busy || paintingAny} onClick={unlessBusy(unlessPainting(paintingAny, () => setMode("delete")))}>
                     <Trash2 aria-hidden className="size-3.5" />
                   </IconAction>

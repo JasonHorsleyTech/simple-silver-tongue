@@ -293,18 +293,21 @@ function MakeForm({ maker, brains, onMake, onCancel }: { maker: Brain; brains: B
 
 /**
  * A footer icon that opens a small menu over the scrollback, above or below the button, whichever has more room in
- * the scroll box. Closes on Escape, a click outside, or `close()` from its content.
+ * the scroll box. Closes on Escape, a click outside, or `close()` from its content. `role="dialog"` is for a small
+ * form instead of a list (Clone from here): the arrow keys are then the fields' own.
  */
 export function FooterMenu({
   label,
   icon,
   active,
+  role = "menu",
   onOpenChange,
   children,
 }: {
   label: string;
   icon: ReactNode;
   active?: boolean;
+  role?: "menu" | "dialog";
   onOpenChange?(open: boolean): void;
   children(close: () => void): ReactNode;
 }) {
@@ -354,10 +357,10 @@ export function FooterMenu({
       {open && (
         <div
           data-menu
-          role="menu"
+          role={role}
           aria-label={label}
           onKeyDown={(e) => {
-            if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+            if (role !== "menu" || (e.key !== "ArrowDown" && e.key !== "ArrowUp")) return;
             e.preventDefault();
             const items = [...(box.current?.querySelectorAll<HTMLElement>("[data-menu] [role^=menuitem]:not(:disabled)") ?? [])];
             const i = items.indexOf(document.activeElement as HTMLElement);

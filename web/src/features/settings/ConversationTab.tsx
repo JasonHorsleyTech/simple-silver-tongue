@@ -184,7 +184,8 @@ function CloneConversation({ conv }: { conv: Conversation }) {
           Clone this campaign
         </h4>
         <p className="mt-0.5 text-[12.5px] leading-5 text-faint">
-          A new conversation with the same brains, setup messages, templates and settings. This one stays as it is.
+          A new conversation with the same brains, setup messages, templates and settings. This one stays as it is. To copy the story up to a
+          certain message, use <span className="text-muted">Clone from here</span> under that message.
         </p>
       </div>
       <div>

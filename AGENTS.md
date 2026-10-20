@@ -112,6 +112,7 @@ npm run web:dev    # Vite hot reload on :5173, forwarding /api to the server on 
 ./ss conversation.import --example dnd-tavern      # start one: 5 brains, World Bible, GM opener (--without-messages: setup only)
 ./ss conversation.import --campaign @file.json     # any campaign file; a conversation.get --json is one (images come back as prompts to retry)
 ./ss conversation.clone --id c_... --title Pathfinder --without-messages   # same brains/setup/templates/settings; without the flag, ledger and images too
+./ss conversation.clone --id c_... --through m_... --title "Tavern - GLM" --text-model z-ai-glm-5-3   # the ledger up to and including that message, under another model (browser: "Clone from here" on any message)
 ./ss presets.list                                  # T10: kits of brains with no world (presets/*.json); tabletop-rpg is the first
 ./ss conversation.import --preset tabletop-rpg --title Chinatown   # six brains, no setup, no messages: write the World Bible next (setup.add)
 ./ss brain.import --conversation c_... --preset tabletop-rpg --brain "Character Creator" [--name "..."]   # one brain, whole (its maker setting too); --example dnd-tavern works too

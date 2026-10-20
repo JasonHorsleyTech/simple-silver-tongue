@@ -130,6 +130,8 @@ In the browser:
 
 From the terminal: `./ss conversation.clone --id c_... --title "Pathfinder" --without-messages` (`./ss conversation.list` shows the ids).
 
+**Compare models at one point of the story:** under any message, **Clone from here** (the branch icon) makes a new conversation with the story up to and including that message, images and all. The title is filled in as "Tavern - " with the cursor after it: type the rest (or nothing, and it's named after the model), pick the text model, press Enter, and the copy opens, ready for the next turn. Cloning from the last message brings your unsent text along, so you can type the next action once, then clone, clone, clone and send it under each model. The copies and the original never touch each other. Characters made from later messages stay behind. From the terminal: `./ss conversation.clone --id c_... --through m_... --title "Tavern - GLM" --text-model z-ai-glm-5-3` (`./ss conversation.get --id c_... --json` shows the message ids).
+
 ## From the terminal
 
 Everything the browser does is a `./ss` command (`./ss help` lists them all). To play a campaign from the terminal, set it once:

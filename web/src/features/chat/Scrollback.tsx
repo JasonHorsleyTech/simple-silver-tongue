@@ -6,6 +6,7 @@ import { cx } from "../../lib/cx.ts";
 import { freshTakeTarget, thoughtBesideImage } from "../../lib/thought.ts";
 import { GalleryContext, type GalleryItem } from "./ImageCard.tsx";
 import { LiveReply } from "./LiveReply.tsx";
+import type { CloneSource } from "./CloneMenu.tsx";
 import { MessageItem } from "./MessageItem.tsx";
 import { PlayerBubble } from "./MessageFrame.tsx";
 import { MessageText } from "./MessageText.tsx";
@@ -47,6 +48,11 @@ export function Scrollback({
   // T16: which brain each message made, and the brains each is pinned to (stable while the brains don't change).
   const made = useMemo(() => madeFromIndex(conv.brains), [conv.brains]);
   const pins = useMemo(() => pinsByMessage(conv.brains), [conv.brains]);
+  /** "Clone from here" on each message: what it needs of the conversation, stable between saves. */
+  const cloneSource = useMemo<CloneSource>(
+    () => ({ id: conv.id, title: conv.title, textModel: conv.settings.textModel, count: conv.messages.length }),
+    [conv.id, conv.title, conv.settings.textModel, conv.messages.length],
+  );
   /** T07: an image that landed while its card was out of view, until you look at it. */
   const [landed, setLanded] = useState<{ messageId: string; brainName: string; failed: boolean; above: boolean } | null>(null);
   const imageStates = useRef<Map<string, string> | null>(null);
@@ -190,6 +196,8 @@ export function Scrollback({
                         pins={pins.get(m.id) ?? NO_PINS}
                         freshMade={chat.fresh.has(made.get(m.id)?.id ?? "")}
                         onOpenBrain={onOpenBrain}
+                        cloneSource={cloneSource}
+                        position={i + 1}
                       />
                     </li>
                     );

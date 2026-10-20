@@ -289,6 +289,86 @@ describe("brains that make brains, pinned messages, and who said what (T16): CLI
     assert.ok(imp.notes.some((n: string) => n.includes('makes a brain from each new message ("Character {{n}}"')));
   });
 
+  test("clone --through: the ledger up to a message; what hangs off later messages stays behind; a copy apart from the original", async () => {
+    const c = await tavern(); // [0] the GM's opener
+    const s1 = await json(["message.add", "--conversation", c, "--as", "Character Creator", "--content", "```hidden\nfirst\n```"]); // [1] makes Character 1
+    await ok(["turn", "--conversation", c, "--content", "I look around."]); // [2] you, [3] the GM
+    await ok(["message.regenerate", "--conversation", c, "--steer", "Shorter."]); // [3] has two versions
+    const painted = await json(["message.add", "--conversation", c, "--as", "Scene Painter", "--content", "A rainy harbor tavern"]); // [4] an image
+    await ok(["image.follow", "--conversation", c, "--message", painted.message.id]);
+    const s2 = await json(["message.add", "--conversation", c, "--as", "Character Creator", "--content", "```hidden\nsecond\n```"]); // [5] makes Character 2
+    await ok(["message.add", "--conversation", c, "--as", "Character 2", "--content", "Evening."]); // [6] Character 2 speaks
+    await json(["message.add", "--conversation", c, "--as", "Character Creator", "--content", "```hidden\nthird\n```"]); // [7] makes Character 3
+    await ok(["brain.pin", "--conversation", c, "--brain", "Game Master", "--message", s1.message.id]);
+    await ok(["brain.pin", "--conversation", c, "--brain", "Game Master", "--message", s2.message.id]);
+    const src = await get(c);
+    const cut = src.messages[4]!;
+    assert.equal(src.brains.find((b) => b.name === "Character Creator")!.makes!.next, 4);
+
+    await fails(["conversation.clone", "--id", c, "--through", "m_nowhere1"], /has no message m_nowhere1/);
+    await fails(["conversation.clone", "--id", c, "--through", cut.id, "--without-messages"], /not both/);
+    await fails(["conversation.clone", "--id", c, "--through", cut.id, "--text-model", "no-such-model"], /Venice has no text model "no-such-model"/);
+
+    const copy = (await json(["conversation.clone", "--id", c, "--through", cut.id, "--title", "Tavern - Uncensored", "--text-model", "venice-uncensored-1-2"])) as Conversation;
+    assert.equal(copy.title, "Tavern - Uncensored");
+    assert.equal(copy.settings.textModel, "venice-uncensored-1-2");
+    assert.equal(copy.spentUsd, 0);
+    // The ledger through [4], every version as it was, under fresh ids.
+    const shape = (conv: Conversation, ms: LedgerMessage[]) =>
+      ms.map((m) => ({
+        who: m.author.type === "player" ? "player" : conv.brains.find((b) => b.id === (m.author as { brainId: string }).brainId)!.name,
+        active: m.activeVersion,
+        versions: m.versions.map((v) => [v.content, v.steer ?? null, v.source]),
+      }));
+    assert.deepEqual(shape(copy, copy.messages), shape(src, src.messages.slice(0, 5)));
+    assert.equal(copy.messages[3]!.versions.length, 2);
+    assert.ok(copy.messages.every((m) => !src.messages.some((o) => o.id === m.id)), "fresh message ids");
+    // The image came over as a file of its own.
+    const [img, origImg] = [copy.messages[4]!.versions[0]!.image!, cut.versions[0]!.image!];
+    assert.equal(img.status, "done");
+    assert.notEqual(img.id, origImg.id);
+    const bytes = async (id: string) => (await t.cli(["image.get", "--id", id, "--out", `${id}.out`])).code === 0 && readFileSync(join(t.tmp, `${id}.out`));
+    assert.deepEqual(await bytes(img.id), await bytes(origImg.id));
+
+    // Character 1 (made from [1]) comes, re-pointed; Characters 2 and 3 (made from [5] and [7]) stay behind, and the
+    // Creator gets their numbers back. The GM keeps its pin of [1] and loses the one of [5].
+    const named = (conv: Conversation, name: string) => conv.brains.find((b) => b.name === name);
+    assert.deepEqual(copy.brains.map((b) => b.name), src.brains.filter((b) => b.name !== "Character 2" && b.name !== "Character 3").map((b) => b.name));
+    assert.ok(copy.brains.every((b) => !src.brains.some((o) => o.id === b.id)), "fresh brain ids");
+    const sheet = copy.messages[1]!;
+    assert.deepEqual([named(copy, "Character 1")!.madeFrom, named(copy, "Character 1")!.pins], [sheet.id, [{ messageId: sheet.id, as: "ledger" }]]);
+    assert.deepEqual(named(copy, "Game Master")!.pins, [{ messageId: sheet.id, as: "ledger" }]);
+    assert.equal(named(copy, "Character Creator")!.makes!.next, 2);
+    assert.equal(copy.defaultBrainId, named(copy, "Game Master")!.id);
+    const next = await json(["message.add", "--conversation", copy.id, "--as", "Character Creator", "--content", "```hidden\nanother\n```"]);
+    assert.equal(next.made.name, "Character 2", "the copy's next character is the number the story was at");
+
+    // Through its last message, the copy is the whole ledger; through [0], just the opener and no made brains.
+    const whole = (await json(["conversation.clone", "--id", c, "--through", src.messages.at(-1)!.id])) as Conversation;
+    assert.deepEqual(shape(whole, whole.messages), shape(src, src.messages));
+    assert.equal(whole.brains.length, src.brains.length);
+    const first = (await json(["conversation.clone", "--id", c, "--through", src.messages[0]!.id])) as Conversation;
+    assert.deepEqual([first.messages.length, first.brains.some((b) => b.madeFrom), named(first, "Character Creator")!.makes!.next], [1, false, 1]);
+
+    // Nothing done to the copy touches the original: delete the sheet (and Character 1 with it), then the copy itself.
+    await ok(["message.delete", "--conversation", copy.id, "--message", sheet.id]);
+    await ok(["image.retry", "--conversation", copy.id, "--message", copy.messages[4]!.id]);
+    await ok(["image.follow", "--conversation", copy.id, "--message", copy.messages[4]!.id]);
+    await ok(["conversation.delete", "--id", copy.id]);
+    const after = await get(c);
+    assert.deepEqual({ ...after, updatedAt: "" }, { ...src, updatedAt: "" }, "the original is as it was");
+    assert.ok(await bytes(origImg.id), "its image is still there");
+
+    // A brain made from a later message that speaks in the part that comes (set-author) comes too, without that pin.
+    await ok(["message.set-author", "--conversation", c, "--message", src.messages[3]!.id, "--as", "Character 3"]);
+    const spoke = (await json(["conversation.clone", "--id", c, "--through", cut.id])) as Conversation;
+    const c3 = named(spoke, "Character 3")!;
+    assert.deepEqual([c3.madeFrom, c3.pins], [undefined, []]);
+    assert.equal(spoke.messages[3]!.author.type === "brain" && spoke.messages[3]!.author.brainId, c3.id);
+    assert.equal(named(spoke, "Character 2"), undefined);
+    assert.equal(named(spoke, "Character Creator")!.makes!.next, 4, "Character 3 is here, so no number comes back");
+  });
+
   test("a file from before T16 (schema 5) loads with no pins and no maker", async () => {
     const c = await tavern();
     const vault = { dir: join(t.config.dataDir, "users", "dev-t16"), key: null };

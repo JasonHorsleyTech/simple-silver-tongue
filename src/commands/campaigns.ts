@@ -13,7 +13,7 @@ import { badRequest, CommandError, notFound } from "../lib/errors.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { command, type Ctx } from "../registry.ts";
 import { PLAYER, applyMakes, brainLine, brainName, checkName, color, finalReminder, kind, makes, pinAs, reasoning, reasoningNotes, safeMode, shape, stop, tool } from "./brains.ts";
-import { conversationId, imageSettings, systemPrompt, templates, title } from "./conversations.ts";
+import { conversationId, imageSettings, messageId, systemPrompt, templates, title } from "./conversations.ts";
 
 /**
  * Starting a campaign from another one's setup (T07): a committed example (examples/*.json), a campaign file of
@@ -438,7 +438,7 @@ Your own file stays where it is, in plaintext: the imported copy is encrypted li
           : { doc: parseCampaign(args.campaign, "The campaign"), where: "The campaign" };
     const draft = toConversation(doc, where);
     await checkSettings(ctx, draft, where);
-    const { conv } = rebuild(draft, { title: args.title ?? draft.title, messages: !args.withoutMessages, images: "none" });
+    const { conv } = rebuild(draft, { title: args.title ?? draft.title, keep: args.withoutMessages ? 0 : draft.messages.length, images: "none" });
     await createConversationFile(vault, conv);
     return conv;
   },
@@ -528,22 +528,40 @@ export const conversationClone = command({
   name: "conversation.clone",
   description: `Start a new conversation from one of yours: same brains, setup, templates and settings (and ledger).
 Unless --without-messages, the whole ledger comes too, every version and image included. It gets fresh ids and has
-cost nothing yet; the original is untouched. With --without-messages it is a fresh start on the same setup:
-"we're doing Pathfinder" from the D&D campaign, then edit the World Bible and the prompts to suit. The brains made
-from messages (a Character Creator's characters) stay behind with the ledger, and the makers count from 1 again.`,
+cost nothing yet; the original is untouched, and nothing done to either one ever touches the other. With
+--without-messages it is a fresh start on the same setup: "we're doing Pathfinder" from the D&D campaign, then edit
+the World Bible and the prompts to suit. With --through <message id> the ledger comes up to and including that
+message, every version and image of the messages that come: the story as it stood there, to play the next turn
+again (with --text-model, under another model). The brains made from messages that stay behind (a Character
+Creator's characters) stay behind with them, and their makers hand those numbers back; without the ledger the
+makers count from 1 again.`,
   args: z.object({
     id: conversationId.describe("The conversation to copy (c_...)"),
     title: title.optional().describe('Title for the copy (default: "<title> (copy)")'),
     withoutMessages: withoutMessages.optional(),
+    through: messageId
+      .optional()
+      .describe("Keep the ledger up to and including this message (m_..., from conversation.get); every later message stays behind"),
+    textModel: z.string().min(1).optional().describe("The copy's text model (default: the original's). See ./ss models.list --type text"),
   }),
   examples: [
     './ss conversation.clone --id c_k3j9x0q2ma --title "Pathfinder" --without-messages',
     "./ss conversation.clone --id c_k3j9x0q2ma   # a branch to try something else, images and all",
+    './ss conversation.clone --id c_k3j9x0q2ma --through m_p0x7c2k9qa --title "Tavern - GLM" --text-model z-ai-glm-5-3   # the story up to there, another model',
   ],
   handler: async (args, ctx): Promise<Conversation> => {
     const { vault } = ctx.requireSession();
+    if (args.withoutMessages && args.through !== undefined) throw badRequest("Pass --without-messages (no ledger) or --through <message id> (the ledger up to that message), not both.");
     const src = await loadConversation(vault, args.id);
-    const { conv, copies } = rebuild(src, { title: args.title ?? `${src.title} (copy)`.slice(0, 200), messages: !args.withoutMessages, images: "copy" });
+    let keep = args.withoutMessages ? 0 : src.messages.length;
+    if (args.through !== undefined) {
+      const at = src.messages.findIndex((m) => m.id === args.through);
+      if (at < 0) throw notFound(`"${src.title}" has no message ${args.through}. conversation.get --id ${src.id} --json lists its message ids.`);
+      keep = at + 1;
+    }
+    if (args.textModel) await lookupModel(ctx.deps.venice, "text", args.textModel);
+    const { conv, copies } = rebuild(src, { title: args.title ?? `${src.title} (copy)`.slice(0, 200), keep, images: "copy" });
+    if (args.textModel) conv.settings.textModel = args.textModel;
     const written: string[] = [];
     try {
       // The images first, so the document never points at a file that isn't there.
