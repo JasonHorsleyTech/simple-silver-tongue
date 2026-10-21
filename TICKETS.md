@@ -592,7 +592,7 @@ Data and schema bump, prompt assembly, `message.regenerate --thought` and `promp
 
 ---
 
-## T18: A model per brain · `qa`
+## T18: A model per brain · `triage`
 
 Jason, 2026-10-21. Today a conversation has one text model and one image model, and every brain uses them. He wants a conversation default (say Grok 4.7) and, on one brain only (the Co-GM), another model (GLM 5.3, Gemma 4, ...). The same for image brains: one painter on another image model.
 
