@@ -2,7 +2,7 @@ import { Braces, BrainCircuit, ChevronDown, Plus, Search, X } from "lucide-react
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import { DEFAULT_SHAPE, isMuse, MAKES_NUMBER, type Brain, type BrainImport, type Conversation, type ImageShape, type ModelInfo } from "../../api/types.ts";
+import { DEFAULT_SHAPE, isMuse, MAKES_NUMBER, type Brain, type BrainImport, type Conversation, type ImageShape } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { Segmented } from "../../components/Segmented.tsx";
@@ -14,6 +14,7 @@ import { readLocal, writeLocal } from "../../lib/storage.ts";
 import { BrainBadge } from "../chat/BrainBadge.tsx";
 import { BrainEditor } from "./BrainEditor.tsx";
 import { ImportBrainPicker, ImportedNotes } from "./ImportBrain.tsx";
+import type { ModelList } from "./models.ts";
 import { ShapePicker } from "./ShapePicker.tsx";
 
 /**
@@ -24,10 +25,14 @@ import { ShapePicker } from "./ShapePicker.tsx";
  * T16, many brains (a brain per character): brains made by a maker are listed after the others, under "Made by
  * <maker>", each card saying so instead of repeating the blueprint's first line; past eight brains a filter finds
  * one by name. A message's made brain or pin opens its card here (`focusBrain`).
+ *
+ * T18: a brain on a model of its own says so on its card ("on GLM 5.3", "paints with Krea 2 Turbo"), amber when
+ * Venice doesn't list that model; its editor has the pickers.
  */
 export function BrainsTab({
   conv,
-  model,
+  textModels,
+  imageModels,
   writingBrainId,
   addNonce,
   onBrain,
@@ -39,7 +44,9 @@ export function BrainsTab({
   onJumpTo,
 }: {
   conv: Conversation;
-  model: ModelInfo | null | undefined;
+  /** T18: Venice's models, to pick each brain's from and to look up the one it uses. */
+  textModels: ModelList;
+  imageModels: ModelList;
   /** The brain writing a reply right now, if any. */
   writingBrainId: string | null;
   /** Changes when something outside asks for the add form ("Add a brain" in an empty conversation). */
@@ -54,8 +61,6 @@ export function BrainsTab({
   /** T16: show a message in the scrollback. */
   onJumpTo(messageId: string): void;
 }) {
-  const resolution = conv.settings.image.resolution;
-  const imagePlan = `${conv.settings.imageModel}${resolution ? ` at ${resolution}` : ""}`;
   const [openId, setOpenId] = useState<string | null>(() => (conv.brains.length === 1 ? conv.brains[0]!.id : null));
   const [adding, setAdding] = useState(false);
   /** The last brain.import, shown in its brain's card until dismissed: what it left behind (T10). */
@@ -153,6 +158,7 @@ export function BrainsTab({
                   messageCount={counts.get(b.id) ?? 0}
                   writing={writingBrainId === b.id}
                   madeBy={makers.get(b.id) ?? null}
+                  modelTags={modelTags(b, textModels, imageModels)}
                   onPayload={() => onPayload(b.id)}
                 >
                   {imported?.brain.id === b.id && <ImportedNotes imported={imported} onDismiss={() => setImported(null)} />}
@@ -162,8 +168,9 @@ export function BrainsTab({
                     isDefault={b.id === conv.defaultBrainId}
                     messageCount={counts.get(b.id) ?? 0}
                     writing={writingBrainId === b.id}
-                    model={model}
-                    imagePlan={imagePlan}
+                    settings={conv.settings}
+                    textModels={textModels}
+                    imageModels={imageModels}
                     onImageSettings={onImageSettings}
                     onSaved={onBrain}
                     onDefault={(id) => onPatch((c) => ({ ...c, defaultBrainId: id }))}
@@ -227,6 +234,7 @@ function BrainCard({
   messageCount,
   writing,
   madeBy,
+  modelTags,
   onPayload,
   children,
 }: {
@@ -239,6 +247,8 @@ function BrainCard({
   focusNonce?: number;
   /** T16: the brain that made it, when it was made from a message. */
   madeBy?: Brain | null;
+  /** T18: its own models, as card tags ("on GLM 5.3"); `missing` when Venice doesn't list one (amber). */
+  modelTags: Array<{ text: string; missing: boolean }>;
   isDefault: boolean;
   messageCount: number;
   writing: boolean;
@@ -268,6 +278,8 @@ function BrainCard({
     brain.makes && `makes ${brain.makes.name.replace(MAKES_NUMBER, "N")}${brain.makes.enabled ? "" : " (off)"}`,
     // A made brain always has the message it was made from pinned: only more than that is news.
     extraPins > 0 && `${extraPins} pinned${brain.madeFrom ? " more" : ""}`,
+    // T18: a model of its own is what most changes how it answers.
+    ...modelTags.map((t) => t.text),
     brain.kind === "image" && "image",
     brain.kind === "image" && (brain.shape ?? DEFAULT_SHAPE),
     brain.kind === "image" && brain.safeMode === false && "safe mode off",
@@ -298,7 +310,7 @@ function BrainCard({
             <BrainBadge name={brain.name} color={brain.color} className="max-w-[60%] shrink-0" />
             <span className="flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap">
               {tags.map((t) => (
-                <span key={t} className={cx("shrink-0 text-[11.5px]", t === "default" ? "text-muted" : t === "safe mode off" || t === "no stop sequence" || t === "can't write fresh takes' notes" ? "text-amber-200/75" : "text-faint")}>
+                <span key={t} className={cx("shrink-0 text-[11.5px]", t === "default" ? "text-muted" : t === "safe mode off" || t === "no stop sequence" || t === "can't write fresh takes' notes" || modelTags.some((m) => m.missing && m.text === t) ? "text-amber-200/75" : "text-faint")}>
                   {t}
                 </span>
               ))}
@@ -463,7 +475,7 @@ function BlankBrainForm({ conversationId, onAdded, onCancel }: { conversationId:
       <p className="text-[12.5px] leading-5 text-faint">
         It joins mid-campaign too: from its first request it sees everything said so far. Its final reminder starts on, with an example you can edit.
         {kind === "image" &&
-          " An image brain answers with a picture: it writes a prompt, which every other brain sees, and the conversation's image model paints it. Safe mode starts on, and its tool text is editable."}
+          " An image brain answers with a picture: it writes a prompt, which every other brain sees, and the conversation's image model paints it (or one of its own, picked in its card). Safe mode starts on, and its tool text is editable."}
       </p>
       {error && <Notice tone="error">{error}</Notice>}
       <div className="flex items-center justify-end gap-1.5">
@@ -479,3 +491,15 @@ function BlankBrainForm({ conversationId, onAdded, onCancel }: { conversationId:
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** T18: a brain's own models as card tags, by name when Venice lists them ("on GLM 5.3", "paints with Krea 2 Turbo"). */
+function modelTags(b: Brain, textModels: ModelList, imageModels: ModelList): Array<{ text: string; missing: boolean }> {
+  const tag = (id: string, list: ModelList, words: string) => {
+    const m = list.find(id);
+    return { text: `${words} ${m?.name ?? id}${m === null ? " (not listed)" : ""}`, missing: m === null };
+  };
+  return [
+    ...(b.textModel ? [tag(b.textModel, textModels, "on")] : []),
+    ...(b.kind === "image" && b.imageModel ? [tag(b.imageModel, imageModels, "paints with")] : []),
+  ];
+}

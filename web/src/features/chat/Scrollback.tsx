@@ -49,9 +49,17 @@ export function Scrollback({
   const made = useMemo(() => madeFromIndex(conv.brains), [conv.brains]);
   const pins = useMemo(() => pinsByMessage(conv.brains), [conv.brains]);
   /** "Clone from here" on each message: what it needs of the conversation, stable between saves. */
+  // T18: the brains with a text model of their own (they keep it in the copy), as a string so the memo holds.
+  const ownKey = JSON.stringify(conv.brains.flatMap((b) => (b.textModel ? [[b.name, b.textModel]] : [])));
   const cloneSource = useMemo<CloneSource>(
-    () => ({ id: conv.id, title: conv.title, textModel: conv.settings.textModel, count: conv.messages.length }),
-    [conv.id, conv.title, conv.settings.textModel, conv.messages.length],
+    () => ({
+      id: conv.id,
+      title: conv.title,
+      textModel: conv.settings.textModel,
+      count: conv.messages.length,
+      ownText: (JSON.parse(ownKey) as [string, string][]).map(([name, model]) => ({ name, model })),
+    }),
+    [conv.id, conv.title, conv.settings.textModel, conv.messages.length, ownKey],
   );
   /** T07: an image that landed while its card was out of view, until you look at it. */
   const [landed, setLanded] = useState<{ messageId: string; brainName: string; failed: boolean; above: boolean } | null>(null);

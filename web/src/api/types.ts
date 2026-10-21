@@ -53,7 +53,7 @@ export { freeMadeName, isPatternName, madeName } from "../../../src/conversation
  * The server's own image request rule: an image brain's shapes and what each is sent as, and what an image costs
  * with the conversation's settings (the image model picker shows it). Pure, so the browser runs the same code.
  */
-export { buildImageRequest, DEFAULT_SHAPE, IMAGE_SHAPES, imagePriceUsd, SHAPE_SIZES } from "../../../src/images/request.ts";
+export { buildImageRequest, DEFAULT_SHAPE, IMAGE_SHAPES, imagePriceUsd, resolutionsOf, SHAPE_SIZES } from "../../../src/images/request.ts";
 
 /**
  * The server's own words and values, shown as they are: what a stop does and doesn't save (and why an image
@@ -63,6 +63,8 @@ export { buildImageRequest, DEFAULT_SHAPE, IMAGE_SHAPES, imagePriceUsd, SHAPE_SI
 export {
   /** 2026-10-19: what reasoning off does on a model that always reasons (src/venice/curated.ts, ALWAYS_REASONS). */
   alwaysReasonsNote,
+  /** T18 QA-3: a brain's effort level its model doesn't list (sent as set). */
+  effortNote,
   BRAIN_COLORS,
   DEFAULT_SETUP_LABEL,
   FRAMING_STOP,

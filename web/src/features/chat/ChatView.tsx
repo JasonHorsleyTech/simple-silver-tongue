@@ -252,6 +252,7 @@ export function ChatView({ id }: { id: string }) {
       focusBrain={focusBrain}
       onBrainFocused={brainFocused}
       onJumpTo={jumpToMessage}
+      onOpenBrain={openBrain}
     />
   );
 
@@ -436,7 +437,7 @@ function EmptyConversation({
             {conv.brains.map((b) => (
               <span key={b.id} className="inline-flex max-w-full items-center gap-1">
                 <BrainBadge name={b.name} color={b.color} />
-                <BrainTags kind={b.kind} reasoning={b.reasoning.enabled ? b.reasoning.effort : null} makes={b.makes?.enabled ? b.makes.name : null} />
+                <BrainTags kind={b.kind} reasoning={b.reasoning.enabled ? b.reasoning.effort : null} makes={b.makes?.enabled ? b.makes.name : null} models={{ text: b.textModel, image: b.kind === "image" ? b.imageModel : null }} />
               </span>
             ))}
           </span>

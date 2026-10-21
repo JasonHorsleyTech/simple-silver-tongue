@@ -7,11 +7,14 @@ import { Button } from "../../components/Button.tsx";
 import { toast } from "../../components/toasts.tsx";
 import { cx } from "../../lib/cx.ts";
 import { conversationCost, formatUsd } from "../../lib/format.ts";
+import { otherTextModels, ownModels } from "../../lib/models.ts";
 import { patchConversation, refreshConversations } from "../conversations/store.ts";
 
 /**
  * Title (click to rename), the text model, what the conversation has cost so far (every version ever
- * generated), and the two panels: the exact payload and the settings.
+ * generated), and the two panels: the exact payload and the settings. T18: the text model is the conversation's,
+ * the default; when some brains write with another of their own, it says so ("· Co-GM: z-ai-glm-5-3", or "· 2 brains
+ * on their own"), and the tooltip names every brain with a model of its own.
  */
 export function ChatHeader({
   conv,
@@ -28,6 +31,13 @@ export function ChatHeader({
 }) {
   const [editing, setEditing] = useState(false);
   const cost = conversationCost(conv);
+  const others = otherTextModels(conv);
+  const own = ownModels(conv);
+  const modelTitle = own.length
+    ? `The conversation's text model, for every brain without one of its own. Of their own: ${own
+        .map((o) => `${o.brain.name} (${[o.text, o.image && `images: ${o.image}`].filter(Boolean).join("; ")})`)
+        .join(", ")}.`
+    : "Text model (the conversation's: every brain writes with it)";
   return (
     <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line px-4 sm:px-5">
       <div className="min-w-0 flex-1">
@@ -45,8 +55,15 @@ export function ChatHeader({
         )}
       </div>
       <div className="hidden items-center gap-2 text-[12px] text-faint sm:flex">
-        <span className="truncate font-mono text-[11.5px]" title="Text model (one per conversation)">
-          {conv.settings.textModel}
+        <span className="truncate" title={modelTitle}>
+          <span className="font-mono text-[11.5px]">{conv.settings.textModel}</span>
+          {others.length === 1 && (
+            <>
+              {" · "}
+              {others[0]!.brain.name}: <span className="font-mono text-[11.5px]">{others[0]!.text}</span>
+            </>
+          )}
+          {others.length > 1 && ` · ${others.length} brains on their own`}
         </span>
         <span aria-hidden>·</span>
         <span className="tabular-nums" title="Spent on this conversation so far, every generated version included">

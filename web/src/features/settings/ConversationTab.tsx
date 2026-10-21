@@ -2,22 +2,28 @@ import { CopyPlus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import { buildImageRequest, imagePriceUsd, type Conversation, type ConversationUpdate, type ModelInfo } from "../../api/types.ts";
+import type { Brain, Conversation, ConversationUpdate } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { Segmented } from "../../components/Segmented.tsx";
 import { SavedLine } from "../../components/SavedLine.tsx";
-import { Spinner } from "../../components/Spinner.tsx";
+import { ownModels } from "../../lib/models.ts";
 import { navigate } from "../../lib/router.tsx";
-import { compactNumber, formatUsd } from "../../lib/format.ts";
+import { BrainBadge } from "../chat/BrainBadge.tsx";
 import { patchConversation, refreshConversations } from "../conversations/store.ts";
+import { imageFacts } from "./BrainModels.tsx";
 import { ImageSettings } from "./ImageSettings.tsx";
+import type { ModelList } from "./models.ts";
+import { ModelPicker, textModelDetail } from "./ModelPicker.tsx";
 
 /**
  * The conversation itself: title, the text and image models (one each, from the curated list models.list gives),
  * the reply limits every brain shares, how images are made (resolution, format, watermark, negative prompt), clone
  * (T07) and delete. A model change applies to the next request of every brain, and to the next image. Each image
  * model is listed with what one image costs at this conversation's resolution.
+ *
+ * T18: the conversation's models are the defaults. A brain with a model of its own keeps it (each picker lists those
+ * brains, a click opens one's card), and the resolution may be one any image model in use lists.
  */
 export function ConversationTab({
   conv,
@@ -25,12 +31,14 @@ export function ConversationTab({
   imageModels,
   busy,
   onConversation,
+  onOpenBrain,
 }: {
   conv: Conversation;
-  textModels: { models: ModelInfo[] | null; error: string | null };
-  imageModels: { models: ModelInfo[] | null; error: string | null };
+  textModels: ModelList;
+  imageModels: ModelList;
   busy: boolean;
   onConversation(c: Conversation): void;
+  onOpenBrain(brainId: string): void;
 }) {
   const save = async (patch: Omit<ConversationUpdate, "id">) => {
     const next = await api.call("conversation.update", { id: conv.id, ...patch });
@@ -38,11 +46,9 @@ export function ConversationTab({
     return next;
   };
   const st = conv.settings;
-  /** What one image costs with this conversation's settings, by the model's price list (the server's own rule). */
-  const imagePrice = (m: ModelInfo) => {
-    const usd = imagePriceUsd(m, buildImageRequest(st, m, "", true).body);
-    return usd === undefined ? m.price : `${formatUsd(usd)}/image`;
-  };
+  const own = ownModels(conv);
+  const ownText = own.flatMap((o) => (o.text ? [{ brain: o.brain, model: o.text }] : []));
+  const ownImage = own.flatMap((o) => (o.image ? [{ brain: o.brain, model: o.image }] : []));
 
   return (
     <div className="space-y-7 px-5 pt-4 pb-8">
@@ -62,21 +68,17 @@ export function ConversationTab({
       <ModelPicker
         id="cv-text-model"
         label="Text model"
-        description="Every brain writes with it. One per conversation; the next request of every brain uses a change."
+        description={
+          ownText.length
+            ? "Every brain without a model of its own writes with it; the next request of each uses a change."
+            : "Every brain writes with it, unless you give one a model of its own (Brains). The next request of every brain uses a change."
+        }
         value={st.textModel}
         list={textModels}
-        detail={(m) =>
-          [
-            m.price,
-            m.privacy,
-            m.contextLength ? `${m.contextLength >= 1e6 ? `${Number((m.contextLength / 1e6).toFixed(1))}M` : compactNumber(m.contextLength)} context` : null,
-            m.reasoning?.supported ? (m.reasoning.effortOptions ? `reasoning: ${m.reasoning.effortOptions.join(", ")}` : m.reasoning.always ? "always reasons" : "reasons") : "no reasoning",
-          ]
-            .filter(Boolean)
-            .join(" · ")
-        }
-        onPick={async (textModel) => void (await save({ settings: { textModel } }))}
+        detail={textModelDetail}
+        onPick={async (textModel) => void (textModel && (await save({ settings: { textModel } })))}
       />
+      <OwnModelBrains label="On a model of their own, which they keep:" items={ownText} list={textModels} onOpenBrain={onOpenBrain} className="-mt-5" />
 
       <div>
         <h4 className="text-[13px] font-medium text-fg">Reply limits</h4>
@@ -112,7 +114,8 @@ export function ConversationTab({
         <div>
           <h4 className="text-[13px] font-semibold text-fg">Images</h4>
           <p className="mt-0.5 text-[12.5px] leading-5 text-faint">
-            How image brains' prompts become pictures. Every image brain in this conversation uses these; each brain has its own shape and safe mode (Brains).
+            How image brains' prompts become pictures. Every image brain uses the settings below, and this image model unless it has one of its own; each
+            brain has its own shape and safe mode (Brains).
           </p>
         </div>
         <ModelPicker
@@ -121,15 +124,15 @@ export function ConversationTab({
           description="The prompt goes to it word for word. The next image uses a change."
           value={st.imageModel}
           list={imageModels}
-          optionDetail={imagePrice}
-          detail={(m) => [imagePrice(m) === m.price ? m.price : `${imagePrice(m)} at ${st.image.resolution ?? "its default resolution"} (${m.price})`, m.privacy].join(" · ")}
-          onPick={async (imageModel) => void (await save({ settings: { imageModel } }))}
+          optionDetail={(m) => imageFacts(st, m).price}
+          detail={(m) => {
+            const price = imageFacts(st, m).price;
+            return [price === m.price ? m.price : `${price} at ${st.image.resolution ?? "its default resolution"} (${m.price})`, m.privacy].join(" · ");
+          }}
+          onPick={async (imageModel) => void (imageModel && (await save({ settings: { imageModel } })))}
         />
-        <ImageSettings
-          conv={conv}
-          model={imageModels.models ? (imageModels.models.find((m) => m.id === st.imageModel) ?? null) : undefined}
-          onSave={(image) => save({ settings: { image } })}
-        />
+        <OwnModelBrains label="Painting with a model of their own:" items={ownImage} list={imageModels} onOpenBrain={onOpenBrain} className="-mt-3" />
+        <ImageSettings conv={conv} models={imageModels} onSave={(image) => save({ settings: { image } })} />
       </section>
 
       <CloneConversation conv={conv} />
@@ -232,84 +235,33 @@ function CloneConversation({ conv }: { conv: Conversation }) {
   );
 }
 
-/**
- * A native select over the curated list (models.list), saved on change. The current model stays listed even if it
- * isn't in it (set from the terminal, or dropped by Venice). `optionDetail` follows each option's name (a price).
- */
-function ModelPicker({
-  id,
+/** T18: the brains on a model of their own, each a badge that opens its card, with the model it keeps. */
+function OwnModelBrains({
   label,
-  description,
-  value,
+  items,
   list,
-  detail,
-  optionDetail,
-  onPick,
+  onOpenBrain,
+  className,
 }: {
-  id: string;
   label: string;
-  description: string;
-  value: string;
-  list: { models: ModelInfo[] | null; error: string | null };
-  detail(m: ModelInfo): string;
-  optionDetail?(m: ModelInfo): string;
-  onPick(model: string): Promise<void>;
+  items: Array<{ brain: Brain; model: string }>;
+  list: ModelList;
+  onOpenBrain(brainId: string): void;
+  /** Pulls it up under its picker (the gap between the tab's sections is wider). */
+  className: string;
 }) {
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const models = list.models ?? [];
-  const current = models.find((m) => m.id === value);
-
-  async function pick(model: string) {
-    setSaving(true);
-    setError(null);
-    try {
-      await onPick(model);
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setSaving(false);
-    }
-  }
-
+  if (!items.length) return null;
   return (
-    <div>
-      <label htmlFor={id} className="mb-1 flex items-center gap-2 text-[13px] font-medium text-fg">
-        {label}
-        {saving && <Spinner className="size-3.5 text-faint" />}
-      </label>
-      <p className="mb-2 text-[12.5px] leading-5 text-faint">{description}</p>
-      <select
-        id={id}
-        value={value}
-        disabled={saving || !list.models}
-        onChange={(e) => void pick(e.target.value)}
-        className="h-9 w-full rounded-lg border border-line-strong bg-raised px-2.5 text-[13.5px] text-fg outline-none focus:border-focus/60 focus:ring-3 focus:ring-focus/15 disabled:opacity-60"
-      >
-        {!current && <option value={value}>{list.models ? `${value} (not in this list)` : value}</option>}
-        {models.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.name}
-            {optionDetail ? ` · ${optionDetail(m)}` : ""}
-            {m.privacy !== "private" ? ` · ${m.privacy}` : ""}
-            {m.offline ? " · offline" : ""}
-          </option>
-        ))}
-      </select>
-      <p className="mt-1.5 text-[12px] leading-5 text-faint">
-        <span className="font-mono text-[11.5px] text-muted">{value}</span>
-        {current && ` · ${detail(current)}`}
-      </p>
-      {list.error && (
-        <Notice tone="error" className="mt-2">
-          Couldn't load Venice's model list. {list.error}
-        </Notice>
-      )}
-      {error && (
-        <Notice tone="error" className="mt-2">
-          {error}
-        </Notice>
-      )}
+    <div className={`${className} flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[12.5px] leading-5 text-faint`}>
+      <span>{label}</span>
+      {items.map(({ brain, model }) => (
+        <span key={brain.id} className="inline-flex max-w-full items-center gap-1.5">
+          <button type="button" onClick={() => onOpenBrain(brain.id)} title={`Open ${brain.name}'s card`} className="max-w-full rounded-full">
+            <BrainBadge name={brain.name} color={brain.color} />
+          </button>
+          <span className="text-muted">{list.find(model)?.name ?? model}</span>
+        </span>
+      ))}
     </div>
   );
 }

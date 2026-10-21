@@ -1,36 +1,38 @@
 import { useState } from "react";
 import { errorMessage } from "../../api/errors.ts";
-import type { Conversation, ConversationUpdate, ModelInfo } from "../../api/types.ts";
+import { resolutionsOf, type Conversation, type ConversationUpdate } from "../../api/types.ts";
 import { Notice } from "../../components/Notice.tsx";
 import { SavedText } from "../../components/SavedText.tsx";
 import { Segmented } from "../../components/Segmented.tsx";
 import { Spinner } from "../../components/Spinner.tsx";
 import { Switch } from "../../components/Switch.tsx";
+import { imageModelsInUse, resolutionChoices, whoseImageModel } from "../../lib/models.ts";
+import type { ModelList } from "./models.ts";
 
 type ImageSettingsPatch = NonNullable<NonNullable<ConversationUpdate["settings"]>["image"]>;
-
-/** What /models says about resolutions: Krea and Grok Imagine list some (1K, 2K), z-image-turbo none. */
-type Constraints = { resolutions?: string[]; defaultResolution?: string };
 
 /**
  * How image brains' prompts are painted, per conversation (conversation.update settings.image): the resolution,
  * for models that list resolutions (it sets the price), the file format, Venice's watermark, and a negative prompt
  * (text the image model reads, so it is editable like every other word sent). The picture's shape is each image
- * brain's own (Brains). The server refuses a resolution the model doesn't list; its reason shows here. One left
+ * brain's own (Brains). The server refuses a resolution no model in use lists; its reason shows here. One left
  * over from another model isn't sent, and the note says so, with a way to clear it.
+ *
+ * T18: an image brain may paint with a model of its own, so the resolutions offered are every one an image model in
+ * use lists (the conversation's and each image brain's own: conversation.update's rule), and the note names any model
+ * in use that won't get the one picked (it is left out of that model's requests, and its payload view says so).
  */
 export function ImageSettings({
   conv,
-  model,
+  models,
   onSave,
 }: {
   conv: Conversation;
-  /** The image model's entry from models.list: undefined while it loads, null if Venice doesn't list it. */
-  model: ModelInfo | null | undefined;
+  /** The image models (useModels): `find` is undefined while one loads, null if Venice doesn't list it. */
+  models: ModelList;
   onSave(patch: ImageSettingsPatch): Promise<unknown>;
 }) {
   const s = conv.settings.image;
-  const c = (model?.constraints ?? {}) as Constraints;
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,6 +48,18 @@ export function ImageSettings({
     }
   }
 
+  const uses = imageModelsInUse(conv);
+  const known = uses.flatMap((use) => {
+    const info = models.find(use.id);
+    return info ? [{ use, info, offers: resolutionsOf(info) }] : [];
+  });
+  const loading = uses.some((u) => models.find(u.id) === undefined) && !models.error;
+  const choices = resolutionChoices(uses, models.find);
+  const named = (x: (typeof known)[number]) => (uses.length > 1 ? `${x.use.id} (${whoseImageModel(x.use)})` : x.use.id);
+  const unsized = known.filter((x) => x.offers.length === 0);
+  const missed = s.resolution === undefined ? [] : known.filter((x) => x.offers.length > 0 && !x.offers.includes(s.resolution!));
+  const defaults = [...new Set(known.map((x) => (x.info.constraints as { defaultResolution?: string } | undefined)?.defaultResolution).filter(Boolean))];
+
   const DEFAULT = "";
   return (
     <div className="space-y-5">
@@ -53,27 +67,37 @@ export function ImageSettings({
         <div className="flex items-center gap-3">
           <span className="flex-1 text-[13px] font-medium text-fg">Resolution</span>
           {busy === "resolution" && <Spinner className="size-3.5 text-faint" />}
-          {Array.isArray(c.resolutions) && (
+          {choices.length > 0 && (
             <Segmented
               label="Resolution"
               value={s.resolution ?? DEFAULT}
               disabled={!!busy}
               options={[
-                { value: DEFAULT, label: "Default", title: c.defaultResolution ? `Send none: the model uses ${c.defaultResolution}` : "Send none" },
-                ...c.resolutions.map((r) => ({ value: r, label: r })),
+                { value: DEFAULT, label: "Default", title: defaults.length === 1 && known.length === 1 ? `Send none: the model uses ${defaults[0]}` : "Send none: each model uses its default" },
+                ...choices.map((r) => ({
+                  value: r,
+                  label: r,
+                  title: uses.length > 1 ? `Offered by ${known.filter((x) => x.offers.includes(r)).map(named).join(", ")}` : undefined,
+                })),
               ]}
               onChange={(r) => void save("resolution", { resolution: r === DEFAULT ? null : r })}
             />
           )}
         </div>
-        {model === undefined ? (
-          <p className="mt-1.5 text-[12.5px] text-faint">Loading what {conv.settings.imageModel} takes…</p>
-        ) : Array.isArray(c.resolutions) ? (
-          <p className="mt-1 text-[12.5px] leading-5 text-faint">Sets the price above. Each image brain picks its own shape (Brains).</p>
+        {loading ? (
+          <p className="mt-1.5 text-[12.5px] text-faint">Loading what {uses.map((u) => u.id).join(" and ")} take…</p>
         ) : (
-          <p className="mt-1.5 text-[12.5px] leading-5 text-faint">
-            {conv.settings.imageModel} has no resolution setting: its size is the brain's shape alone.
-            {s.resolution !== undefined && (
+          <p className="mt-1 text-[12.5px] leading-5 text-faint">
+            {choices.length > 0 && unsized.length === 0 && missed.length === 0 && "Sets the price. Each image brain picks its own shape (Brains)."}
+            {choices.length > 0 && (unsized.length > 0 || missed.length > 0) && (
+              <>
+                Sets the price of {known.filter((x) => x.offers.length > 0).map(named).join(", ")}.
+                {missed.map((x) => ` ${named(x)} doesn't offer ${s.resolution} (it offers ${x.offers.join(", ")}), so it isn't sent there.`).join("")}
+              </>
+            )}
+            {unsized.length > 0 &&
+              ` ${unsized.map(named).join(" and ")} ${unsized.length === 1 ? "has" : "have"} no resolution setting: ${unsized.length === 1 ? "its" : "their"} size is the brain's shape alone.`}
+            {s.resolution !== undefined && !choices.includes(s.resolution) && (
               <>
                 {" "}
                 The resolution {s.resolution} is kept from another model but isn't sent.{" "}

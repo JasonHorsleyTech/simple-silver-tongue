@@ -1,7 +1,7 @@
 import { BrainCircuit } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { errorMessage } from "../../api/errors.ts";
-import { freeMadeName, MAKES_NUMBER, PIN_AS_WORDS, PIN_ROLES, type Brain, type MakesUpdate, type ModelInfo, type PinRole } from "../../api/types.ts";
+import { freeMadeName, MAKES_NUMBER, PIN_AS_WORDS, PIN_ROLES, textModelOf, type Brain, type Conversation, type MakesUpdate, type PinRole } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { SavedLine } from "../../components/SavedLine.tsx";
@@ -10,7 +10,9 @@ import { Spinner } from "../../components/Spinner.tsx";
 import { Switch } from "../../components/Switch.tsx";
 import { TextArea } from "../../components/TextArea.tsx";
 import { BrainBadge } from "../chat/BrainBadge.tsx";
-import { PromptFields, type PromptPatch } from "./PromptFields.tsx";
+import { BrainModels } from "./BrainModels.tsx";
+import type { ModelList } from "./models.ts";
+import { PromptFields, ReasoningFields, type PromptPatch } from "./PromptFields.tsx";
 
 /** How a made brain gets its message, in the picker; PIN_AS_WORDS (the server's) is its tooltip. */
 const PIN_LABEL: Record<PinRole, string> = {
@@ -38,8 +40,9 @@ export function MakerSettings({
   brain,
   brains,
   made,
-  model,
-  imagePlan,
+  settings,
+  textModels,
+  imageModels,
   onImageSettings,
   update,
   busy,
@@ -49,8 +52,10 @@ export function MakerSettings({
   brains: Brain[];
   /** The brains made from this brain's messages that are still here. */
   made: Brain[];
-  model: ModelInfo | null | undefined;
-  imagePlan: string;
+  /** T18: the conversation's settings (its models are the defaults) and Venice's models: the blueprint may name its own. */
+  settings: Conversation["settings"];
+  textModels: ModelList;
+  imageModels: ModelList;
   onImageSettings(): void;
   /** brain.update with `makes` (null removes it). With `what`, the editor shows the spinner and the error. */
   update(makes: MakesUpdate | null, what?: string): Promise<void>;
@@ -192,14 +197,33 @@ export function MakerSettings({
             onChange={(kind) => void update({ blueprint: { kind } }, "bp-kind")}
           />
         </div>
+        <BrainModels
+          idBase={`bp-${brain.id}`}
+          value={m.blueprint}
+          who="each new brain"
+          blueprint
+          settings={settings}
+          textModels={textModels}
+          imageModels={imageModels}
+          reasoning={
+            <ReasoningFields
+              idBase={`bp-${brain.id}`}
+              value={m.blueprint}
+              name="each new brain"
+              blueprint
+              busy={bpBusy}
+              model={textModels.find(textModelOf({ settings }, m.blueprint))}
+              save={save}
+            />
+          }
+          save={(patch) => update({ blueprint: patch })}
+        />
         <PromptFields
           idBase={`bp-${brain.id}`}
           value={m.blueprint}
           name="each new brain"
           blueprint
           busy={bpBusy}
-          model={model}
-          imagePlan={imagePlan}
           onImageSettings={onImageSettings}
           save={save}
         />

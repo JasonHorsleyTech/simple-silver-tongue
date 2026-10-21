@@ -43,6 +43,7 @@ export function SettingsPanel({
   focusBrain,
   onBrainFocused,
   onJumpTo,
+  onOpenBrain,
 }: {
   conv: Conversation;
   tab: SettingsTab;
@@ -64,10 +65,19 @@ export function SettingsPanel({
   onBrainFocused?(): void;
   /** T16: show a message in the scrollback (a pin in a brain's card). */
   onJumpTo(messageId: string): void;
+  /** T18: open a brain's card (from the Conversation tab's list of brains on their own model). */
+  onOpenBrain(brainId: string): void;
 }) {
-  const textModels = useModels("text");
-  const imageModels = useModels("image");
-  const model = textModels.models ? (textModels.models.find((m) => m.id === conv.settings.textModel) ?? null) : undefined;
+  // T18: every model in use (the conversation's, each brain's own, each blueprint's), so one the curated list hasn't
+  // got is still looked up (useModels' find).
+  const textModels = useModels("text", [
+    conv.settings.textModel,
+    ...conv.brains.flatMap((b) => [b.textModel, b.makes?.blueprint.textModel].filter((m): m is string => !!m)),
+  ]);
+  const imageModels = useModels("image", [
+    conv.settings.imageModel,
+    ...conv.brains.flatMap((b) => [b.imageModel, b.makes?.blueprint.imageModel].filter((m): m is string => !!m)),
+  ]);
   const count = (t: SettingsTab) => (t === "brains" ? conv.brains.length : t === "setup" ? conv.setup.length : null);
 
   return (
@@ -114,7 +124,8 @@ export function SettingsPanel({
             )}
             <BrainsTab
               conv={conv}
-              model={model}
+              textModels={textModels}
+              imageModels={imageModels}
               writingBrainId={writingBrainId}
               addNonce={addBrainNonce}
               onBrain={onBrain}
@@ -150,7 +161,7 @@ export function SettingsPanel({
           </div>
         )}
         {tab === "conversation" && (
-          <ConversationTab conv={conv} textModels={textModels} imageModels={imageModels} busy={busy} onConversation={onConversation} />
+          <ConversationTab conv={conv} textModels={textModels} imageModels={imageModels} busy={busy} onConversation={onConversation} onOpenBrain={onOpenBrain} />
         )}
       </div>
     </div>

@@ -2,7 +2,7 @@ import { Check, Copy, Pin, RotateCw, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import { isAllHidden, PIN_AS_WORDS, ROLL_PREVIEW_NOTE, stopNote, type Brain, type ChatMessage, type PinRole, type Preview } from "../../api/types.ts";
+import { isAllHidden, PIN_AS_WORDS, ROLL_PREVIEW_NOTE, stopNote, type Brain, type ChatMessage, type ModelUse, type PinRole, type Preview } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { D20Icon } from "../../components/D20.tsx";
 import { Dialog } from "../../components/Dialog.tsx";
@@ -34,6 +34,9 @@ export type PayloadRequest = { kind: "turn"; draft: string; roll?: boolean } | {
  * A roll-and-send (T09) is previewed with prompt.preview --roll: the die isn't rolled until you send, so the roll's
  * line has {{roll}} where the number will go (marked here), and ROLL_PREVIEW_NOTE says so. "With a roll" in the
  * footer switches it, starting from the composer's die.
+ *
+ * T18: which model the request uses, and whose it is (the brain's own, or the conversation's), above everything else:
+ * `preview.models`, the text model and an image brain's image model.
  */
 export function PayloadDialog({
   conversationId,
@@ -185,6 +188,7 @@ export function PayloadDialog({
         <Notice tone="error">{error}</Notice>
       ) : preview && body ? (
         <div className={cx("space-y-4 transition-opacity", loading && "opacity-60")} aria-busy={loading || undefined}>
+          {preview.models && <ModelsLine models={preview.models} brainName={preview.brainName} />}
           {preview.notes.map((n) => (
             // The stop note says what a visible setting does; the rest warn of something we can't see or that will fail.
             // T16: the pin and maker notes say what a visible setting does, too.
@@ -279,6 +283,26 @@ function ImageRequest({ image, brain }: { image: NonNullable<Preview["image"]>; 
         {"\n}"}
       </pre>
     </section>
+  );
+}
+
+/** T18: "Text model GLM 5.3 · z-ai-glm-5-3 · Co-GM's own (the conversation's is deepseek-v4-1-flash)", and the image model's line. */
+function ModelsLine({ models, brainName }: { models: Preview["models"]; brainName: string }) {
+  const row = (label: string, m: ModelUse) => (
+    <p className="flex flex-wrap items-baseline gap-x-1.5">
+      <span className="text-faint">{label}</span>
+      <span className="text-fg">{m.name ?? m.id}</span>
+      {m.name && <span className="font-mono text-[11.5px] text-muted">{m.id}</span>}
+      <span className="text-faint">
+        · {m.own ? `${brainName}'s own (the conversation's is ${m.conversation})` : "the conversation's"}
+      </span>
+    </p>
+  );
+  return (
+    <div className="space-y-0.5 text-[12.5px] leading-5" aria-label="Models">
+      {row("Text model", models.text)}
+      {models.image && row("Image model", models.image)}
+    </div>
   );
 }
 

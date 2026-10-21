@@ -9,8 +9,11 @@ import { refreshConversations } from "../conversations/store.ts";
 import { useModels } from "../settings/models.ts";
 import { FooterMenu } from "./MessageLinks.tsx";
 
-/** What a message's "Clone from here" needs of its conversation (kept small and stable, so MessageItem's memo holds). */
-export type CloneSource = { id: string; title: string; textModel: string; count: number };
+/**
+ * What a message's "Clone from here" needs of its conversation (kept small and stable, so MessageItem's memo holds).
+ * T18: `ownText`, the brains with a text model of their own, which they keep in the copy.
+ */
+export type CloneSource = { id: string; title: string; textModel: string; count: number; ownText: Array<{ name: string; model: string }> };
 
 /**
  * "Clone from here" on a message (conversation.clone --through): a new conversation with the story up to and
@@ -19,6 +22,9 @@ export type CloneSource = { id: string; title: string; textModel: string; count:
  * text model is the one to play the copy with, and Enter clones and opens the copy. Nothing typed after the dash
  * names the copy after its model ("Tavern - GLM 5.3"). From the last message, the composer's unsent text goes along,
  * so one action can be played under several models: type it, then clone, clone, clone.
+ *
+ * T18: the model picked is the copy's conversation model, for every brain without one of its own; a brain with its
+ * own keeps it (conversation.clone --text-model), and the menu says which.
  */
 export function CloneMenu({ source, position, messageId, onOpenChange }: { source: CloneSource; position: number; messageId: string; onOpenChange(open: boolean): void }) {
   return (
@@ -112,6 +118,19 @@ function CloneForm({ source, position, messageId }: { source: CloneSource; posit
             </option>
           ))}
         </select>
+        {source.ownText.length > 0 && (
+          <p className="mt-1 text-[11.5px] leading-4 text-faint">
+            For every brain but{" "}
+            {source.ownText.map((o, i) => (
+              <span key={o.name}>
+                {i > 0 && (i === source.ownText.length - 1 ? " and " : ", ")}
+                <span className="text-muted">{o.name}</span>
+              </span>
+            ))}
+            , which {source.ownText.length === 1 ? "keeps its own" : "keep their own"} (
+            {source.ownText.map((o) => models?.find((m) => m.id === o.model)?.name ?? o.model).join(", ")}).
+          </p>
+        )}
         {modelsError && <p className="mt-1 text-[11.5px] text-amber-200/85">Couldn't load Venice's model list: the copy keeps this one's model.</p>}
       </div>
       {draft.trim() && <p className="text-[11.5px] leading-4 text-faint">Your unsent message goes along, ready to send there.</p>}

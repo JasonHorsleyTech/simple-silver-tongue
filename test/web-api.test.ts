@@ -9,6 +9,7 @@ import { ApiError, diagnosticsOf, errorMessage, retryOf } from "../web/src/api/e
 import { readNdjson } from "../web/src/api/ndjson.ts";
 import { forBrowser } from "../web/src/lib/format.ts";
 import { brainActivity, fitRow, madeFromIndex, makerOf, pinsByMessage } from "../web/src/lib/cast.ts";
+import { imageModelsInUse, otherTextModels, ownModels, resolutionChoices, whoseImageModel } from "../web/src/lib/models.ts";
 import { brainInitials } from "../web/src/lib/initials.ts";
 import { freshTakeTarget, mergedThought, prefillThought, thoughtBesideImage } from "../web/src/lib/thought.ts";
 import { newBrain, newConversation, newMuse } from "../src/conversations/defaults.ts";
@@ -17,10 +18,11 @@ import { rollLineIndex, rollView } from "../web/src/lib/rolls.ts";
 import { STOP_BILL_NOTE as SERVER_STOP_NOTE } from "../src/commands/chat.ts";
 import { BRAIN_COLORS as SERVER_COLORS, DEFAULT_TEMPLATES } from "../src/conversations/defaults.ts";
 import { REASONING_NOTE as SERVER_REASONING_NOTE } from "../src/conversations/prompt.ts";
-import { IMAGE_STOP_NOTE as SERVER_IMAGE_STOP_NOTE } from "../src/conversations/wording.ts";
+import { effortNote as SERVER_EFFORT_NOTE, IMAGE_STOP_NOTE as SERVER_IMAGE_STOP_NOTE } from "../src/conversations/wording.ts";
 import type { Brain, Conversation, LedgerMessage } from "../src/conversations/types.ts";
 import {
   BRAIN_COLORS,
+  effortNote,
   formatDiagnostics,
   freeMadeName,
   IMAGE_STOP_NOTE,
@@ -28,6 +30,7 @@ import {
   REASONING_NOTE,
   ROLL_PREVIEW_NOTE,
   STOP_BILL_NOTE,
+  textModelOf,
   type Commands,
   type NoArgs,
   type StreamCommands,
@@ -300,6 +303,71 @@ describe("web API client against the real server", () => {
 
     assert.equal(REASONING_NOTE, SERVER_REASONING_NOTE, "the brain editor shows the server's own sentence");
     assert.deepEqual(BRAIN_COLORS, SERVER_COLORS, "the color picker offers the server's palette");
+  });
+
+  test("T18: a model per brain: the web client's shapes, and the browser's rules for whose model and which resolutions agree with the server", async () => {
+    const api = client();
+    await api.call("auth.login", { username: "web-plain", password: "" });
+    let conv = await api.call("conversation.create", { title: "T18 web", systemPrompt: "You are the GM." });
+    const gm = conv.brains[0]!;
+    const painter = await api.call("brain.add", { conversation: conv.id, name: "Scene Painter", systemPrompt: "You paint.", kind: "image" });
+
+    // A brain's own text model, and null back to the conversation's (the card's "Conversation default").
+    const own = await api.call("brain.update", { conversation: conv.id, brain: gm.id, textModel: "z-ai-glm-5-3" });
+    assert.equal(own.textModel, "z-ai-glm-5-3");
+    conv = await api.call("conversation.get", { id: conv.id });
+    assert.equal(textModelOf(conv, conv.brains[0]!), "z-ai-glm-5-3");
+    assert.deepEqual(
+      ownModels(conv).map((o) => [o.brain.name, o.text, o.image]),
+      [["Assistant", "z-ai-glm-5-3", undefined]],
+    );
+    assert.deepEqual(otherTextModels(conv).map((o) => o.brain.name), ["Assistant"], "the chat header's brains on another model");
+    // The payload view's line: whose model it is.
+    const preview = await api.call("prompt.preview", { conversation: conv.id, brain: gm.id });
+    assert.deepEqual(preview.models.text, { id: "z-ai-glm-5-3", name: "GLM 5.3", own: true, conversation: conv.settings.textModel });
+    // A maker's blueprint names its brains' model the same way.
+    const maker = await api.call("brain.update", {
+      conversation: conv.id,
+      brain: gm.id,
+      textModel: null,
+      makes: { name: "Character {{n}}", blueprint: { systemPrompt: "You are one person.", textModel: "venice-uncensored-1-2" } },
+    });
+    assert.equal(maker.textModel, undefined);
+    assert.equal(maker.makes?.blueprint.textModel, "venice-uncensored-1-2");
+
+    // models.list --all, which the pickers ask only for a model the curated list hasn't got.
+    const all = (await api.call("models.list", { type: "image", all: true })).models;
+    const find = (id: string) => all.find((m) => m.id === id) ?? null;
+
+    // The resolutions the Images section offers are exactly the ones conversation.update accepts: any that an image
+    // model in use lists (the conversation's, or an image brain's own). One painter on each image model in turn.
+    for (const m of all) {
+      await api.call("conversation.update", { id: conv.id, settings: { image: { resolution: null } } });
+      await api.call("brain.update", { conversation: conv.id, brain: painter.id, imageModel: m.id });
+      conv = await api.call("conversation.get", { id: conv.id });
+      const uses = imageModelsInUse(conv);
+      assert.deepEqual(
+        uses.map((u) => [u.id, u.conversation, u.brains.map((b) => b.name)]),
+        m.id === conv.settings.imageModel ? [[m.id, true, ["Scene Painter"]]] : [[conv.settings.imageModel, true, []], [m.id, false, ["Scene Painter"]]],
+      );
+      const offered = resolutionChoices(uses, find);
+      for (const res of ["1K", "2K", "4K"]) {
+        const accepted = await api.call("conversation.update", { id: conv.id, settings: { image: { resolution: res } } }).then(
+          () => true,
+          (e: unknown) => {
+            assert.ok(e instanceof ApiError && e.status === 400, String(e));
+            return false;
+          },
+        );
+        assert.equal(offered.includes(res), accepted, `${res} with the painter on ${m.id}`);
+      }
+    }
+    await api.call("brain.update", { conversation: conv.id, brain: painter.id, imageModel: "krea-2-turbo" });
+    conv = await api.call("conversation.get", { id: conv.id });
+    assert.deepEqual(imageModelsInUse(conv).map(whoseImageModel), ["the conversation's", "Scene Painter's"]);
+    const back = await api.call("brain.update", { conversation: conv.id, brain: painter.id, imageModel: null });
+    assert.equal(back.imageModel, undefined);
+    assert.equal(effortNote("DeepSeek V4.1 Flash", "medium", ["none", "low", "high", "max"], "GM"), SERVER_EFFORT_NOTE("DeepSeek V4.1 Flash", "medium", ["none", "low", "high", "max"], "GM"));
   });
 
   test("T09: the web client's roll-and-send, message.roll, roll preview and roll template are what the server accepts", async () => {

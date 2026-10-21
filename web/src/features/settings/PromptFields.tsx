@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { alwaysReasonsNote, DEFAULT_SHAPE, REASONING_NOTE, STOP_REASONING_NOTE, type Brain, type BrainFields, type ModelInfo } from "../../api/types.ts";
+import { alwaysReasonsNote, DEFAULT_SHAPE, effortNote, REASONING_NOTE, STOP_REASONING_NOTE, type Brain, type BrainFields, type ModelInfo } from "../../api/types.ts";
 import { Notice } from "../../components/Notice.tsx";
 import { SavedLine } from "../../components/SavedLine.tsx";
 import { SavedText } from "../../components/SavedText.tsx";
@@ -12,11 +12,11 @@ export type PromptValue = Pick<Brain, "kind" | "systemPrompt" | "reasoning" | "f
 export type PromptPatch = Pick<BrainFields, "systemPrompt" | "reasoning" | "finalReminder" | "stop" | "safeMode" | "shape" | "tool">;
 
 /**
- * Every text that shapes what a brain is sent (system prompt, reasoning, final reminder, stop sequences, and an image
- * brain's safe mode, shape and tool text), for a brain (`blueprint` false) or for the blueprint the brains a maker
- * makes start from (T16): the same fields, the same rules, worded for "each new brain". Long texts save on purpose;
- * switches save on click. `save(patch, what)`: with `what`, the caller shows the spinner and the error; without, the
- * field shows its own error.
+ * Every text that shapes what a brain is sent (system prompt, final reminder, stop sequences, and an image brain's
+ * safe mode, shape and tool text), for a brain (`blueprint` false) or for the blueprint the brains a maker makes start
+ * from (T16): the same fields, the same rules, worded for "each new brain". Long texts save on purpose; switches save
+ * on click. `save(patch, what)`: with `what`, the caller shows the spinner and the error; without, the field shows its
+ * own error. T18: reasoning is ReasoningFields, shown with the models (BrainModels), since it follows the text model.
  */
 export function PromptFields({
   idBase,
@@ -24,8 +24,6 @@ export function PromptFields({
   name,
   blueprint,
   busy,
-  model,
-  imagePlan,
   onImageSettings,
   save,
   afterSystemPrompt,
@@ -38,17 +36,11 @@ export function PromptFields({
   blueprint?: boolean;
   /** The `what` being saved right now, if any. */
   busy: string | null;
-  model: ModelInfo | null | undefined;
-  imagePlan: string;
   onImageSettings(): void;
   save(patch: PromptPatch, what?: string): Promise<void>;
   /** Right after the system prompt (T16: a brain's pinned messages, sent right after its system prompt and the setup). */
   afterSystemPrompt?: ReactNode;
 }) {
-  const r = model?.reasoning;
-  const canReason = model === undefined ? true : !!r?.supported; // unknown while loading: don't block
-  const efforts = (r?.effortOptions ?? []).filter((e) => e !== "none");
-  const effortChoices = efforts.includes(value.reasoning.effort) || efforts.length === 0 ? efforts : [value.reasoning.effort, ...efforts];
   const id = (k: string) => `${k}-${idBase}`;
   const each = blueprint ? "each new brain" : "this brain";
   const stopSubject = { id: idBase, name: blueprint ? "a new brain" : name, kind: value.kind, stop: value.stop };
@@ -70,53 +62,6 @@ export function PromptFields({
       />
 
       {afterSystemPrompt}
-
-      <div className="space-y-3">
-        <Switch
-          id={id("rs")}
-          label="Reasoning"
-          description={
-            canReason
-              ? blueprint
-                ? "For each new brain. Shown collapsed above its replies and never sent back."
-                : "Off by default. The reasoning is shown collapsed above the reply and never sent back."
-              : `${model?.name ?? "This model"} doesn't reason, so this setting sends nothing.`
-          }
-          checked={value.reasoning.enabled}
-          disabled={!canReason}
-          busy={busy === "reasoning"}
-          onChange={(enabled) => void save({ reasoning: { enabled } }, "reasoning")}
-        />
-        {!value.reasoning.enabled && canReason && r?.always && model && (
-          <Notice tone="warn">{alwaysReasonsNote(model.name, r.always, blueprint ? "each new brain" : name)}</Notice>
-        )}
-        {value.reasoning.enabled && canReason && (
-          <>
-            {effortChoices.length > 0 && (
-              <div className="flex items-center gap-3">
-                <label htmlFor={id("re")} className="text-[13px] text-muted">
-                  Effort
-                </label>
-                <select
-                  id={id("re")}
-                  value={value.reasoning.effort}
-                  disabled={busy === "effort"}
-                  onChange={(e) => void save({ reasoning: { effort: e.target.value } }, "effort")}
-                  className="h-8 rounded-md border border-line-strong bg-raised px-2 text-[13px] text-fg outline-none focus:border-focus/60"
-                >
-                  {effortChoices.map((e) => (
-                    <option key={e} value={e}>
-                      {e}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            <Notice tone="warn">{REASONING_NOTE}</Notice>
-            {value.stop.length > 0 && <Notice tone="warn">{STOP_REASONING_NOTE}</Notice>}
-          </>
-        )}
-      </div>
 
       <div className="space-y-3">
         <Switch
@@ -154,9 +99,9 @@ export function PromptFields({
           />
           <ShapePicker value={value.shape ?? DEFAULT_SHAPE} disabled={busy === "shape"} busy={busy === "shape"} onChange={(shape) => void save({ shape }, "shape")} />
           <p className="-mt-2 text-[12.5px] leading-5 text-faint">
-            Painted with <span className="text-muted">{imagePlan}</span>, like every image brain here.{" "}
+            The resolution, format, watermark and negative prompt are the conversation's, for every image brain.{" "}
             <button type="button" onClick={onImageSettings} className="text-muted underline decoration-line-strong underline-offset-4 hover:text-fg">
-              Image model and price
+              Image settings
             </button>
           </p>
           <div>
@@ -204,5 +149,89 @@ export function PromptFields({
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * The reasoning switch, its effort level and its notes, for a brain or a blueprint. T18: `model` is the brain's text
+ * model (textModelOf: its own, or the conversation's), so the switch, the levels offered, the always-reasons note and
+ * the unlisted-effort note (effortNote, the payload view's words) are that model's.
+ */
+export function ReasoningFields({
+  idBase,
+  value,
+  name,
+  blueprint,
+  busy,
+  model,
+  save,
+}: {
+  idBase: string;
+  value: Pick<Brain, "reasoning" | "stop">;
+  name: string;
+  blueprint?: boolean;
+  busy: string | null;
+  /** The brain's text model: undefined while the list loads, null when Venice doesn't list it (neither blocks the switch). */
+  model: ModelInfo | null | undefined;
+  save(patch: Pick<BrainFields, "reasoning">, what: string): Promise<void>;
+}) {
+  const r = model?.reasoning;
+  const canReason = !model || !!r?.supported; // unknown: don't block
+  const efforts = (r?.effortOptions ?? []).filter((e) => e !== "none");
+  const effortChoices = efforts.includes(value.reasoning.effort) || efforts.length === 0 ? efforts : [value.reasoning.effort, ...efforts];
+  // T18 QA-3: a level the model doesn't list (kept from another model) is sent as set: the payload view's words.
+  const unlisted =
+    model && r?.effortOptions && !r.effortOptions.includes(value.reasoning.effort)
+      ? effortNote(model.name, value.reasoning.effort, r.effortOptions, blueprint ? "each new brain" : name)
+      : null;
+  const id = (k: string) => `${k}-${idBase}`;
+  return (
+    <div className="space-y-3">
+      <Switch
+        id={id("rs")}
+        label="Reasoning"
+        description={
+          canReason
+            ? blueprint
+              ? "For each new brain. Shown collapsed above its replies and never sent back."
+              : "Off by default. The reasoning is shown collapsed above the reply and never sent back."
+            : `${model?.name ?? "This model"} doesn't reason, so this setting sends nothing.`
+        }
+        checked={value.reasoning.enabled}
+        disabled={!canReason}
+        busy={busy === "reasoning"}
+        onChange={(enabled) => void save({ reasoning: { enabled } }, "reasoning")}
+      />
+      {!value.reasoning.enabled && canReason && r?.always && model && (
+        <Notice tone="warn">{alwaysReasonsNote(model.name, r.always, blueprint ? "each new brain" : name)}</Notice>
+      )}
+      {value.reasoning.enabled && canReason && (
+        <>
+          {effortChoices.length > 0 && (
+            <div className="flex items-center gap-3">
+              <label htmlFor={id("re")} className="text-[13px] text-muted">
+                Effort
+              </label>
+              <select
+                id={id("re")}
+                value={value.reasoning.effort}
+                disabled={busy === "effort"}
+                onChange={(e) => void save({ reasoning: { effort: e.target.value } }, "effort")}
+                className="h-8 rounded-md border border-line-strong bg-raised px-2 text-[13px] text-fg outline-none focus:border-focus/60"
+              >
+                {effortChoices.map((e) => (
+                  <option key={e} value={e}>
+                    {e}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {unlisted && <Notice tone="warn">{unlisted}</Notice>}
+          <Notice tone="warn">{REASONING_NOTE}</Notice>
+          {value.stop.length > 0 && <Notice tone="warn">{STOP_REASONING_NOTE}</Notice>}
+        </>
+      )}
+    </div>
   );
 }

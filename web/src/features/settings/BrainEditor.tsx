@@ -2,7 +2,7 @@ import { Braces, BrainCircuit, LocateFixed, Plus, Sparkles, Star, Trash2 } from 
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import { BRAIN_COLORS, isMuse, MUSE_NAME, type Brain, type BrainFields, type LedgerMessage, type ModelInfo } from "../../api/types.ts";
+import { BRAIN_COLORS, isMuse, MUSE_NAME, textModelOf, type Brain, type BrainFields, type Conversation, type LedgerMessage } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { SavedLine } from "../../components/SavedLine.tsx";
@@ -10,12 +10,14 @@ import { Segmented } from "../../components/Segmented.tsx";
 import { Spinner } from "../../components/Spinner.tsx";
 import { cx } from "../../lib/cx.ts";
 import { BrainBadge } from "../chat/BrainBadge.tsx";
+import { BrainModels } from "./BrainModels.tsx";
 import { MakerSettings } from "./MakerSettings.tsx";
+import type { ModelList } from "./models.ts";
 import { messageSnippet, PinnedMessages } from "./PinnedMessages.tsx";
-import { PromptFields } from "./PromptFields.tsx";
+import { PromptFields, ReasoningFields } from "./PromptFields.tsx";
 
 /**
- * One brain, in full: who it is (name, color, kind, default), then every text that shapes what it is sent
+ * One brain, in full: who it is (name, color, kind, default), its models (T18: the conversation's, or its own), then every text that shapes what it is sent
  * (system prompt, its pinned messages, reasoning, final reminder, stop sequences, and an image brain's safe mode and
  * tool text), then (T16) whether it makes brains and their blueprint, then delete. A brain made by another says so at
  * the top: its words are its own copy of that blueprint. Long texts save on purpose (Save / ⌘ Enter); switches,
@@ -27,8 +29,9 @@ export function BrainEditor({
   isDefault,
   messageCount,
   writing,
-  model,
-  imagePlan,
+  settings,
+  textModels,
+  imageModels,
   onSaved,
   onDefault,
   onDeleted,
@@ -56,9 +59,10 @@ export function BrainEditor({
   messageCount: number;
   /** It is writing a reply right now. */
   writing: boolean;
-  model: ModelInfo | null | undefined;
-  /** How this conversation paints (image model and size), for an image brain: "z-image-turbo · 1216 × 832". */
-  imagePlan: string;
+  /** T18: the conversation's settings (its models are the defaults), and Venice's models to pick from and look up. */
+  settings: Conversation["settings"];
+  textModels: ModelList;
+  imageModels: ModelList;
   onSaved(b: Brain): void;
   onDefault(brainId: string): void;
   onDeleted(brainId: string): void;
@@ -114,6 +118,8 @@ export function BrainEditor({
   const id = (k: string) => `${k}-${brain.id}`;
 
   const madeFrom = brain.madeFrom ? messages.find((m) => m.id === brain.madeFrom) : undefined;
+  /** T18: its text model's caps (its own, or the conversation's): the reasoning switch and its notes follow them. */
+  const model = textModels.find(textModelOf({ settings }, brain));
 
   return (
     <div className="space-y-6">
@@ -222,14 +228,24 @@ export function BrainEditor({
         </p>
       </div>
 
+      {/* T18: the conversation's models, or its own. */}
+      <BrainModels
+        idBase={brain.id}
+        value={brain}
+        who={brain.name}
+        settings={settings}
+        textModels={textModels}
+        imageModels={imageModels}
+        reasoning={<ReasoningFields idBase={brain.id} value={brain} name={brain.name} busy={busy} model={model} save={update} />}
+        save={(patch) => update(patch)}
+      />
+
       {/* T16: its own words and how it is asked; its pinned messages right after the system prompt, as they are sent. */}
       <PromptFields
         idBase={brain.id}
         value={brain}
         name={brain.name}
         busy={busy}
-        model={model}
-        imagePlan={imagePlan}
         onImageSettings={onImageSettings}
         save={update}
         afterSystemPrompt={
@@ -248,8 +264,9 @@ export function BrainEditor({
         brain={brain}
         brains={brains}
         made={made}
-        model={model}
-        imagePlan={imagePlan}
+        settings={settings}
+        textModels={textModels}
+        imageModels={imageModels}
         onImageSettings={onImageSettings}
         busy={busy}
         update={(makes, what) => update({ makes }, what)}
