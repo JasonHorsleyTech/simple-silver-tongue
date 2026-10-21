@@ -395,7 +395,7 @@ everyone else's framed with the templates). Talk to it with turn --brain <name>.
 Its final reminder is on and pre-filled with an editable example, sent as the last message of its requests;
 change it with --final-reminder.content, or turn it off with --no-final-reminder.enabled.
 An image brain (--kind image) answers with a forced generate_image call: its reply is an image prompt, which is
-painted with the conversation's image model. It gets editable tool text, safe mode on (Venice blurs adult content)
+painted with its image model (the conversation's, unless it has its own). It gets editable tool text, safe mode on (Venice blurs adult content)
 and a shape (--shape portrait, square or landscape; landscape by default).
 A text brain stops before "${FRAMING_STOP}" (--stop), so it can't write a framing line for another speaker.
 It uses the conversation's models unless you give it its own (T18): --text-model, and for an image brain

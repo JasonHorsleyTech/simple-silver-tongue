@@ -204,7 +204,10 @@ text. The thought template is what a fresh take's note from the Muse starts as (
     const size = im.resolution ?? "default resolution";
     const line = `Updated ${c.id} "${c.title}" · ${st.textModel} · max_tokens ${st.maxTokens ?? "-"} · temperature ${st.temperature ?? "-"} · images ${st.imageModel}, ${size}, ${im.format}${im.hideWatermark ? ", no watermark" : ""}${im.negativePrompt?.trim() ? ", negative prompt" : ""}`;
     // T18: the conversation's models are the defaults; a brain with its own keeps it.
-    const own = c.brains.flatMap((b) => [b.textModel ? `${b.name} (${b.textModel})` : "", b.kind === "image" && b.imageModel ? `${b.name} (images: ${b.imageModel})` : ""].filter(Boolean));
+    const own = c.brains.flatMap((b) => {
+      const models = [b.textModel ?? "", b.kind === "image" && b.imageModel ? `images: ${b.imageModel}` : ""].filter(Boolean);
+      return models.length ? [`${b.name} (${models.join("; ")})`] : [];
+    });
     return own.length ? `${line}
 Brains on a model of their own, which they keep: ${own.join(", ")}. The others use the conversation's.` : line;
   },

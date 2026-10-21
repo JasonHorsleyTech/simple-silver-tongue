@@ -226,7 +226,9 @@ describe("campaigns: the example, import, clone (T07)", () => {
     // T07 QA-8: one full stop at the end, not two.
     const r0 = await t.cli(["conversation.import", "--campaign", "-"], { stdin: bad((c) => (c.templates.player = "x")) });
     assert.doesNotMatch(r0.stderr, /\.\./);
-    await fails(["conversation.import", "--campaign", "-"], /z-image-turbo has no resolution setting/, bad((c) => (c.settings.image.resolution = "2K")));
+    // T18 QA-1: a resolution the conversation's image model doesn't take imports (it isn't sent there, as after a model
+    // switch); only one no Venice image model offers is refused.
+    await fails(["conversation.import", "--campaign", "-"], /settings\.image\.resolution: no Venice image model offers "2k"/, bad((c) => (c.settings.image.resolution = "2k")));
     await fails(["conversation.import", "--campaign", "-"], /brains\.1\.shape/, bad((c) => (c.brains[1].shape = "round")));
     await fails(["conversation.import", "--example", "nope"], /No example "nope"\. Examples: dnd-tavern/);
     await fails(["conversation.import"], /Pass one of --example/);

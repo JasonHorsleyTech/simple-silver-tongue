@@ -3,8 +3,8 @@
  * Private only (Venice keeps no data), one per family (its newest or best), plus an uncensored twin where
  * there is one (one anonymized exception, Jason's pick: Abliterated Large V2, GLM 5.3's uncensored twin). Left out
  * on purpose: anonymized models (proxied to OpenAI, Anthropic, Google, ...), the e2ee-*
- * models (they need client-side encryption and can't call tools), models being retired, and text models that
- * can't call tools (an image brain needs one). models.list shows these, in this order; `models.list --all`
+ * models (they need client-side encryption and can't call tools), models being retired, text models that
+ * can't call tools (an image brain needs one), and Grok 4.7 (a hidden prompt of its own, below). models.list shows these, in this order; `models.list --all`
  * shows everything Venice has, and conversation.update still takes any Venice model by id.
  */
 export const CURATED_TEXT: readonly string[] = [
@@ -13,12 +13,11 @@ export const CURATED_TEXT: readonly string[] = [
   // reasoning low it worked 1 in 1. It may need reasoning on for that (a fresh take for a brain with no reminder).
   "google-gemma-4-31b-it",
   "gemma-4-uncensored",
-  // T15 (2026-10-15): it reported 2,419 prompt tokens for a request the other models counted at about 1,200. T18
-  // (2026-10-21) measured it: Grok adds ~1,240 prompt tokens of its own to every request, whatever the body (a two-line
-  // body: 21 on DeepSeek, 1,261 on Grok; the GM's: 1,185 and 2,406), 1,152 of them cached even on a first call. A
-  // provider-side prompt we can't see or edit, against hard requirement 1. It also reasons with reasoning off
-  // (disable_thinking: true still gave 50-221 reasoning tokens, billed, none of it streamed). docs/design.md, "Models".
-  "grok-4-7",
+  // Grok 4.7 (grok-4-7) is out, Jason's call (2026-10-21, T18 triage), on the T18 measurement: it adds ~1,240 prompt
+  // tokens of its own to every request, whatever the body (a two-line body: 21 on DeepSeek, 1,261 on Grok; the GM's:
+  // 1,185 and 2,406), 1,152 of them cached even on a first call. A provider-side prompt we can't see or edit, against
+  // hard requirement 1. It also reasons with reasoning off (disable_thinking: true still gave 50-221 reasoning tokens,
+  // billed, none of it streamed). Still usable by id. docs/design.md, "Models".
   "kimi-k3",
   "kimi-k2-6",
   "kimi-k2-5",
@@ -38,6 +37,9 @@ export const CURATED_TEXT: readonly string[] = [
   "minimax-m3-preview",
   "venice-uncensored-1-2",
   "venice-uncensored-role-play",
+  // T18 QA-2 (2026-10-21): as an image brain's text model it wrote a framing line and a sentence before its forced
+  // generate_image call (the text is set aside), and once looped in that text for over two minutes with no call at
+  // all. An image brain's reply now ends after IMAGE_TEXT_LIMIT characters of text with no call (turn.ts).
   "mistral-small-3-2-24b-instruct",
   "nvidia-nemotron-3-ultra-550b-a55b",
   "xiaomi-mimo-v2-6-flash",

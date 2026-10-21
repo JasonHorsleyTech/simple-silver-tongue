@@ -102,11 +102,12 @@ describe("CLI end to end against an in-process server and mock Venice", () => {
       { id: "wai-Illustrious", type: "image" },
       { id: "openai-gpt-55", type: "text" },
       { id: "e2ee-kimi-k3-p", type: "text" },
-      { id: "grok-4-7", type: "text" },
+      { id: "kimi-k3", type: "text" },
+      { id: "grok-4-7", type: "text" }, // out since T18 triage: a hidden prompt of its own (curated.ts)
       { id: "z-image-turbo", type: "image" },
       { id: "deepseek-v4-1-flash", type: "text" },
     ];
-    assert.deepEqual(curated(venice).map((m) => m.id), ["deepseek-v4-1-flash", "grok-4-7", "z-image-turbo", "wai-Illustrious"], "text first, curated order, the rest left out");
+    assert.deepEqual(curated(venice).map((m) => m.id), ["deepseek-v4-1-flash", "kimi-k3", "z-image-turbo", "wai-Illustrious"], "text first, curated order, the rest left out");
 
     r = await t.cli(["venice.balance", "--json"]);
     assert.equal(JSON.parse(r.stdout).usd, 10);

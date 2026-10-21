@@ -110,6 +110,13 @@ export function imagePriceUsd(model: ModelInfo, body: ImageRequest): number | un
   return (c.defaultQuality ? usd(p.quality?.[res]?.[c.defaultQuality]) : undefined) ?? usd(p.resolutions?.[res]);
 }
 
+/** The resolutions this model lists (none for a model sized by width × height, or by aspect ratio alone). */
+export const resolutionsOf = (model: ModelInfo): string[] => {
+  const r = constraintsOf(model).resolutions;
+  return Array.isArray(r) ? r : [];
+};
+export const offersResolution = (model: ModelInfo, resolution: string) => resolutionsOf(model).includes(resolution);
+
 /**
  * Why these image settings can't be used with this model, or null (conversation.update). Only the fields being
  * set now are checked: a resolution left over from an earlier model is just not sent (buildImageRequest's notes

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import type { Brain, ChatRequest, Conversation, ImageRequest, LedgerMessage } from "../src/conversations/types.ts";
-import { alwaysReasonsNote, REASONING_NOTE } from "../src/conversations/wording.ts";
+import { IMAGE_TEXT_LIMIT } from "../src/conversations/turn.ts";
+import { alwaysReasonsNote, effortNote, REASONING_NOTE } from "../src/conversations/wording.ts";
 import { createUser } from "../src/storage/users.ts";
 import { startTestServer } from "./helpers.ts";
 
@@ -154,6 +155,18 @@ describe("a model per brain (T18)", () => {
     // A resolution only the painter's own model lists is accepted, and sent to it alone.
     await ok(["conversation.update", "--id", c, "--settings.image.resolution", "2K"]);
     assert.equal((await preview(c, "--brain", "Scene Painter")).image.params.resolution, "2K");
+    // T18 QA-1: and its export imports, 2K and the painter's own model kept (the import checked the conversation's model alone).
+    const back = (await json(["conversation.import", "--campaign", "-"], JSON.stringify(await get(c)))) as Conversation;
+    assert.deepEqual([back.settings.imageModel, back.settings.image.resolution, back.brains.find((b) => b.name === "Scene Painter")?.imageModel], ["z-image-turbo", "2K", "krea-2-turbo"]);
+    assert.equal((await preview(back.id, "--brain", "Scene Painter")).image.params.resolution, "2K");
+    // Its older sibling: a resolution left from an earlier image model, which no model in use takes. Not sent, and the
+    // payload view says so, as before the export; the import takes it too.
+    const stale = await get(c);
+    for (const b of stale.brains) delete b.imageModel;
+    const st = (await json(["conversation.import", "--campaign", "-"], JSON.stringify(stale))) as Conversation;
+    const sp = await preview(st.id, "--brain", "Scene Painter");
+    assert.deepEqual([st.settings.image.resolution, sp.image.params.resolution], ["2K", undefined]);
+    assert.match(sp.image.notes.join("\n"), /The resolution 2K is not sent: z-image-turbo has no resolution setting/);
 
     // Retry and an edited prompt paint with its own model too.
     await ok(["image.retry", "--conversation", c, "--message", m.id]);
@@ -186,12 +199,13 @@ describe("a model per brain (T18)", () => {
     let r = await t.cli(["conversation.import", "--campaign", "-"], { stdin: JSON.stringify(badModel) });
     assert.equal(r.code, 1);
     assert.match(r.stderr, /The campaign: brains\.1\.textModel: Venice has no text model "no-such-model"/);
-    const textImage = structuredClone(doc);
-    textImage.brains[1]!.imageModel = "krea-2-turbo";
-    r = await t.cli(["conversation.import", "--campaign", "-"], { stdin: JSON.stringify(textImage) });
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /brains\.1: safe mode, shape, tool text and an image model are for image brains/);
     assert.equal((await json(["conversation.list"])).conversations.length, count);
+    // T18 QA-4: an image model (or tool text, safe mode, shape) on a text brain is what brain.update --kind text leaves
+    // behind, unused: the import drops it rather than refusing the app's own export.
+    const textImage = structuredClone(doc);
+    Object.assign(textImage.brains[1]!, { imageModel: "krea-2-turbo", safeMode: false, tool: { name: "generate_image" } });
+    const ti = (await json(["conversation.import", "--campaign", "-"], JSON.stringify(textImage))) as Conversation;
+    assert.deepEqual([ti.brains[1]!.kind, ti.brains[1]!.imageModel, ti.brains[1]!.safeMode, ti.brains[1]!.tool], ["text", undefined, undefined, undefined]);
 
     // Clone under another model: the conversation's moves, the Co-GM keeps its own, and the answer says so.
     const clone = await ok(["conversation.clone", "--id", c, "--title", "Under GLM", "--text-model", "z-ai-glm-5-3"]);
@@ -214,5 +228,50 @@ describe("a model per brain (T18)", () => {
     const badBlueprint = await t.cli(["brain.update", "--conversation", c, "--brain", "Character Creator", "--makes.blueprint.image-model", "krea-2-turbo"]);
     assert.equal(badBlueprint.code, 1);
     assert.match(badBlueprint.stderr, /an image model are for image brains, and Character Creator makes text brains/);
+
+    // T18 QA-4: an image blueprint switched to text keeps its image model and tool text, unused; its export imports.
+    await ok(["brain.add", "--conversation", c, "--name", "Pic Maker", "--system-prompt", "You make painters.", "--makes.name", "Pic {{n}}", "--makes.blueprint.kind", "image", "--makes.blueprint.system-prompt", "You paint.", "--makes.blueprint.image-model", "krea-2-turbo"]);
+    await ok(["brain.update", "--conversation", c, "--brain", "Pic Maker", "--makes.blueprint.kind", "text"]);
+    const exported = await get(c);
+    assert.equal(exported.brains.find((b) => b.name === "Pic Maker")?.makes?.blueprint.imageModel, "krea-2-turbo", "kept in the conversation, unused");
+    const reimported = (await json(["conversation.import", "--campaign", "-"], JSON.stringify(exported))) as Conversation;
+    const bp = reimported.brains.find((b) => b.name === "Pic Maker")!.makes!.blueprint;
+    assert.deepEqual([bp.kind, bp.imageModel, bp.tool], ["text", undefined, undefined]);
+  });
+
+  test("an effort level the brain's model doesn't list is sent as set, with a note (T18 QA-3)", async () => {
+    const { c } = await table();
+    await ok(["brain.update", "--conversation", c, "--reasoning.enabled", "--reasoning.effort", "medium"]);
+    const p = await preview(c, "--content", "Hi");
+    assert.equal(p.body.reasoning_effort, "medium");
+    assert.ok(p.notes.includes(effortNote("DeepSeek V4.1 Flash", "medium", ["none", "low", "high", "max"], "Game Master")), p.notes.join("\n"));
+    assert.match(p.notes.join("\n"), /it lists low, high, max\)/);
+    await ok(["brain.update", "--conversation", c, "--reasoning.effort", "high"]);
+    assert.ok(!(await preview(c, "--content", "Hi")).notes.some((n: string) => /doesn't list the reasoning effort/.test(n)));
+  });
+
+  test("an image brain that writes text and no tool call is ended after IMAGE_TEXT_LIMIT characters, the lock freed, its cost recorded (T18 QA-2)", async () => {
+    const { c } = await table();
+    await ok(["brain.add", "--conversation", c, "--name", "Painter", "--kind", "image", "--system-prompt", "You paint.", "--no-final-reminder.enabled"]);
+    const balance = t.mock.state.balanceUsd;
+    const r = await t.cli(["turn", "--conversation", c, "--brain", "Painter", "--content", "MOCK_RUNAWAY the rain", "--json"]);
+    assert.equal(r.code, 1);
+    const evs = r.stdout.trim().split("\n").map((l) => JSON.parse(l));
+    const text = evs.filter((e) => e.type === "delta").map((e) => e.delta).join("");
+    assert.ok(text.length > IMAGE_TEXT_LIMIT && text.length < IMAGE_TEXT_LIMIT + 200, `ended just past the limit, not at the reply's ~8,600 characters (${text.length})`);
+    const err = evs.at(-1);
+    assert.equal(err.type, "error");
+    assert.equal(err.error.code, "no_prompt");
+    assert.match(err.error.message, /Painter wrote over 2000 characters of text and no generate_image call/);
+    assert.deepEqual(err.error.details.retry, { command: "turn", args: { conversation: c, brain: (await get(c)).brains.find((b) => b.name === "Painter")!.id } });
+    // The conversation is free at once, and the drain records what Venice billed for the whole reply.
+    await ok(["turn", "--conversation", c, "--content", "Next."]);
+    let conv = await get(c);
+    for (let i = 0; i < 100 && Math.abs(balance - t.mock.state.balanceUsd - (conv.spentUsd ?? 0)) > 1e-9; i++) {
+      await new Promise((res) => setTimeout(res, 20));
+      conv = await get(c);
+    }
+    assert.ok(Math.abs(balance - t.mock.state.balanceUsd - (conv.spentUsd ?? 0)) < 1e-9, "the runaway reply's cost was recorded");
+    assert.equal(conv.messages.filter((m) => m.kind === "image").length, 0, "nothing of it was saved");
   });
 });

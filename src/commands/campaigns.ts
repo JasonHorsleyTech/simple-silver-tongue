@@ -8,7 +8,7 @@ import { createConversationFile, loadConversation, mutateConversation } from "..
 import { lookupModel } from "../conversations/turn.ts";
 import { SCHEMA_VERSION, SETUP_ROLES, type Brain, type Conversation, type ImageSettings, type LedgerMessage, type MessageVersion } from "../conversations/types.ts";
 import { readImageFile, removeImageFiles, saveImageFile } from "../images/files.ts";
-import { imageSettingsProblem } from "../images/request.ts";
+import { offersResolution, resolutionsOf } from "../images/request.ts";
 import { badRequest, CommandError, notFound } from "../lib/errors.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { command, type Ctx } from "../registry.ts";
@@ -157,6 +157,14 @@ function parseCampaign(raw: unknown, where: string): Campaign {
   throw badRequest(`${where} isn't a campaign this app can import. ${issues.join("; ")}.`, { issues: r.error.issues.map((i) => ({ path: i.path.map(String).join("."), message: i.message })) });
 }
 
+/** What only an image brain (or blueprint) uses, left on a text one: nothing reads it there, and the import drops it. */
+function dropImageFields(b: { safeMode?: unknown; shape?: unknown; tool?: unknown; imageModel?: unknown }): void {
+  delete b.safeMode;
+  delete b.shape;
+  delete b.tool;
+  delete b.imageModel;
+}
+
 /** The campaign as a conversation document, checked the way brain.add, message.add and conversation.update check. */
 function toConversation(doc: Campaign, where: string): Conversation {
   const now = nowIso();
@@ -169,9 +177,10 @@ function toConversation(doc: Campaign, where: string): Conversation {
     const twin = shell.brains.findIndex((x) => x.name.toLowerCase() === b.name.toLowerCase());
     if (twin >= 0) throw bad(`brains.${i}.name: two brains are called "${shell.brains[twin]!.name}" (names are unique, ignoring case).`);
     const isDefault = doc.defaultBrainId ? b.id === doc.defaultBrainId : i === 0;
-    if (b.kind === "text" && (b.safeMode !== undefined || b.shape !== undefined || b.tool || typeof b.imageModel === "string")) {
-      throw bad(`brains.${i}: safe mode, shape, tool text and an image model are for image brains, and ${b.name} is a text brain.`);
-    }
+    // An image brain switched to text keeps these, unused, in case it goes back (brain.update --kind text), and so
+    // does a blueprint; a file is the app's own export as often as not, so they are dropped here, not refused (T18 QA-4).
+    if (b.kind === "text") dropImageFields(b);
+    if (b.makes?.blueprint && (b.makes.blueprint.kind ?? "text") === "text") dropImageFields(b.makes.blueprint);
     const brain = newBrain({ name: b.name, systemPrompt: b.systemPrompt, color: b.color ?? nextColor(shell), isDefault, kind: b.kind }); // an image brain gets DEFAULT_TOOL and safe mode
     Object.assign(brain.reasoning, b.reasoning ?? {});
     Object.assign(brain.finalReminder, b.finalReminder ?? {});
@@ -354,7 +363,9 @@ async function listLibrary(lib: Library): Promise<ExampleInfo[]> {
   return out;
 }
 
-const brainNames = (brains: BrainInfo[]) => brains.map((b) => `${b.name}${b.kind === "image" ? " (image)" : ""}${b.reasoning ? ` (reasoning ${b.reasoning})` : ""}`).join(", ");
+/** T18: a library brain's own models, as the lists print them. */
+const ownModelBits = (b: BrainInfo) => `${b.textModel ? ` (its own model ${b.textModel})` : ""}${b.imageModel ? ` (its own image model ${b.imageModel})` : ""}`;
+const brainNames = (brains: BrainInfo[]) => brains.map((b) => `${b.name}${b.kind === "image" ? " (image)" : ""}${b.reasoning ? ` (reasoning ${b.reasoning})` : ""}${ownModelBits(b)}`).join(", ");
 
 export const examplesList = command({
   name: "examples.list",
@@ -404,7 +415,7 @@ already have: ./ss brain.import --preset <name> --brain <brain>. Nothing here is
               : [
                   `${p.name}: ${p.title}`,
                   p.about ? `  ${p.about}` : "",
-                  ...p.brains.map((b) => `  · ${b.name}${b.kind === "image" ? " (image)" : ""}${b.reasoning ? ` (reasoning ${b.reasoning})` : ""}${b.makes ? ` (makes "${b.makes}" brains)` : ""}${b.about ? `: ${b.about}` : ""}`),
+                  ...p.brains.map((b) => `  · ${b.name}${b.kind === "image" ? " (image)" : ""}${b.reasoning ? ` (reasoning ${b.reasoning})` : ""}${ownModelBits(b)}${b.makes ? ` (makes "${b.makes}" brains)` : ""}${b.about ? `: ${b.about}` : ""}`),
                   `  Start one: ./ss conversation.import --preset ${p.name} --title "..."`,
                   `  Add one brain: ./ss brain.import --conversation c_... --preset ${p.name} --brain "${p.brains[0]?.name ?? "..."}"`,
                 ]
@@ -419,7 +430,13 @@ const withoutMessages = z
   .boolean()
   .describe("Leave the ledger out: brains, setup messages, templates and settings only. A brain made from a message (T16) stays behind with it, and each brain that makes brains counts from 1 again");
 
-/** Check the models against Venice's list, and the image resolution against the image model, as conversation.update does. */
+/**
+ * Check the models against Venice's list, as conversation.update does, and the image resolution against every image
+ * model Venice lists. A conversation can hold a resolution its own image model doesn't take: one only an image
+ * brain's own model lists (T18 QA-1), or one left from an earlier image model. Neither is sent where it isn't
+ * listed, and the payload view says so; its conversation.get --json must import all the same. So only a resolution
+ * no Venice image model offers (a slip in a hand-written file) is refused.
+ */
 async function checkSettings(ctx: Ctx, conv: Conversation, where: string): Promise<void> {
   // Nothing has been created yet, so the fix is in the file, not conversation.update (T07 QA-8).
   const named = (type: "text" | "image", id: string) => (err: unknown) =>
@@ -429,12 +446,16 @@ async function checkSettings(ctx: Ctx, conv: Conversation, where: string): Promi
         : err,
     );
   await lookupModel(ctx.deps.venice, "text", conv.settings.textModel).catch(named("text", conv.settings.textModel));
-  const model = await lookupModel(ctx.deps.venice, "image", conv.settings.imageModel).catch(named("image", conv.settings.imageModel));
+  await lookupModel(ctx.deps.venice, "image", conv.settings.imageModel).catch(named("image", conv.settings.imageModel));
   // T18: each brain's own models too (and those its blueprint gives the brains it makes).
   await checkBrainModels(ctx, conv.brains, (i, field) => `${where}: brains.${i}.${field}`);
-  const set = (Object.keys(conv.settings.image) as (keyof ImageSettings)[]).filter((k) => conv.settings.image[k] !== undefined);
-  const problem = imageSettingsProblem(conv.settings.image, model, set);
-  if (problem) throw badRequest(`${where}: settings.image: ${problem}`);
+  const want = conv.settings.image.resolution;
+  if (want === undefined) return;
+  const { models } = await ctx.deps.venice.listModels("image");
+  if (!models.some((m) => offersResolution(m, want))) {
+    const offered = [...new Set(models.flatMap((m) => resolutionsOf(m)))].join(", ");
+    throw badRequest(`${where}: settings.image.resolution: no Venice image model offers "${want}"${offered ? ` (they offer ${offered})` : ""}. Fix it in the file, or leave it out for each model's default.`);
+  }
 }
 
 export const conversationImport = command({
@@ -543,7 +564,8 @@ learns secrets from hidden notes, never from another brain's system prompt: the 
     if (found.pins.length) notes.push(`Its ${found.pins.length === 1 ? "pin" : `${found.pins.length} pins`} stayed behind: ${found.pins.length === 1 ? "it was a message" : "they were messages"} of "${title}". Pin one of yours with brain.pin.`);
     if (result.textModel || result.imageModel) {
       const own = [result.textModel ? `text model ${result.textModel}` : "", result.kind === "image" && result.imageModel ? `image model ${result.imageModel}` : ""].filter(Boolean).join(" and ");
-      notes.push(`${result.name} came with its own ${own}, not this conversation's: brain.update --brain "${result.name}" --text-model null${result.imageModel ? " (or --image-model null)" : ""} puts it on this conversation's.`);
+      const flags = [result.textModel ? "--text-model null" : "", result.kind === "image" && result.imageModel ? "--image-model null" : ""].filter(Boolean).join(" ");
+      notes.push(`${result.name} came with its own ${own}, not this conversation's: brain.update --brain "${result.name}" ${flags} puts it on this conversation's.`);
     }
     if (result.makes?.enabled) notes.push(`${result.name} makes a brain from each new message ("${result.makes.name}", from ${result.makes.next}): brain.list shows the blueprint, and brain.update --no-makes.enabled stops it.`);
     // T10 QA-3: a preset brain learns secrets from hidden notes. A brain whose prompt doesn't know the convention
@@ -644,7 +666,7 @@ function started(verb: string, c: Conversation): string {
     `Brains: ${brains}`,
     ...(own.length
       ? [
-          `${own.map((b) => b.name).join(", ")} ${own.length === 1 ? "has a model of its own and keeps it" : "have models of their own and keep them"}; the rest use the conversation's. brain.update --brain <name> --text-model null${own.some((b) => b.kind === "image" && b.imageModel) ? " (or --image-model null)" : ""} puts one on the conversation's.`,
+          `${own.map((b) => b.name).join(", ")} ${own.length === 1 ? "has a model of its own and keeps it" : "have models of their own and keep them"}; the rest use the conversation's. brain.update --brain <name> ${[own.some((b) => b.textModel) ? "--text-model null" : "", own.some((b) => b.kind === "image" && b.imageModel) ? "--image-model null" : ""].filter(Boolean).join(" or ")} puts one on the conversation's.`,
         ]
       : []),
     `Setup: ${c.setup.map((s) => s.label).join(", ") || "none"} · ${c.messages.length} message${c.messages.length === 1 ? "" : "s"}${images ? ` (${images} image prompt${images === 1 ? "" : "s"} still to paint: image.retry --message <id> paints one)` : ""}`,

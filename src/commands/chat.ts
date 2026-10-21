@@ -19,6 +19,7 @@ import { promptOf } from "../conversations/tool-call.ts";
 import {
   addSpend,
   generatedVersion,
+  IMAGE_TEXT_LIMIT,
   imageModelUse,
   newMessage,
   planRegenerate,
@@ -225,7 +226,7 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
     ...(kept ? { resend: `To get a reply, ${again}.` } : {}),
     again: { command: "turn", args: { conversation: conv.id, brain: plan.brain.id } },
   };
-  const reply = yield* collectReply(vault, conv.id, upstream, gen, say);
+  const reply = yield* collectReply(vault, conv.id, upstream, gen, say, { image: painter !== null });
   if (painter) {
     const author = { type: "brain" as const, brainId: plan.brain.id };
     return yield* paintReply(ctx, gen, conv.id, reply, { painter, brain: plan.brain, textModel: plan.body.model, say, head: plan.brain.name }, (c, version) => {
@@ -327,7 +328,7 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
     retry: "To retry, regenerate again.",
     again: { command: "message.regenerate", args: again },
   };
-  const reply = yield* collectReply(vault, conv.id, upstream, gen, say);
+  const reply = yield* collectReply(vault, conv.id, upstream, gen, say, { image: painter !== null });
 
   const n = plan.message.versions.length + 1;
   const head = `${plan.brain.name} · version ${n}/${n}${plan.steer !== undefined ? " · steered" : plan.thought !== undefined ? " · fresh take" : ""}`;
@@ -432,6 +433,15 @@ async function* paintReply(
   if (!prompt) {
     if (reply.rest) {
       drainStopped(vault, convId, reply.rest, null);
+      if (reply.runaway) {
+        const tool = brain.tool?.name ?? "generate_image";
+        throw new CommandError(
+          502,
+          "no_prompt",
+          `${brain.name} wrote over ${IMAGE_TEXT_LIMIT} characters of text and no ${tool} call, so the app ended the reply there (an image brain answers with that call; text beside it isn't kept). Its text model, ${opts.textModel}, may not make the forced call reliably: if this happens again, give ${brain.name} another (brain.update --text-model). ${say.kept} ${say.retry}`,
+          { retry: say.again },
+        );
+      }
       throw stoppedEarly("any of the prompt arrived", say);
     }
     await mutateConversation(vault, convId, (c) => addSpend(c, reply.costUsd)); // billed all the same
@@ -589,10 +599,11 @@ async function* collectReply(
   upstream: AsyncIterable<ChatEvent>,
   gen: GenerationHandle,
   say: Say,
+  opts: { image?: boolean } = {},
 ): AsyncGenerator<StreamEvent, Reply> {
   let reply: Reply;
   try {
-    reply = yield* relayReply(upstream, gen.stopSignal);
+    reply = yield* relayReply(upstream, gen.stopSignal, opts.image ? { textLimit: IMAGE_TEXT_LIMIT } : {});
     if (reply.rest) gen.keepUpstream(); // the drain reads it from here; release() must not cut it
   } catch (err) {
     if (err instanceof CommandError && err.code === "venice_error") {

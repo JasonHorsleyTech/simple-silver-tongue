@@ -9,7 +9,7 @@ import { newMuse } from "./defaults.ts";
 import { nextMadeName } from "./makers.ts";
 import { partialPrompt, type ToolCallParts } from "./tool-call.ts";
 import { findHidden, isAllHidden } from "./hidden.ts";
-import { alwaysReasonsNote, freshTakeNote, isMuse, makesNote, MUSE_NAME, museMakesNote, PIN_AS_WORDS, pinnedNote, ROLL_PREVIEW_NOTE, STOP_REASONING_NOTE, stopNote } from "./wording.ts";
+import { alwaysReasonsNote, effortNote, freshTakeNote, isMuse, makesNote, MUSE_NAME, museMakesNote, PIN_AS_WORDS, pinnedNote, ROLL_PREVIEW_NOTE, STOP_REASONING_NOTE, stopNote } from "./wording.ts";
 import { imageModelOf, textModelOf, type Brain, type ChatRequest, type Conversation, type LedgerMessage, type MessageVersion, type Roll, type Usage } from "./types.ts";
 
 /**
@@ -280,6 +280,10 @@ export function reviewBody(
   const always = model?.reasoning?.supported ? model.reasoning.always : undefined;
   if (always && !brain.reasoning.enabled) review.notes.push(alwaysReasonsNote(model?.name ?? body.model, always, brain.name));
   if (reasoningOn(brain, model)) review.notes.push(REASONING_NOTE);
+  const offered = model?.reasoning?.effortOptions;
+  if (offered && body.reasoning_effort !== undefined && !offered.includes(body.reasoning_effort)) {
+    review.notes.push(effortNote(model?.name ?? body.model, body.reasoning_effort, offered, brain.name)); // T18 QA-3
+  }
   if (body.stop?.length) review.notes.push(stopNote(body.stop));
   if (body.stop?.length && reasoningOn(brain, model)) review.notes.push(STOP_REASONING_NOTE);
   return review;
@@ -356,7 +360,17 @@ export type Reply = {
    * (T03 QA-2), so the caller drains it for the usage and cost (drainStopped in commands/chat.ts).
    */
   rest?: AsyncIterable<ChatEvent>;
+  /** With `stopped`: the relay ended it, not generation.stop: an image brain wrote IMAGE_TEXT_LIMIT of text and no tool call. */
+  runaway?: true;
 };
+
+/**
+ * T18 QA-2: an image brain's answer is its forced tool call, and text beside it is set aside (paintReply). Live,
+ * Mistral Small 3.2 wrote a line or two before the call, and once looped in that text for over two minutes (28 KB,
+ * the conversation locked) with no call at all. So an image brain's reply is ended once this much text has come
+ * with no call started: like a stop, its rest is drained for the cost. Nothing sent changes.
+ */
+export const IMAGE_TEXT_LIMIT = 2000;
 
 const STOP = Symbol("stop");
 
@@ -370,8 +384,10 @@ export function untilAborted(signal: AbortSignal): Promise<typeof STOP> {
  * which is the generator's return value: `const reply = yield* relayReply(events, stop)`. A stop
  * (generation.stop) is not an error here: the relay ends at once and the reply so far comes back with
  * `stopped: true`, plus the unread `rest` of the stream. The Venice request itself is left running.
+ * With `textLimit` (an image brain's request, T18 QA-2), the relay also ends that way, marked `runaway`, once more
+ * text than that has come and no tool call has started.
  */
-export async function* relayReply(events: AsyncIterable<ChatEvent>, stop?: AbortSignal): AsyncGenerator<StreamEvent, Reply> {
+export async function* relayReply(events: AsyncIterable<ChatEvent>, stop?: AbortSignal, opts: { textLimit?: number } = {}): AsyncGenerator<StreamEvent, Reply> {
   const reply: Reply = { content: "", reasoning: "", toolCalls: [], prompt: "" };
   const it = events[Symbol.asyncIterator]();
   const stopped = stop && untilAborted(stop);
@@ -387,6 +403,10 @@ export async function* relayReply(events: AsyncIterable<ChatEvent>, stop?: Abort
     if (r === STOP) return halt(next);
     if (r.done) return reply;
     yield* handle(r.value, reply);
+    if (opts.textLimit !== undefined && !reply.toolCalls.length && reply.content.length > opts.textLimit) {
+      reply.runaway = true;
+      return halt();
+    }
   }
 }
 

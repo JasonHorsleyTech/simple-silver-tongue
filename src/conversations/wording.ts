@@ -70,6 +70,14 @@ export const STOP_REASONING_NOTE =
   "Reasoning is on, and Venice applies stop sequences to the reasoning too: if this brain thinks about a framing line, its reply ends right there, with no text. Turn reasoning off, or clear its stop sequences, if that happens.";
 
 /**
+ * T18 QA-3: a brain's effort level its model doesn't list, sent as set (a brain keeps its effort when it moves to
+ * another model, or when the conversation's model changes under it). Venice took DeepSeek V4.1 Flash's unlisted
+ * "medium" in a probe (200, 2026-10-21) without saying which depth it used.
+ */
+export const effortNote = (model: string, effort: string, offered: readonly string[], brain: string) =>
+  `${model} doesn't list the reasoning effort "${effort}" (it lists ${offered.filter((o) => o !== "none").join(", ")}). It is sent as set, and Venice may pick a depth of its own or refuse it. Give ${brain} a level its model lists.`;
+
+/**
  * 2026-10-19: a model that reasons whatever a brain's switch says (src/venice/curated.ts, ALWAYS_REASONS), for a brain
  * whose reasoning is off. The payload view and the brain editor say what Venice then does; nothing sent changes.
  */

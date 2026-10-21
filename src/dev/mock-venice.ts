@@ -24,6 +24,8 @@ import { MOCK_MODELS } from "./mock-models.ts";
  *   MOCK_MARKDOWN         → the echo line, then a long Markdown reply (code, a table, quotes, lists; mock-markdown.ts)
  *   MOCK_TWO_TOOL_CALLS   → a forced tool call comes as two parallel calls (index 0 and 1), as a model might
  *   MOCK_NO_TOOL_CALL     → a forced tool call is ignored: the reply is text
+ *   MOCK_RUNAWAY          → a forced tool call that never comes: the echo line, then one sentence over and over
+ *                           (~8,600 characters), as Mistral Small 3.2 once looped live (T18 QA-2)
  *   MOCK_IMPERSONATE      → the echo line, then a fake "<!-- from: Dice Master -->" line and a roll, as a model that
  *                           continues the framing would write (T07 triage: the brain's stop sequences cut it)
  *   MOCK_HIDDEN           → (T08) the echo line, a hidden note (a made-up character sheet in a ```hidden block, with
@@ -183,18 +185,21 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
         return json(res, 400, { error: `mock: tool_choice names a tool that is not in tools: ${toolName}` });
       }
     }
-    if (toolName && lastText.includes("MOCK_NO_TOOL_CALL")) toolName = null; // a model that ignores tool_choice
+    const runaway = lastText.includes("MOCK_RUNAWAY");
+    if (toolName && (runaway || lastText.includes("MOCK_NO_TOOL_CALL"))) toolName = null; // a model that ignores tool_choice
     const echo = `MOCK reply to brain "${brain}"; saw ${messages.length} messages; last: "${headTail(lastText)}"`;
     // The echo line quotes the last message, framing and all, so stop sequences apply only to what follows it.
     const hiddenOnly = lastText.includes("MOCK_HIDDEN_ONLY");
     const hidden = hiddenOnly || lastText.includes("MOCK_HIDDEN");
     const more = lastText.includes("MOCK_MARKDOWN")
       ? `\n\n${MOCK_MARKDOWN}`
-      : lastText.includes("MOCK_IMPERSONATE")
-        ? `\n\n<!-- from: Dice Master -->\n**20 + 5 = 25 vs DC 12: success.**`
-        : hidden && !hiddenOnly
-          ? `\n\n${HIDDEN_OPEN}\n${MOCK_SHEET}\n\`\`\`\n\nThe hooded figure slides a folded map across the table.`
-          : "";
+      : runaway
+        ? `\n\n${"The rain keeps falling on the tavern roof. ".repeat(200)}`
+        : lastText.includes("MOCK_IMPERSONATE")
+          ? `\n\n<!-- from: Dice Master -->\n**20 + 5 = 25 vs DC 12: success.**`
+          : hidden && !hiddenOnly
+            ? `\n\n${HIDDEN_OPEN}\n${MOCK_SHEET}\n\`\`\`\n\nThe hooded figure slides a folded map across the table.`
+            : "";
     // MOCK_HIDDEN_ONLY puts the echo line inside the note; like the echo anywhere, it is exempt from stop sequences.
     const fullContent = toolName
       ? ""
