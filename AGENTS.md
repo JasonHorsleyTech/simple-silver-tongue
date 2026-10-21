@@ -2,7 +2,7 @@
 
 ## What this is
 
-A personal, local-only chat interface for the [Venice AI](https://venice.ai) API. The aim is to be a slightly better scratch pad than Venice's classic chat (`venice.ai/chat/classic/<uuid>`). It is not a product: no deployment, no monetization, no cloud, no users but Jason. Git is for checkpoints. Since 2026-10-21 the repo is on GitHub (`JasonHorsleyTech/simple-silver`, private), pushed by the orchestrator when Jason asks. **Pass agents never push.** Nothing under `data/`, `.run/` or `.env` is ever committed: they are gitignored and hold Jason's keys and campaigns.
+A personal, local-only chat interface for the [Venice AI](https://venice.ai) API. The aim is to be a slightly better scratch pad than Venice's classic chat (`venice.ai/chat/classic/<uuid>`). It is not a product: no deployment, no monetization, no cloud, no users but Jason. Git is for checkpoints. Since 2026-10-21 the repo is on GitHub (`JasonHorsleyTech/simple-silver-tongue`, private; renamed from `simple-silver` so the initials read SST, not SS), pushed by the orchestrator when Jason asks. **Pass agents never push.** Nothing under `data/`, `.run/` or `.env` is ever committed: they are gitignored and hold Jason's keys and campaigns.
 
 On top of a normal streaming chat, it adds:
 
