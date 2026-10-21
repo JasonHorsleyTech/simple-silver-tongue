@@ -166,7 +166,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
 
     const effort = body.reasoning_effort;
     // Live (2026-10-19): GLM 5.3 refuses reasoning off, and Abliterated Large V2 takes it and reasons anyway, its
-    // reasoning streamed as `reasoning` rather than `reasoning_content` (src/venice/curated.ts, ALWAYS_REASONS).
+    // reasoning streamed as `reasoning` rather than `reasoning_content` (src/venice/model-facts.ts, ALWAYS_REASONS).
     const off = effort === "none" || body.venice_parameters?.disable_thinking === true;
     if (off && model.id === "z-ai-glm-5-3") {
       return json(res, 400, { error: "GLM-5.3 is a thinking-only model; disabling thinking (reasoning_effort='none') is not supported." });

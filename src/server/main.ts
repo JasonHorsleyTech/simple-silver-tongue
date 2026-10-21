@@ -6,6 +6,7 @@ import { loadConfig, ROOT, veniceApiKey } from "../config.ts";
 import { finishInFlight, stopTakingWork } from "../conversations/store.ts";
 import { nowIso } from "../lib/ids.ts";
 import { createVeniceClient } from "../venice/client.ts";
+import { readModelList } from "../venice/model-list.ts";
 import { minutes } from "../lib/errors.ts";
 import { consoleLogger as log, createApp } from "./app.ts";
 import { createSessionStore } from "./sessions.ts";
@@ -33,6 +34,12 @@ if (idleRaw && Number(idleRaw) !== config.sessionIdleMinutes) {
   log(`WARNING: SST_SESSION_IDLE_MINUTES must be a number of minutes, 0 or more (0 = never); using ${config.sessionIdleMinutes}`);
 }
 const sessions = createSessionStore({ idleMinutes: config.sessionIdleMinutes });
+try {
+  const list = readModelList(config.modelsFile);
+  log(`model list: ${list.source} (${list.text.length} text, ${list.image.length} image)${list.fromExample ? "; copy it to models.ini to choose your own" : ""}`);
+} catch (err) {
+  log(`WARNING: ${(err as Error).message} The pickers will show this error until it is fixed.`);
+}
 
 const app = createApp(
   {

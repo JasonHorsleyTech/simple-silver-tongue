@@ -17,7 +17,7 @@ import type { ModelList } from "./models.ts";
 import { ModelPicker, textModelDetail } from "./ModelPicker.tsx";
 
 /**
- * The conversation itself: title, the text and image models (one each, from the curated list models.list gives),
+ * The conversation itself: title, the text and image models (one each, from the model list models.list gives),
  * the reply limits every brain shares, how images are made (resolution, format, watermark, negative prompt), clone
  * (T07) and delete. A model change applies to the next request of every brain, and to the next image. Each image
  * model is listed with what one image costs at this conversation's resolution.

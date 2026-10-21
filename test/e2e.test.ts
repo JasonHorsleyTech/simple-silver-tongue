@@ -13,7 +13,7 @@ import { conflict } from "../src/lib/errors.ts";
 import { binaryCommand, streamCommand } from "../src/registry.ts";
 import { createUser, unlockUser } from "../src/storage/users.ts";
 import { readJson, writeJson } from "../src/storage/vault.ts";
-import { curated } from "../src/venice/curated.ts";
+import { pickModels } from "../src/venice/model-list.ts";
 import { startTestServer } from "./helpers.ts";
 
 describe("CLI end to end against an in-process server and mock Venice", () => {
@@ -92,22 +92,24 @@ describe("CLI end to end against an in-process server and mock Venice", () => {
     r = await t.cli(["models.list", "--type", "text"]);
     assert.match(r.stdout, /\*deepseek-v4-1-flash .* \$0\.30\/M in, \$1\.20\/M out +none\/low\/high\/max/);
 
-    // The pickers' list is the curated one, in its own order; --all is everything Venice lists.
+    // T19: the pickers' list is the model list's (the tests read models.example.ini), in its order; --all is
+    // everything Venice lists.
     const ids = async (...extra: string[]) => JSON.parse((await t.cli(["models.list", "--json", ...extra])).stdout).models.map((m: { id: string }) => m.id);
-    // 2026-10-19: GLM 5.3 and its uncensored twin are back in the roster (the twin anonymized, Jason's exception).
-    assert.deepEqual(await ids(), ["deepseek-v4-1-flash", "z-ai-glm-5-3", "abliteration-abliterated-model-large-v2", "venice-uncensored-1-2", "z-image-turbo", "grok-imagine-image-2-0", "krea-2-turbo", "hunyuan-image-v3"]);
-    assert.equal((await ids("--all")).length, 8);
+    assert.deepEqual(await ids(), ["deepseek-v4-1-flash", "google-gemma-4-31b-it", "z-image-turbo", "hunyuan-image-v3"]);
+    assert.equal((await ids("--all")).length, 9);
     assert.match((await t.cli(["models.list", "--type", "image"])).stdout, /hunyuan-image-v3 .* aspect ratio\n/, "sized by aspect ratio, not width × height");
+    assert.match((await t.cli(["models.list", "--type", "image", "--all"])).stdout, /krea-2-turbo +Krea 2 Turbo +private, uncensored /, "Venice's uncensored label shows");
     const venice = [
       { id: "wai-Illustrious", type: "image" },
       { id: "openai-gpt-55", type: "text" },
       { id: "e2ee-kimi-k3-p", type: "text" },
       { id: "kimi-k3", type: "text" },
-      { id: "grok-4-7", type: "text" }, // out since T18 triage: a hidden prompt of its own (curated.ts)
+      { id: "grok-4-7", type: "text" },
       { id: "z-image-turbo", type: "image" },
       { id: "deepseek-v4-1-flash", type: "text" },
     ];
-    assert.deepEqual(curated(venice).map((m) => m.id), ["deepseek-v4-1-flash", "kimi-k3", "z-image-turbo", "wai-Illustrious"], "text first, curated order, the rest left out");
+    const list = { text: ["deepseek-v4-1-flash", "kimi-k3", "not-at-venice"], image: ["z-image-turbo", "wai-Illustrious"] };
+    assert.deepEqual(pickModels(venice, list).map((m) => m.id), ["deepseek-v4-1-flash", "kimi-k3", "z-image-turbo", "wai-Illustrious"], "text first, the list's order, the rest left out");
 
     r = await t.cli(["venice.balance", "--json"]);
     assert.equal(JSON.parse(r.stdout).usd, 10);

@@ -171,6 +171,10 @@ open -e "$TMPDIR/gm.md"                  # edit it in TextEdit and save
 
 One caution: whatever you type on a command line is saved in plain text in your shell history (`~/.zsh_history`). For anything private, use the browser, or `--content -` and type or paste the text (Ctrl-D ends it).
 
+## Which models are offered
+
+The model pickers and `./sst models.list` offer the models enabled in `models.ini` (your own, gitignored) or, when there is none, the committed `models.example.ini`, which enables DeepSeek V4.1 Flash and Gemma 4 31B, Z-Image Turbo and Hunyuan Image 3.0. To choose your own, `cp models.example.ini models.ini` and uncomment or comment out lines; reload the page to see the change. The example explains the format and what we know about each model it leaves off. `./sst models.list --all` lists every Venice model, and any of them can still be set by id.
+
 ## Privacy, in short
 
 - An encrypted account's conversations, images, titles and prompts are ciphertext on disk (`data/users/<name>/`). Usernames, file sizes and dates are not hidden.

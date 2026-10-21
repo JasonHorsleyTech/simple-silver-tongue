@@ -61,7 +61,7 @@ export { buildImageRequest, DEFAULT_SHAPE, IMAGE_SHAPES, imagePriceUsd, resoluti
  * message pre-fill's default label.
  */
 export {
-  /** 2026-10-19: what reasoning off does on a model that always reasons (src/venice/curated.ts, ALWAYS_REASONS). */
+  /** 2026-10-19: what reasoning off does on a model that always reasons (src/venice/model-facts.ts, ALWAYS_REASONS). */
   alwaysReasonsNote,
   /** T18 QA-3: a brain's effort level its model doesn't list (sent as set). */
   effortNote,
@@ -335,7 +335,7 @@ export type Commands = {
    */
   "user.change-password": { args: { username: string; password: string; newPassword: string }; result: { username: string; loggedOut: number } };
   "models.list": {
-    /** The curated models (src/venice/curated.ts); `all`: every model Venice has. */
+    /** The models the model list enables (models.ini, src/venice/model-list.ts), with the file in `source`; `all`: every model Venice has. */
     args: { type?: "text" | "image"; all?: boolean; refresh?: boolean };
     result: { models: ModelInfo[]; defaults: { text: string; image: string } };
   };

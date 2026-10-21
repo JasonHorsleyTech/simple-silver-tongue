@@ -68,7 +68,7 @@ export function SettingsPanel({
   /** T18: open a brain's card (from the Conversation tab's list of brains on their own model). */
   onOpenBrain(brainId: string): void;
 }) {
-  // T18: every model in use (the conversation's, each brain's own, each blueprint's), so one the curated list hasn't
+  // T18: every model in use (the conversation's, each brain's own, each blueprint's), so one the model list hasn't
   // got is still looked up (useModels' find).
   const textModels = useModels("text", [
     conv.settings.textModel,

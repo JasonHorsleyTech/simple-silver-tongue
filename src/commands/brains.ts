@@ -232,7 +232,7 @@ export async function checkBrainModels(
       if (typeof id !== "string") continue;
       await lookupModel(ctx.deps.venice, type, id).catch((err: unknown) => {
         if (err instanceof CommandError && err.code === "unknown_model") {
-          throw new CommandError(400, "unknown_model", `${where(i, field)}: Venice has no ${type} model "${id}". ./sst models.list --type ${type} lists the curated ones (--all: every one); any id Venice lists works.`);
+          throw new CommandError(400, "unknown_model", `${where(i, field)}: Venice has no ${type} model "${id}". ./sst models.list --type ${type} lists the ones the model list enables (--all: every one); any id Venice lists works.`);
         }
         throw err;
       });

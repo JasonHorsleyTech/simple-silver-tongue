@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { createAdaptorServer } from "@hono/node-server";
 import { run } from "../src/cli/main.ts";
 import { commands as allCommands } from "../src/commands/index.ts";
-import { loadConfig } from "../src/config.ts";
+import { loadConfig, ROOT } from "../src/config.ts";
 import { startMockVenice, type MockOptions, type MockVenice } from "../src/dev/mock-venice.ts";
 import { nowIso } from "../src/lib/ids.ts";
 import type { AnyCommand } from "../src/registry.ts";
@@ -18,8 +18,9 @@ export type CliResult = { code: number; stdout: string; stderr: string };
 /** An in-process server (temp data dir) against an in-process mock Venice, plus an in-process CLI. */
 /** `log` receives every line the server would write to .run/server.log (the T06 audit greps them). */
 /** `sessions` sets the idle timeout and the sessions' clock (T06 triage: tests move a fake clock, then sweep). */
+/** `modelsFile`: the model list models.list reads. Default: the committed example, never anyone's own models.ini. */
 export async function startTestServer(
-  opts: { commands?: AnyCommand[]; mock?: MockOptions; log?: (line: string) => void; sessions?: SessionOptions } = {},
+  opts: { commands?: AnyCommand[]; mock?: MockOptions; log?: (line: string) => void; sessions?: SessionOptions; modelsFile?: string } = {},
 ) {
   const tmp = await mkdtemp(join(tmpdir(), "sst-test-"));
   const mock: MockVenice = await startMockVenice({ delayMs: 0, slowDelayMs: 20, imageDelayMs: 0, ...opts.mock });
@@ -29,6 +30,7 @@ export async function startTestServer(
     runDir: join(tmp, "run"),
     webDist: join(tmp, "no-web"),
     veniceBaseUrl: mock.url,
+    modelsFile: opts.modelsFile ?? join(ROOT, "models.example.ini"),
   };
   const sessions = createSessionStore({ idleMinutes: config.sessionIdleMinutes, ...opts.sessions });
   const app = createApp(

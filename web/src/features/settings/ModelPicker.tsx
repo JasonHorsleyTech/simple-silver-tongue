@@ -19,10 +19,10 @@ export function textModelDetail(m: ModelInfo): string {
 }
 
 /**
- * A native select over the curated list (models.list), saved on change. The model in use stays listed even when the
- * curated list hasn't got it (set by id from the terminal, taken out of the list, or dropped by Venice): by its name
- * when Venice still lists it, with a warning when Venice doesn't (every request on it is refused). `optionDetail`
- * follows each option's name (a price).
+ * A native select over the offered models (models.list: the model list, models.ini), saved on change. The model in
+ * use stays listed even when the list hasn't got it (set by id from the terminal, taken out of the list, or dropped
+ * by Venice): by its name when Venice still lists it, with a warning when Venice doesn't (every request on it is
+ * refused). `optionDetail` follows each option's name (a price).
  *
  * T18, a brain's picker (`inherit`, the conversation's model): the first option is "Conversation default (<model>)",
  * chosen while the brain has no model of its own (`value` null); picking it saves null, and the brain follows the
@@ -59,10 +59,10 @@ export function ModelPicker({
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const curated = list.models ?? [];
+  const offered = list.models ?? [];
   const inUse = value ?? inherit ?? "";
   const info = list.find(inUse);
-  const inCurated = (m: string) => curated.some((x) => x.id === m);
+  const isOffered = (m: string) => offered.some((x) => x.id === m);
   const nameOf = (m: string) => list.find(m)?.name ?? m;
   const inheritInfo = inherit !== undefined ? list.find(inherit) : undefined;
 
@@ -78,7 +78,7 @@ export function ModelPicker({
     }
   }
 
-  const extra = value !== null && !inCurated(value) ? value : null;
+  const extra = value !== null && !isOffered(value) ? value : null;
   const extraInfo = extra ? list.find(extra) : undefined;
 
   return (
@@ -103,14 +103,15 @@ export function ModelPicker({
         )}
         {extra !== null && (
           <option value={extra}>
-            {!list.models || extraInfo === undefined ? extra : extraInfo === null ? `${extra} (Venice doesn't list it)` : `${extraInfo.name} (not in the curated list)`}
+            {!list.models || extraInfo === undefined ? extra : extraInfo === null ? `${extra} (Venice doesn't list it)` : `${extraInfo.name} (not in the model list)`}
           </option>
         )}
-        {curated.map((m) => (
+        {offered.map((m) => (
           <option key={m.id} value={m.id}>
             {m.name}
             {optionDetail ? ` · ${optionDetail(m)}` : ""}
             {m.privacy !== "private" ? ` · ${m.privacy}` : ""}
+            {m.uncensored ? " · uncensored" : ""}
             {m.offline ? " · offline" : ""}
           </option>
         ))}
@@ -118,7 +119,7 @@ export function ModelPicker({
       <p className="mt-1.5 text-[12px] leading-5 text-faint">
         <span className="font-mono text-[11.5px] text-muted">{inUse}</span>
         {inherit !== undefined && (value === null ? " · the conversation's" : ` · ${ownWords}`)}
-        {info && !inCurated(inUse) && " · not in the curated list"}
+        {info && !isOffered(inUse) && " · not in the model list"}
         {info && ` · ${detail(info)}`}
       </p>
       {info === null && (

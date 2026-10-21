@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, wr
 import { join } from "node:path";
 import { loadConfig, ROOT, veniceApiKey } from "../src/config.ts";
 import { minutes } from "../src/lib/errors.ts";
+import { readModelList } from "../src/venice/model-list.ts";
 import { foreignHolder, MOCK, RUN_DIR, SERVER, stop, tail, waitFor, type Proc } from "./proc.ts";
 
 /**
@@ -103,7 +104,15 @@ if (mock) {
 }
 
 // What the server will use: its env, plus .env in live mode (loaded above, as the server loads it).
-const idle = loadConfig({ ...process.env, ...env }).sessionIdleMinutes;
+const config = loadConfig({ ...process.env, ...env });
+const idle = config.sessionIdleMinutes;
+let models: string;
+try {
+  const list = readModelList(config.modelsFile);
+  models = `${list.source} (${list.text.length} text, ${list.image.length} image)${list.fromExample ? ": copy it to models.ini to choose your own" : ""}`;
+} catch (err) {
+  models = `WARNING: ${(err as Error).message}`;
+}
 const pid = startDetached(SERVER, env);
 if (!(await waitFor(`http://127.0.0.1:${SERVER.port}/api/health`, pid))) {
   fail(`the server did not become healthy. Last log lines:\n${tail(SERVER.logFile)}`);
@@ -115,6 +124,7 @@ console.log(
     `simple-silver is up → http://localhost:${SERVER.port}`,
     `  Venice: ${mock ? `MOCK (http://127.0.0.1:${MOCK.port}/api/v1)` : "live (api.venice.ai)"}`,
     `  web:    ${web}`,
+    `  models: ${models}`,
     `  pid ${pid} · log .run/server.log · stop with npm run down`,
     "  Sessions live in server memory, so log in again: ./sst auth.login --username <name>",
     `  ${idle > 0 ? `A login ends after ${minutes(idle)} without activity` : "Logins never time out"} (SST_SESSION_IDLE_MINUTES${idle > 0 ? "; 0 = never" : ""})`,

@@ -1,12 +1,14 @@
 /**
- * Model entries copied verbatim from the live Venice GET /models response (2026-10-13, 2026-10-14 and 2026-10-19),
- * so the mock speaks the real shape. All are curated (src/venice/curated.ts), so models.list shows them in mock mode
- * too. Text: one with reasoning effort levels, one with no reasoning, and two that always reason with no effort
- * levels (reasoning off is disable_thinking): z-ai-glm-5-3, which the mock refuses with Venice's own 400 as live, and
- * abliteration-abliterated-model-large-v2 (anonymized), which reasons anyway and streams it as `reasoning`, as live
- * (mock-venice.ts; ALWAYS_REASONS in curated.ts). Image: one of each way of sizing and pricing an image, width × height
- * at a flat price (z-image-turbo), resolution and aspect ratio priced per resolution (krea-2-turbo), aspect
- * ratio only at a flat price (hunyuan-image-v3), and resolution priced per quality (grok-imagine-image-2-0).
+ * Model entries copied verbatim from the live Venice GET /models response (2026-10-13, 2026-10-14, 2026-10-19 and
+ * 2026-10-21), so the mock speaks the real shape. Every model models.example.ini enables is here, so a fresh clone's
+ * mock mode offers what live mode does; models.list shows the ones the model list enables, and tests set the others
+ * by id. Text: two with reasoning effort levels (google-gemma-4-31b-it's include "medium"), one with no reasoning
+ * (venice-uncensored-1-2), and two that always reason with no effort levels (reasoning off is disable_thinking):
+ * z-ai-glm-5-3, which the mock refuses with Venice's own 400 as live, and abliteration-abliterated-model-large-v2
+ * (anonymized), which reasons anyway and streams it as `reasoning`, as live (mock-venice.ts; ALWAYS_REASONS in
+ * model-facts.ts). Image: one of each way of sizing and pricing an image, width × height at a flat price
+ * (z-image-turbo), resolution and aspect ratio priced per resolution (krea-2-turbo), aspect ratio only at a flat
+ * price (hunyuan-image-v3), and resolution priced per quality (grok-imagine-image-2-0).
  */
 export const MOCK_MODELS: Array<Record<string, any>> = [
   {
@@ -58,6 +60,66 @@ export const MOCK_MODELS: Array<Record<string, any>> = [
       "description": "DeepSeek V4.1 Flash is a multimodal Mixture-of-Experts model with 552B backbone parameters (8B active on input, 16B on output) and a 1M-token context window. It natively processes images and text, with strong reasoning, coding, and agentic performance.",
       "name": "DeepSeek V4.1 Flash",
       "modelSource": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash",
+      "offline": false,
+      "privacy": "private",
+      "traits": []
+    },
+    "object": "model",
+    "owned_by": "venice.ai",
+    "type": "text"
+  },
+  {
+    "context_length": 256000,
+    "created": 1775174400,
+    "id": "google-gemma-4-31b-it",
+    "model_spec": {
+      "pricing": {
+        "input": {
+          "usd": 0.12,
+          "diem": 0.12
+        },
+        "cache_input": {
+          "usd": 0.09,
+          "diem": 0.09
+        },
+        "output": {
+          "usd": 0.36,
+          "diem": 0.36
+        }
+      },
+      "model_sets": [
+        "venice_recommendations"
+      ],
+      "availableContextTokens": 256000,
+      "maxCompletionTokens": 8192,
+      "capabilities": {
+        "optimizedForCode": false,
+        "quantization": "fp4",
+        "supportsAudioInput": false,
+        "supportsFunctionCalling": true,
+        "supportsLogProbs": true,
+        "supportsMultipleImages": true,
+        "maxImages": 10,
+        "supportsReasoning": true,
+        "supportsReasoningEffort": true,
+        "reasoningEffortOptions": [
+          "none",
+          "low",
+          "medium",
+          "high"
+        ],
+        "defaultReasoningEffort": "low",
+        "supportsResponseSchema": true,
+        "supportsTeeAttestation": false,
+        "supportsE2EE": false,
+        "supportsVideoInput": true,
+        "supportsVision": true,
+        "supportsWebSearch": true,
+        "supportsXSearch": false
+      },
+      "description": "Gemma 4 31B is a dense model from Google DeepMind with 31B parameters, delivering frontier-level reasoning performance. It handles text, image, and video input, supports 256K context, function calling, and configurable thinking modes.",
+      "name": "Google Gemma 4 31B Instruct",
+      "modelSource": "https://huggingface.co/google/gemma-4-31B-it",
       "offline": false,
       "privacy": "private",
       "traits": []

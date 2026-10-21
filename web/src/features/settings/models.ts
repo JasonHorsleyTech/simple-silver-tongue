@@ -8,8 +8,8 @@ import type { ModelInfo } from "../../api/types.ts";
  * says what a model can do (reasoning, effort levels) and feeds the text model pickers; the image list feeds the
  * image model pickers and prices.
  *
- * T18: the pickers offer the curated list, but a conversation or a brain may be on any model Venice lists (set by
- * id, or curated once: Grok 4.7 left the list after T18). `find(id)` looks a model up in the curated list and, for
+ * T18: the pickers offer the model list (models.ini, T19), but a conversation or a brain may be on any model Venice
+ * lists (set by id, or listed once and since taken out). `find(id)` looks a model up in the offered list and, for
  * an id it hasn't got (`wanted`: the models in use), in everything Venice lists (models.list --all, fetched only
  * then), so a brain on such a model still gets that model's reasoning switch and price. `find` is undefined while
  * loading (or when the list couldn't load: callers don't block on it), null when Venice doesn't list the id at all.
@@ -42,7 +42,7 @@ export function useModels(type: ModelInfo["type"], wanted: readonly string[] = [
     };
   }, [type]);
 
-  // The ids in use that the curated list hasn't got, as one stable string (the effect runs when that set changes).
+  // The ids in use that the offered list hasn't got, as one stable string (the effect runs when that set changes).
   const missing = models ? [...new Set(wanted)].filter((id) => !models.some((m) => m.id === id)).sort().join("\n") : "";
   useEffect(() => {
     if (!missing) return;
@@ -61,8 +61,8 @@ export function useModels(type: ModelInfo["type"], wanted: readonly string[] = [
 
   const find = (id: string): ModelInfo | null | undefined => {
     if (!models) return undefined;
-    const curated = models.find((m) => m.id === id);
-    if (curated) return curated;
+    const offered = models.find((m) => m.id === id);
+    if (offered) return offered;
     return all ? (all.find((m) => m.id === id) ?? null) : undefined;
   };
   return { models, error, find };

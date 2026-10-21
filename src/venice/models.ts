@@ -1,4 +1,4 @@
-import { ALWAYS_REASONS } from "./curated.ts";
+import { ALWAYS_REASONS } from "./model-facts.ts";
 
 /** Normalized view of Venice's GET /models entries: what the pickers and later tickets need. */
 export type ModelType = "text" | "image";
@@ -11,6 +11,8 @@ export type ModelInfo = {
   price: string; // human label, e.g. "$0.30/M in, $1.20/M out" or "$0.01/image"
   offline: boolean;
   traits: string[];
+  /** Venice marks it uncensored (model_spec.uncensored). Shown beside its name wherever models are listed. */
+  uncensored?: true;
   description?: string;
   /** Raw Venice pricing object, for cost maths later. */
   pricing: Record<string, unknown>;
@@ -21,7 +23,7 @@ export type ModelInfo = {
     supported: boolean;
     effortOptions: string[] | null;
     defaultEffort: string | null;
-    /** It reasons whatever the brain's switch says, and what reasoning off does to it (curated.ts, ALWAYS_REASONS). */
+    /** It reasons whatever the brain's switch says, and what reasoning off does to it (model-facts.ts, ALWAYS_REASONS). */
     always?: "refused" | "ignored";
   };
   functionCalling?: boolean;
@@ -39,6 +41,7 @@ type RawModel = {
     privacy?: string;
     offline?: boolean;
     traits?: string[];
+    uncensored?: boolean;
     description?: string;
     pricing?: Record<string, unknown>;
     availableContextTokens?: number;
@@ -62,6 +65,7 @@ export function normalizeModel(raw: RawModel): ModelInfo | null {
     traits: spec.traits ?? [],
     pricing,
   };
+  if (spec.uncensored === true) m.uncensored = true;
   if (spec.description) m.description = spec.description;
   if (raw.type === "text") {
     const caps = spec.capabilities ?? {};

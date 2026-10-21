@@ -335,7 +335,7 @@ describe("web API client against the real server", () => {
     assert.equal(maker.textModel, undefined);
     assert.equal(maker.makes?.blueprint.textModel, "venice-uncensored-1-2");
 
-    // models.list --all, which the pickers ask only for a model the curated list hasn't got.
+    // models.list --all, which the pickers ask only for a model the model list hasn't got.
     const all = (await api.call("models.list", { type: "image", all: true })).models;
     const find = (id: string) => all.find((m) => m.id === id) ?? null;
 

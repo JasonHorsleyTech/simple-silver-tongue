@@ -78,7 +78,7 @@ export const effortNote = (model: string, effort: string, offered: readonly stri
   `${model} doesn't list the reasoning effort "${effort}" (it lists ${offered.filter((o) => o !== "none").join(", ")}). It is sent as set, and Venice may pick a depth of its own or refuse it. Give ${brain} a level its model lists.`;
 
 /**
- * 2026-10-19: a model that reasons whatever a brain's switch says (src/venice/curated.ts, ALWAYS_REASONS), for a brain
+ * 2026-10-19: a model that reasons whatever a brain's switch says (src/venice/model-facts.ts, ALWAYS_REASONS), for a brain
  * whose reasoning is off. The payload view and the brain editor say what Venice then does; nothing sent changes.
  */
 export const alwaysReasonsNote = (model: string, how: "refused" | "ignored", brain: string) =>

@@ -6,7 +6,7 @@ import { createUser } from "../src/storage/users.ts";
 import { startTestServer } from "./helpers.ts";
 
 /**
- * 2026-10-19: GLM 5.3 and Abliterated Large V2 always reason (src/venice/curated.ts, ALWAYS_REASONS). Live, Venice
+ * 2026-10-19: GLM 5.3 and Abliterated Large V2 always reason (src/venice/model-facts.ts, ALWAYS_REASONS). Live, Venice
  * refuses GLM 5.3's request with reasoning off (400 "thinking-only"), and Abliterated Large V2 takes it and reasons
  * anyway, streaming its reasoning as `delta.reasoning`; the mock does both. Nothing sent changes: the payload view
  * says what will happen, and the 400 says which switch to flip.
@@ -70,11 +70,13 @@ describe("models that always reason (GLM 5.3, Abliterated Large V2)", () => {
     assert.equal(v.reasoning, streamed);
   });
 
-  test("models.list shows both, the twin as anonymized, and says they always reason", async () => {
-    const text = (await ok(["models.list", "--type", "text"])).stdout;
+  // T19: neither is in the example model list (the tests' list), so they show with --all, as they would in a
+  // models.ini that enables them.
+  test("models.list shows both, the twin as anonymized and uncensored, and says they always reason", async () => {
+    const text = (await ok(["models.list", "--type", "text", "--all"])).stdout;
     assert.match(text, /z-ai-glm-5-3 +GLM 5\.3 +private .* always/);
-    assert.match(text, /abliteration-abliterated-model-large-v2 +Abliterated Large V2 +anonymized +\$3\.00\/M in, \$5\.00\/M out +always/);
-    const models = (await json(["models.list", "--type", "text"])).models;
+    assert.match(text, /abliteration-abliterated-model-large-v2 +Abliterated Large V2 +anonymized, uncensored +\$3\.00\/M in, \$5\.00\/M out +always/);
+    const models = (await json(["models.list", "--type", "text", "--all"])).models;
     assert.equal(models.find((m: { id: string }) => m.id === "deepseek-v4-1-flash").reasoning.always, undefined);
   });
 });

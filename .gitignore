@@ -6,6 +6,9 @@
 # user data — never committed (examples/ holds the committed demo campaign)
 data/
 
+# your own model list (models.example.ini is the committed one, and the fallback when this is missing)
+/models.ini
+
 # runtime state: pid files, logs, CLI session token
 .run/
 
