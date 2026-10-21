@@ -589,3 +589,30 @@ Data and schema bump, prompt assembly, `message.regenerate --thought` and `promp
   - Built: the **Fresh take** tab writes the Muse's note and says so (the note goes in right before the reply, every helper reads it, the player doesn't; the brain answers it without seeing the version on screen; the new version is the reply alone), plus what happens this time, from `freshTakeTarget` (tested against `planMuseNote`): a Muse is added, the note above gets version N (or stays as it is), or the Muse's own idea stays and yours goes in after it. **Start from the note above** loads that note into the box. No Fresh take on the Muse's own message; an image Muse disables it with the rename advice. The Muse's messages are **✦ Muse's note for Game Master** (no speaker's badge, a dotted rail, close above the reply; "written by you" or "its own idea"), folded, with edit, delete and the pager; its own turn streams in that frame; its chip has a sparkle. An image version shows its idea above the picture only when no note above has it (T15, or the note deleted). Payload marks the note's message. Settings: the Muse's card says what it is, a rename that ends or starts a Muse says so before and after saving, and Templates has "Fresh take: the Muse's note". A failed fresh take's Retry is a plain re-roll.
 
 **Done (frontend, 2026-10-15):** Jason sees a fresh take put his idea in as a folded ✦ Muse's note right above the new reply (a second one gives that note a version, and the box says which before he sends), the Muse with a look and a chip of its own, and Settings warning when a rename ends or starts a Muse. Mock only. `npm test` 217/217.
+
+---
+
+## T18: A model per brain · `engineer`
+
+Jason, 2026-10-21. Today a conversation has one text model and one image model, and every brain uses them. He wants a conversation default (say Grok 4.7) and, on one brain only (the Co-GM), another model (GLM 5.3, Gemma 4, ...). The same for image brains: one painter on another image model.
+
+### The shape (a best guess; the bar is the acceptance below)
+- **A brain may name its own text model**, and an image brain its own image model too (it uses both: the text model writes the prompt, the image model paints it). Absent means "the conversation's", so changing the conversation's model moves every brain that has none of its own. A brain's model is checked against Venice when set, as `conversation.update` checks one; any Venice id works, as there.
+- **Everything that depends on the model follows the brain's**: the request's `model`, the reasoning parameters (effort options, `ALWAYS_REASONS` and its notes), tool calls for an image brain, the painter's sizing and price, the model recorded on each version and image. Today the generating paths look the conversation's model up before they know which brain answers; that order changes.
+- **Visible everywhere a brain is shown**: `brain.list`, `prompt.preview` (the payload view: which model, and whether it's the brain's own or the conversation's), and a `turn`'s output where it names the brain.
+- **Carried through**: campaign files (import/export, the checks `toConversation` applies), clone (including `--text-model`: say what it does to a brain with its own model; the clone's purpose is "the same story under another model"), `brain.import` from presets/examples, and a maker's blueprint (a made brain may get a model from it).
+- An image brain whose own image model doesn't offer the conversation's resolution: today's rule (left out, with a note) is probably right. Your call.
+
+### Engineer scope
+Data, `brain.add` / `brain.update` flags (and a way back to the default), the generating paths, preview, repaint/retry, campaigns, clone, makers, the mock if it needs anything, tests (preview == send for a brain with its own text model, and an image brain with its own image model), design.md, README if it changes how Jason plays, AGENTS.md lines that mention the conversation's model. Live: one small check that a brain on its own model really reaches Venice with it (a few text calls, at most 1 image). Plus one cheap probe while live: design.md flags that Grok 4.7 counted ~2,400 prompt tokens for a body others counted at ~1,200 (a system prompt we don't send would break hard rule 1); send one small identical body to Grok 4.7 and DeepSeek V4.1 Flash with `stream: false` and record the prompt-token counts in design.md, "Models". Report what you find; don't remove Grok either way.
+
+### Frontend scope
+- Each brain's card in Settings gets a model picker (text, and image for an image brain): "Conversation default (<model>)" first, then the curated list. The card's reasoning switch and effort levels, its always-reasons note and its image price follow the brain's model.
+- Wherever the browser names the conversation's model (the chat header, the clone menu, the Conversation tab), it stays true when some brains have their own (e.g. the header says so).
+
+### Acceptance
+- On the mock: with the conversation on model A and one brain on model B, that brain's `prompt.preview` and its real send both name B (`deepEqual`), every other brain's name A; changing the conversation's model moves only the brains without their own; clearing the brain's model puts it back on the default. An image brain with its own image model paints with it (the mock's request shows it) and its price is that model's.
+- A brain on an always-reasoning model with reasoning off gets that model's note, while the conversation's model doesn't reason at all.
+- Old conversation files load unchanged (every brain on the default). A campaign file round-trips a brain's model.
+- Live: one brain on another curated model answers through the app; the Grok token probe is recorded.
+- Every word sent stays visible and editable. `npm test` and `npm run typecheck` pass.
