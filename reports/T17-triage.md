@@ -46,37 +46,37 @@ QA's exact repros, on the mock:
 
 ```
 # QA-1: the poet called Muse
-$ ./ss message.regenerate --thought "Critique the poem kindly."
+$ ./sst message.regenerate --thought "Critique the poem kindly."
 [Muse's note m_6pa4gw46dc, right before the reply: every brain reads it]
 Critique the poem kindly.                                   # QA-5: an unwrapped note is printed, not "--reveal shows it"
-$ ./ss prompt.preview --json | jq -c '[.body.messages[]|[.role,.content[0:40]]]'
+$ ./sst prompt.preview --json | jq -c '[.body.messages[]|[.role,.content[0:40]]]'
 [["system",…],["user","<!-- from: the user -->\nWrite me a poem."],["user","<!-- from: Muse -->\nMOCK reply to brain \"You are a poet"],["user","<!-- from: Muse -->\nCritique the poem kindly."],["assistant",…]]
                                                             # the poem stays; the note is a new message after it
 # QA-3
 $ curl … /api/message.regenerate -d '{"conversation":"c_…","thought":"x"}'
 {"error":{"code":"bad_brain","message":"A fresh take's note is written by the brain called Muse, and Muse here is an image brain. Rename it …"}}
 # QA-2
-$ ./ss conversation.update --id c_… --templates.thought $'```hidden\n{{thought}}\n\nThat sounds good, I\'ll respond next.\n```' --json | jq .templates.thought
-$ ./ss conversation.get --id c_… --json | jq .templates.thought      # → T15's wording, as set (was: the new default)
+$ ./sst conversation.update --id c_… --templates.thought $'```hidden\n{{thought}}\n\nThat sounds good, I\'ll respond next.\n```' --json | jq .templates.thought
+$ ./sst conversation.get --id c_… --json | jq .templates.thought      # → T15's wording, as set (was: the new default)
 ```
 
 The acceptance bullets, re-run on the mock with the preset, the Goat's World Bible and the opener, after a restart on the final code:
 
 ```
-$ ./ss message.regenerate --thought @idea.txt --wrap
+$ ./sst message.regenerate --thought @idea.txt --wrap
 (added a brain called Muse (b_c68lwjrz4s): it writes the fresh takes' notes)
 [Muse's note m_bpptj9bdba, right before the reply: every brain reads it; --reveal shows it]
 preview == sent (#1, reminder on, new note)                 # cmp of jq -S bodies against /_mock/requests
 == Co-GM / Show Me the Odds / Scene Painter: … the user, Muse, Game Master, reminder; last "user"
 == Game Master: … the user, Muse, assistant, reminder; last "user"
-$ ./ss brain.update --brain "Game Master" --no-final-reminder.enabled
-$ ./ss message.regenerate --thought "The figure is a retired paladin…" --wrap
+$ ./sst brain.update --brain "Game Master" --no-final-reminder.enabled
+$ ./sst message.regenerate --thought "The figure is a retired paladin…" --wrap
 [Muse's note m_bpptj9bdba, version 2/2, right before the reply …]   # the same note, a new version
 preview == sent (#2, no reminder, note v2)                  # body ends on the note: "user"
-$ ./ss message.delete --message m_bpptj9bdba  →  Game Master: 0 Muse-framed, Co-GM: 0 Muse-framed
-$ ./ss turn --brain Muse; ./ss turn; ./ss message.regenerate --thought "Goblins again." --wrap
+$ ./sst message.delete --message m_bpptj9bdba  →  Game Master: 0 Muse-framed, Co-GM: 0 Muse-framed
+$ ./sst turn --brain Muse; ./sst turn; ./sst message.regenerate --thought "Goblins again." --wrap
   → Muse (generated, 1 version) · Muse (authored, the new note) · Game Master v2   # QA-1 in play
-$ ./ss brain.list --json | jq … Muse .finalReminder.content  → MUSE_REMINDER
+$ ./sst brain.list --json | jq … Muse .finalReminder.content  → MUSE_REMINDER
 ```
 
 ## Spend

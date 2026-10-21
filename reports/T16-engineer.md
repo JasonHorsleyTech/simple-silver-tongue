@@ -49,7 +49,7 @@ A scratch **Place Creator** making `Place {{n}}` works with no code of its own.
 - `turn` yields `{type: "brain_made", brain, messageId}` after the save, before `done`. For an image maker it comes before `image_pending`, where clients stop reading.
 - `generation.follow` replays it.
 - `message.add` returns `made`, and `generation.stop` returns `made` when the stopped reply made a brain.
-- The CLI prints "Made a new brain, Character 1 (b_…) … Rename it once you know who it is: ./ss brain.update …" after the reply, never in the middle of it.
+- The CLI prints "Made a new brain, Character 1 (b_…) … Rename it once you know who it is: ./sst brain.update …" after the reply, never in the middle of it.
 
 **Payload view**
 - `pinnedNote` says which message is pinned, whose it is, and how it is sent.
@@ -136,50 +136,50 @@ The setup: the scene at the tavern, two characters, and the same question asked 
 **Mock.** I ran the scratch server by hand on ports 4767 and 4768, with its own data and run directories and user `dev-t16-mock`. Jason's live server was running on 4747, and `npm run up:mock` would have stopped it (AGENTS.md lesson, 2026-10-15).
 
 ```
-$ ./ss conversation.import --preset tabletop-rpg --title Tavern ; setup.add (World Bible) ; message.add --as "Game Master" (opener)
-$ ./ss prompt.preview --brain "Character Creator" | grep "will make"
+$ ./sst conversation.import --preset tabletop-rpg --title Tavern ; setup.add (World Bible) ; message.add --as "Game Master" (opener)
+$ ./sst prompt.preview --brain "Character Creator" | grep "will make"
 Note: Character Creator makes a brain from each new message: this reply will make a new brain, Character 1, with the reply pinned to it. ...
-$ ./ss turn --brain "Character Creator" --content "(the hooded figure)"
+$ ./sst turn --brain "Character Creator" --content "(the hooded figure)"
 MOCK reply to brain "You write character sheets for"; saw 5 messages; ...
 [Character Creator · 1108 in / 35 out · $0.00037]
-Made a new brain, Character 1 (b_lxwya7xo0t), with this reply pinned to it. Rename it once you know who it is: ./ss brain.update --conversation c_xywuo58lpn --brain b_lxwya7xo0t --name "..."
-$ ./ss prompt.preview --brain "Character 1" --content "Who are you?"
+Made a new brain, Character 1 (b_lxwya7xo0t), with this reply pinned to it. Rename it once you know who it is: ./sst brain.update --conversation c_xywuo58lpn --brain b_lxwya7xo0t --name "..."
+$ ./sst prompt.preview --brain "Character 1" --content "Who are you?"
 Note: Pinned to Character 1: m_x78ipakmv3 (Character Creator's), as it appears in the ledger, framed with who wrote it. It is sent right after the setup messages, as it stands now, and not again at its place in the ledger.
 ── [0] system ──
 ── [1] user ──
 ── [2] user · pinned m_x78ipakmv3, as it appears in the ledger, framed with who wrote it ──
-$ ./ss turn --brain "Character 1" --content "Who are you?"        # then: preview --json body vs the mock's received body: cmp identical
-$ ./ss message.add --as "Character Creator" --content '```hidden …the barkeep… ```'
+$ ./sst turn --brain "Character 1" --content "Who are you?"        # then: preview --json body vs the mock's received body: cmp identical
+$ ./sst message.add --as "Character Creator" --content '```hidden …the barkeep… ```'
 Added m_s16uzjes5w (in Character Creator's mouth). Every brain sees it from the next request.
 It made a new brain, Character 2 (b_n5amxf89zc), with this message pinned to it. ...
-$ ./ss turn --brain "Character 2" --content "Another ale."
+$ ./sst turn --brain "Character 2" --content "Another ale."
 # back to Character 1, role and first line of each message:
 system "You play one character…" · user World Bible · user "<!-- from: Character Creator -->" (its own sheet, pinned)
 · user GM · user · user · assistant (its own line) · user · assistant (its own line) · user "<!-- from: Character Creator -->" (the barkeep's sheet, in place)
 · user · user "<!-- from: Character 2 -->" · user · user "<!-- System reminder -->"
-$ ./ss message.edit --message m_x78ipakmv3 --content '```hidden EDITED SHEET ```'   # Character 1 now gets "<!-- from: Character Creator -->\n```hidden\nEDITED SHEET\n```"
-$ ./ss brain.update --brain "Character 2" --name Barkeep                                # the GM now sees "<!-- from: Barkeep -->"
-$ ./ss brain.pin --brain "Game Master" --message m_x78ipakmv3 --as system
+$ ./sst message.edit --message m_x78ipakmv3 --content '```hidden EDITED SHEET ```'   # Character 1 now gets "<!-- from: Character Creator -->\n```hidden\nEDITED SHEET\n```"
+$ ./sst brain.update --brain "Character 2" --name Barkeep                                # the GM now sees "<!-- from: Barkeep -->"
+$ ./sst brain.pin --brain "Game Master" --message m_x78ipakmv3 --as system
 Pinned m_x78ipakmv3 to Game Master (b_4zqipqpai3), as a system message, its text verbatim. ...
-$ ./ss message.delete --message m_x78ipakmv3
+$ ./sst message.delete --message m_x78ipakmv3
 Deleted m_x78ipakmv3. 9 messages left.
 Game Master (b_4zqipqpai3) had it pinned; the pin is gone.
 Character 1 (b_lxwya7xo0t) was made from this message and stays (it has spoken, or is the default brain); it no longer has it pinned.
 
 # generic, in a copy of the Gilded Goat:
-$ ./ss brain.add --name "Place Creator" --system-prompt "…one hidden note." --makes.name "Place {{n}}" --makes.blueprint.system-prompt "You are the place described in the note right after the World Bible…"
+$ ./sst brain.add --name "Place Creator" --system-prompt "…one hidden note." --makes.name "Place {{n}}" --makes.blueprint.system-prompt "You are the place described in the note right after the World Bible…"
 Added brain Place Creator (b_d641zlw224) · text · … · makes "Place {{n}}"
-$ ./ss turn --brain "Place Creator" --content "What's going on here tonight?"
+$ ./sst turn --brain "Place Creator" --content "What's going on here tonight?"
 Made a new brain, Place 1 (b_1ktf2qg35y), with this reply pinned to it. ...
 
 # migration (README "An older campaign"): a Creator and an Actor without the setting, one old sheet and one old line
 $ jq '.brains[] | select(.name == "Character Creator").makes' presets/tabletop-rpg.json > makes.json
-$ ./ss brain.update --brain "Character Creator" --makes @makes.json
-$ ./ss brain.make --message m_m8xicvtwms
+$ ./sst brain.update --brain "Character Creator" --makes @makes.json
+$ ./sst brain.make --message m_m8xicvtwms
 Made Character 1 (b_n3sug848xn) from m_m8xicvtwms, which is pinned to it as it appears in the ledger, framed with who wrote it.
-$ ./ss brain.update --brain "Character 1" --name Alice ; ./ss message.set-author --message m_inbmhx4kcg --as Alice
+$ ./sst brain.update --brain "Character 1" --name Alice ; ./sst message.set-author --message m_inbmhx4kcg --as Alice
 m_inbmhx4kcg is now said by Alice (was Character Actor). ...
-$ ./ss brain.delete --brain "Character Actor"
+$ ./sst brain.delete --brain "Character Actor"
 Deleted brain Character Actor (b_t1klso5nvt). Brains left: Assistant, Character Creator, Alice.
 ```
 
@@ -193,36 +193,36 @@ Tonight Wren shelters in the Drowned Lantern, a cramped dockside tavern: a hoode
 The run, with a hand-written GM opener:
 
 ```
-$ ./ss turn --brain "Character Creator"
+$ ./sst turn --brain "Character Creator"
 [Hidden · 15 lines]      # --reveal: Known to the player as: the hooded figure · Name: Ilsa Marrow · … Keeps: a folded page in her boot …
                          #   · Knows: … the barkeep here takes watch money and tips them off … · Tells: thumb on the brass button; nudges her cup …
 [Character Creator · 1206 in / 833 out · $0.0011]
 Made a new brain, Character 1 (b_wteind55ab), with this reply pinned to it. ...
-$ ./ss turn --brain "Character 1" --content "I slide into the booth across from her. \"Wet night to be sitting alone. You waiting on someone?\""
+$ ./sst turn --brain "Character 1" --content "I slide into the booth across from her. \"Wet night to be sitting alone. You waiting on someone?\""
 **The hooded figure:** *I nudge my untouched cup half an inch toward the middle of the table and keep my hands under the edge of my cloak.*
 "Not waiting on anyone." *A beat.* "Just the rain. There's a fire over there."
 [Character 1 · 1909 in / 94 out · $0.00069]
-$ ./ss message.add --as "Character Creator" --content @barkeep.md        # hand-written: Hob Granger; Keeps: sent the potboy Tam to the watch house
+$ ./sst message.add --as "Character Creator" --content @barkeep.md        # hand-written: Hob Granger; Keeps: sent the potboy Tam to the watch house
 It made a new brain, Character 2 (b_usvkp6n46s), with this message pinned to it. ...
-$ ./ss turn --brain "Character 2" --content "\"Two hot rums, friend. And what's she drinking, the one in the corner?\""
+$ ./sst turn --brain "Character 2" --content "\"Two hot rums, friend. And what's she drinking, the one in the corner?\""
 **Hob Granger:** … "Two rums, right. She's paid for her corner, friend. Leave her to it." …     # the name leak: fixed below
 $ (3 + 3 pin-role probes, nothing saved; see above)
-$ ./ss message.regenerate          # the barkeep's line, with the fixed blueprint
+$ ./sst message.regenerate          # the barkeep's line, with the fixed blueprint
 **The barkeep:** … "Hot rum, two. And she's drinking cold tea, so don't waste my rum on her." … "You've a tab here, friend. Forty-three and six, by my book."
 [Character 2 · version 2/2 · 2464 in / 274 out · $0.00041]                # brain.list: still 8 brains (no new brain)
-$ ./ss turn --brain "Character 1" --content 'I carry the two rums back to the booth … "The barkeep keeps watching this table. Has he sold you out already?"'
+$ ./sst turn --brain "Character 1" --content 'I carry the two rums back to the booth … "The barkeep keeps watching this table. Has he sold you out already?"'
 **The hooded figure:** *My thumb finds the brass button at my cuff and works it. I don't look at the bar; I look at you.*
 "He watches everyone. That's the trade." … "Second bell, the watch comes through here. You'll want to be somebody's cousin by then."
 [Character 1 · 2573 in / 514 out · $0.00073]                               # her own sheet's knowledge; nothing of the barkeep's secret
-$ ./ss turn --content "I drink, and keep one eye on the barkeep and the door."
+$ ./sst turn --content "I drink, and keep one eye on the barkeep and the door."
 You drink, and you watch. … The potboy — a thin lad of maybe twelve — comes in the back with an armload of peat, and the barkeep catches
 him by the wrist and says something close to his ear, and the boy's eyes go, quick, to your booth, then away. Across the table, the hooded
 figure has stopped drinking too. … She nudges the cup an inch, then stops it. …
 [Game Master · 2914 in / 234 out · $0.0012]
-$ ./ss turn --brain "Character Creator"            # nobody named: the newest person without a sheet
+$ ./sst turn --brain "Character Creator"            # nobody named: the newest person without a sheet
 [Hidden · 15 lines]      # Known to the player as: the potboy · Name: Tam Rill …
 Made a new brain, Character 3 (b_yih14ojcjs), with this reply pinned to it. ...
-$ ./ss brain.update --brain "Character 1" --name "Hooded Figure"   # the GM's preview now frames her lines "<!-- from: Hooded Figure -->"
+$ ./sst brain.update --brain "Character 1" --name "Hooded Figure"   # the GM's preview now frames her lines "<!-- from: Hooded Figure -->"
 ```
 
 Afterwards I diffed the committed preset with the live conversation's `brain.list --json`. The GM and Creator prompts and reminders, and the blueprint (as Character 2 had it after the fix), are identical.

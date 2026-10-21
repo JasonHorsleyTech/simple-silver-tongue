@@ -14,7 +14,7 @@ export const SERVER: Proc = {
   pidFile: join(RUN_DIR, "server.pid"),
   logFile: join(RUN_DIR, "server.log"),
   marker: "src/server/main.ts",
-  port: Number(process.env.SS_PORT || 4747),
+  port: Number(process.env.SST_PORT || 4747),
 };
 
 export const MOCK: Proc = {

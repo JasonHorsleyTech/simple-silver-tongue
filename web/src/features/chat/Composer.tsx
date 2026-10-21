@@ -676,7 +676,7 @@ function MoreBrains({
  * With the die armed (`roll`), it wears the die too: it rolls, then that brain answers (or paints).
  *
  * `compact` (T12): it shows `label`, the brain's initials, and its full name is a flag drawn over its neighbours
- * on hover or focus (index.css, `.ss-flag`). The flag never takes layout room and lets the pointer through, so the
+ * on hover or focus (index.css, `.sst-flag`). The flag never takes layout room and lets the pointer through, so the
  * row never wraps or shifts, and whichever chip is under the pointer is the one named. The flag is always there,
  * hidden, so the composer can measure whether the whole names would fit. The accessible name is always complete.
  */
@@ -779,7 +779,7 @@ function BrainChip({
       <span
         aria-hidden
         data-full-name
-        className="ss-flag inline-flex h-7 items-center gap-1.5 rounded-md border px-2 whitespace-nowrap shadow-lg shadow-black/40"
+        className="sst-flag inline-flex h-7 items-center gap-1.5 rounded-md border px-2 whitespace-nowrap shadow-lg shadow-black/40"
         style={{
           color: ink,
           borderColor: `color-mix(in oklab, ${b.color} 30%, var(--color-raised))`,

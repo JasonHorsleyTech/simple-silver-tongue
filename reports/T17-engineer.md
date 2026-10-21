@@ -44,7 +44,7 @@ A fresh take no longer plants the thought as the brain's own trailing `assistant
 Mock, on a scratch server (ports 4767/4768, scratch data). The preset conversation uses the Gilded Goat's World Bible, its opener in the GM's mouth, and "I walk up to the hooded figure in the corner booth."
 
 ```
-$ ./ss prompt.preview --regenerate --thought @idea.txt --wrap
+$ ./sst prompt.preview --regenerate --thought @idea.txt --wrap
 Regenerating m_88l6e18j1l as version 2: a fresh take, so the message is left out and Game Master answers the Muse's note right before it (see the note below). The new version is the reply alone.
 Note: A fresh take: the Muse's note goes in as a new message, right before m_88l6e18j1l. It is written by Muse, framed like any helper's: every brain reads it from now on, and the player sees it folded. … This conversation has no brain called Muse yet, so one is added when you send …
 ── [4] user ──
@@ -57,27 +57,27 @@ What should I do to make the hooded figure more fun? …
 ── [5] user ──
 <!-- System reminder -->
 …
-$ ./ss message.regenerate --thought @idea.txt --wrap
+$ ./sst message.regenerate --thought @idea.txt --wrap
 (added a brain called Muse (b_7lpz9xh2cf): it writes the fresh takes' notes)
 [Muse's note m_kt0zyr4t83, right before the reply: every brain reads it; --reveal shows it]
 [Game Master · version 2/2 · fresh take · 2024 in / 35 out · $0.00065]
 preview == sent: true          # the preview's body against the mock's /_mock/requests
 
-$ for b in Co-GM "Show Me the Odds" "Scene Painter" "Game Master"; do ./ss prompt.preview --brain "$b" --json | jq …; done
+$ for b in Co-GM "Show Me the Odds" "Scene Painter" "Game Master"; do ./sst prompt.preview --brain "$b" --json | jq …; done
 == Co-GM            [user "<!-- from: the user -->"], [user "<!-- from: Muse -->"], [user "<!-- from: Game Master -->"], [user "<!-- System reminder -->"]
 == Show Me the Odds  (same)
 == Scene Painter     (same)
 == Game Master       [user …the user], [user …Muse], [assistant "MOCK reply…"], [user …reminder]
 
-$ ./ss brain.update --brain "Game Master" --no-final-reminder.enabled
-$ ./ss prompt.preview --regenerate --thought "The figure is a retired paladin…" --wrap --json | jq …
+$ ./sst brain.update --brain "Game Master" --no-final-reminder.enabled
+$ ./sst prompt.preview --regenerate --thought "The figure is a retired paladin…" --wrap --json | jq …
 {"note":{"messageId":"m_kt0zyr4t83","version":2,"isNew":false,"same":false,"muse":"Muse","museCreated":false},"last":"user", …}
-$ ./ss message.regenerate --thought "The figure is a retired paladin…" --wrap
+$ ./sst message.regenerate --thought "The figure is a retired paladin…" --wrap
 [Muse's note m_kt0zyr4t83, version 2/2, right before the reply: every brain reads it; --reveal shows it]
 [Game Master · version 3/3 · fresh take · …]
-$ ./ss message.get --message m_kt0zyr4t83
+$ ./sst message.get --message m_kt0zyr4t83
 Muse · m_kt0zyr4t83 · 2 versions, version 2 active      # one note, two versions
-$ ./ss message.delete --message m_kt0zyr4t83
+$ ./sst message.delete --message m_kt0zyr4t83
 $ … prompt.preview --brain "Game Master" / "Co-GM": messages starting with the Muse framing: 0
 ```
 

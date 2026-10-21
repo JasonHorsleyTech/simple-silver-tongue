@@ -21,7 +21,7 @@
 
 ## The playthrough in Chrome, live
 
-`deepseek-v4-1-flash` and `z-image-turbo`, user `dev-t07-play` (encrypted, made-up password), on a scratch data dir (`SS_DATA_DIR`) so no other username could reach a screenshot. Every step was clicks and typing in the page; the network panel shows only `POST /api/<command>` calls (plus `GET /api/image.get` for pictures), and the console had no errors or warnings.
+`deepseek-v4-1-flash` and `z-image-turbo`, user `dev-t07-play` (encrypted, made-up password), on a scratch data dir (`SST_DATA_DIR`) so no other username could reach a screenshot. Every step was clicks and typing in the page; the network panel shows only `POST /api/<command>` calls (plus `GET /api/image.get` for pictures), and the console had no errors or warnings.
 
 | # | Paragraph clause | In the browser | Screenshot |
 |---|---|---|---|
@@ -61,4 +61,4 @@ Also checked on the mock (`npm run up:mock`, scratch data dir): the stop-sequenc
 
 ## Handover
 
-After the commit: every `dev-*` and `qa-*` user in `data/users/` deleted with `./ss user.delete` (no other user touched), the scratch data dir removed, the server stopped, and `npm test` / `npm run typecheck` run once more. Details in the final reply.
+After the commit: every `dev-*` and `qa-*` user in `data/users/` deleted with `./sst user.delete` (no other user touched), the scratch data dir removed, the server stopped, and `npm test` / `npm run typecheck` run once more. Details in the final reply.

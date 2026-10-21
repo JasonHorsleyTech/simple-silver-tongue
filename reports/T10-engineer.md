@@ -48,7 +48,7 @@ Details are below.
   - Image brains have safe mode on, and their tool text says the player reads the prompt as the picture's caption.
 - **`presets.list`** (no login): each preset with its title, its `about` line, and each brain's name, kind, color and `about` line.
 - **`conversation.import --preset <name> [--title]`**: you pass exactly one of `--example`, `--preset` or `--campaign`. A preset with setup or messages is refused.
-  - When the result has no setup, the CLI output ends with "No World Bible yet: write one before you play (every brain reads it): ./ss setup.add …". This applies to any import or clone with no setup.
+  - When the result has no setup, the CLI output ends with "No World Bible yet: write one before you play (every brain reads it): ./sst setup.add …". This applies to any import or clone with no setup.
 - **`brain.import --conversation (--preset <name> | --example <name>) --brain <name in the file> [--name <new>]`** adds one brain, whole:
   - system prompt, reminder, kind, reasoning, stop sequences, tool text and safe mode;
   - checked exactly as an import of its file would check it.
@@ -111,22 +111,22 @@ I used T07's method: `prompt.preview --json`, then one non-streaming POST, with 
 
 ## Transcript (trimmed)
 
-**Mock** (`SS_DATA_DIR=<scratch> npm run up:mock`, user `dev-t10-mock`):
+**Mock** (`SST_DATA_DIR=<scratch> npm run up:mock`, user `dev-t10-mock`):
 
 ```
-$ ./ss presets.list
+$ ./sst presets.list
 tabletop-rpg: Tabletop RPG
   Seven genre-free brains for one player and any world: ... No World Bible and no story: write yours under Setup, then play.
   · Game Master: Narrates in the second person up to your next choice; stops before an uncertain outcome, and narrates the one your roll earned.
   · Co-GM: Answers your questions about the scene ("How far is the drop?") without moving the story.
   ...
-$ ./ss conversation.import --preset tabletop-rpg --title "Chinatown"
+$ ./sst conversation.import --preset tabletop-rpg --title "Chinatown"
 Imported c_8qclpzd3vu "Chinatown" · deepseek-v4-1-flash · images z-image-turbo
 Brains: Game Master (default), Co-GM, Show Me the Odds, Character Creator, Character Actor, Scene Painter (image), Character Portraitist (image)
 Setup: none · 0 messages
-No World Bible yet: write one before you play (every brain reads it): ./ss setup.add --conversation c_8qclpzd3vu --content @world.md
-$ ./ss conversation.clone --id c_… --title "Goat clone"          (of conversation.import --example dnd-tavern)
-$ ./ss brain.import --conversation c_… --preset tabletop-rpg --brain "Character Actor"
+No World Bible yet: write one before you play (every brain reads it): ./sst setup.add --conversation c_8qclpzd3vu --content @world.md
+$ ./sst conversation.clone --id c_… --title "Goat clone"          (of conversation.import --example dnd-tavern)
+$ ./sst brain.import --conversation c_… --preset tabletop-rpg --brain "Character Actor"
 Added brain Character Actor (b_75kj9yovuw) · text · reasoning low · final reminder on · stops at "<!-- from:" from the preset "Tabletop RPG".
 Only the brain came over: this conversation keeps its own templates, which differ from "Tabletop RPG"'s (player, otherBrainImage, steer), so Character Actor reads the table as this conversation frames it. Settings → Templates (conversation.update --templates.<name>) changes them.
 Talk to it with turn --brain "Character Actor"; prompt.preview --brain "Character Actor" shows what it sees.
@@ -140,7 +140,7 @@ Added brain Second Actor (b_cecmdu0p6g) · text · reasoning low · final remind
 → brains: Game Master, Dice Master, Joke Teller, Scene Painter, Character Portraitist, Character Actor, Second Actor
 ```
 
-**Live** (`SS_DATA_DIR=<scratch> npm run up`, encrypted user `dev-t10-live`). The World Bible:
+**Live** (`SST_DATA_DIR=<scratch> npm run up`, encrypted user `dev-t10-live`). The World Bible:
 
 ```
 <!-- This is the World Bible. -->
@@ -150,8 +150,8 @@ Sam carries $40, a .38 with three bullets, and a photograph of Lily Chao, a nigh
 ```
 
 ```
-$ ./ss conversation.import --preset tabletop-rpg --title "Chinatown"; ./ss setup.add --content @world.md
-$ ./ss turn --content "I approach the hooded figure."
+$ ./sst conversation.import --preset tabletop-rpg --title "Chinatown"; ./sst setup.add --content @world.md
+$ ./sst turn --content "I approach the hooded figure."
 [Game Master · in "Chinatown"]
 The Jade Lantern breathes around you: steam, cheap jasmine, a ceiling fan stirring the smoke into slow gray eddies. On the
 balcony, a man in a linen suit watches the room the way a heron watches a pond. ...
@@ -160,7 +160,7 @@ You pull the curtain aside. The hood is up, the face inside it mostly shadow and
 That's three more than your nerve."
 [Game Master · 1028 in / 193 out · $0.0003]
 
-$ ./ss turn --brain "Character Creator"
+$ ./sst turn --brain "Character Creator"
 [Hidden · 15 lines]
 [Character Creator · 1203 in / 895 out · $0.0014]
 # (--reveal) one closed note: Known to the player as: the hooded figure · Name: Ada Quon · Age, ancestry, beliefs · Looks
@@ -169,7 +169,7 @@ $ ./ss turn --brain "Character Creator"
 #  say so only to keep her nephew out of a cell, and why) · Knows · Doesn't know (that Sam has a photograph) · Tells (left
 #  hand flat when weighing a lie; a quarter turn of the cup) · Ties. findHidden: 1 note, closed; isAllHidden: true.
 
-$ ./ss turn --brain "Character Actor" --content @line.md
+$ ./sst turn --brain "Character Actor" --content @line.md
 #   I sit. "I'm looking for a singer, Lily Chao. Word is you sell what you know." I slide her photograph across the table.
 [Reasoning, folded: --reveal streams it; conversation.get --json has it]
 **The hooded figure:** *I don't pick it up. I look at it a while — longer than I mean to — and my bare left hand goes flat on
@@ -178,11 +178,11 @@ the tabletop, fingers spread, as if the wood might shift under the cup.* "Lily C
 That's the part nobody's told me yet."
 [Character Actor · 1914 in / 185 out · $0.00067]
 
-$ ./ss turn --brain "Show Me the Odds" --content "I try to talk them down to half price."
+$ ./sst turn --brain "Show Me the Odds" --content "I try to talk them down to half price."
 Roll a d20: 13 or higher succeeds, 5 or lower is a hard failure.
 [Show Me the Odds · 2005 in / 21 out · $0.00046]
 
-$ ./ss turn --brain "Game Master" --roll
+$ ./sst turn --brain "Game Master" --roll
 🎲 d20: 15
 The figure lets the silence stretch, then reaches up and draws the hood back an inch ...
 "Half. For a picture you won't explain." Her bare left hand stays flat on the wood. "... I'm charging you half for the first
@@ -191,12 +191,12 @@ time in a year, which should worry you more than paying full." ...
 into. Not the plate. Not who it belongs to. ..." A pause. "And before I say any of it, you tell me where the photograph came from."
 [Game Master · 2334 in / 194 out · $0.00069]
 
-$ ./ss turn --brain "Co-GM" --content "How far is the drop?"
+$ ./sst turn --brain "Co-GM" --content "How far is the drop?"
 Off the balcony rail it's a straight drop of about twenty feet into the alley — wet cobbles, a couple of dented trash cans,
 and a fire escape platform jutting out on the left side about eight feet down. In the rain, those cobbles will be slick.
 [Co-GM · 2231 in / 58 out · $0.00058]
 
-$ ./ss turn --brain "Character Portraitist"
+$ ./sst turn --brain "Character Portraitist"
 A Chinese-American woman of fifty-one, five feet even and square-shouldered, sitting perfectly straight. Round wire-rimmed
 glasses, one hinge mended with copper wire. An olive-drab oilskin rain cape ... Her eyes stay steady and unblinking behind the
 lenses, mouth set in a flat, unhurried line, brows faintly drawn as if weighing a price. Warm amber lamplight from a low table
@@ -204,7 +204,7 @@ lamp falls from the right ... Painted in oil, muted sepia and jade palette, hard
 [Character Portraitist · 2723 in / 244 out · $0.0011 · image img_92bezrr17d done (z-image-turbo, webp, $0.01)]
 # grep of the prompt for the sheet's secrets (Ada, Quon, Wai, Voss, Dowd, Packard, nephew, Imperial, ledger, Lily): none.
 
-$ ./ss turn --brain "Scene Painter" --content "(the booth, with the man in the linen suit up on the balcony behind her)"
+$ ./sst turn --brain "Scene Painter" --content "(the booth, with the man in the linen suit up on the balcony behind her)"
 ... At the table sits a square-shouldered Chinese-American woman of fifty-one, ... Beyond the beaded curtain, ... a blurred
 man in a pale linen suit stands at the balcony rail ... Painted in oil, muted sepia and jade palette, hard chiaroscuro,
 smooth cinematic finish.

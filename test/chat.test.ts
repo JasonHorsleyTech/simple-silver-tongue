@@ -33,7 +33,7 @@ describe("streaming chat end to end: CLI → server → mock Venice", () => {
     (await json(["conversation.create", "--title", "Haiku bot", "--system-prompt", systemPrompt])) as Conversation;
   const get = async (id: string) => (await json(["conversation.get", "--id", id])) as Conversation;
   /** The CLI's saved session as a cookie, for raw concurrent requests through app.fetch. */
-  const cookieOf = () => `ss_session=${JSON.parse(readFileSync(join(t.config.runDir, "cli-session.json"), "utf8")).token}`;
+  const cookieOf = () => `sst_session=${JSON.parse(readFileSync(join(t.config.runDir, "cli-session.json"), "utf8")).token}`;
   const lastSent = () => t.mock.state.requests.find((r) => r.path === "/chat/completions")?.body as Record<string, any>;
 
   test("three turns stream, persist, and the preview is exactly what was sent", async () => {

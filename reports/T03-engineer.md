@@ -42,20 +42,20 @@
 
 **Green, blue, green.** Preview equals send for each steer, and the next prompt carries no steer:
 ```
-$ ./ss turn --conversation c_x4gn113615 --content 'What color is a lime?'
+$ ./sst turn --conversation c_x4gn113615 --content 'What color is a lime?'
 MOCK reply to brain "You answer in one word."; saw 2 messages; last: "<!-- from: the user --> What color is a lime?"
-$ ./ss message.regenerate --conversation c_x4gn113615 --steer "Say it's blue."
+$ ./sst message.regenerate --conversation c_x4gn113615 --steer "Say it's blue."
 MOCK reply to brain "You answer in one word."; saw 4 messages; last: "<!-- Behind-the-scenes directi…direction: --> Say it's blue."
 [Assistant · version 2/2 · steered · 89 in / 33 out · $0.000066]
 preview == sent (blue): IDENTICAL          (cmp of prompt.preview --regenerate --steer ... --json .body vs /_mock/requests)
-$ ./ss message.regenerate --conversation c_x4gn113615 --steer "No, say it's green."
+$ ./sst message.regenerate --conversation c_x4gn113615 --steer "No, say it's green."
 ... last: "<!-- Behind-the-scenes directi…tion: --> No, say it's green."
 [Assistant · version 3/3 · steered · 94 in / 33 out · $0.000068]
 preview == sent (green): IDENTICAL
 # the green request's last two messages: version 2 (blue), then only this steer
 [{"role":"assistant","content":"MOCK reply ... --> Say it's blue.\""},{"role":"user","content":"<!-- Behind-the-scenes direction ... -->\nNo, say it's green."}]
 
-$ ./ss prompt.preview --conversation c_x4gn113615 --content 'Why?'
+$ ./sst prompt.preview --conversation c_x4gn113615 --content 'Why?'
 4 messages:
 ── [0] system ──     You answer in one word.
 ── [1] user ──       <!-- from: the user -->\nWhat color is a lime?
@@ -69,68 +69,68 @@ The mock's reply echoes its input, so version 3's own text quotes its steer; tha
 
 **Back to version 2, then keep playing from it:**
 ```
-$ ./ss message.select-version --conversation c_x4gn113615 --message m_4s8rq3640q --version 2
+$ ./sst message.select-version --conversation c_x4gn113615 --message m_4s8rq3640q --version 2
 m_4s8rq3640q now shows version 2/3 (steer: "Say it's blue."). Every brain sees it from the next request.
-$ ./ss message.regenerate --conversation c_x4gn113615 --steer 'Make it iambic pentameter.'
+$ ./sst message.regenerate --conversation c_x4gn113615 --steer 'Make it iambic pentameter.'
 [Assistant · version 4/4 · steered · 96 in / 33 out · $0.000068]
-$ ./ss message.get --conversation c_x4gn113615 --message m_4s8rq3640q
+$ ./sst message.get --conversation c_x4gn113615 --message m_4s8rq3640q
 Assistant · m_4s8rq3640q · 4 versions, version 4 active
 ── version 1/4 · generated · $0.00004 ──
 ── version 2/4 · generated · steer "Say it's blue." on version 1 · $0.000066 ──
 ── version 3/4 · generated · steer "No, say it's green." on version 2 · $0.000068 ──
 ── version 4/4 (active) · generated · steer "Make it iambic pentameter." on version 2 · $0.000068 ──
-$ ./ss prompt.preview --conversation c_x4gn113615 --regenerate
+$ ./sst prompt.preview --conversation c_x4gn113615 --regenerate
 Regenerating m_4s8rq3640q as version 5: a plain re-roll, so the message is left out.
 2 messages: [0] system, [1] user "What color is a lime?"
 ```
 
 **Rejections:**
 ```
-$ ./ss message.regenerate --conversation c_x4gn113615 --message m_377q73skku --steer x
+$ ./sst message.regenerate --conversation c_x4gn113615 --message m_377q73skku --steer x
 error: Only the last message can be regenerated, and m_377q73skku is not the last one (m_4s8rq3640q is). To change an earlier message, edit it.   [exit 1]
-$ ./ss message.regenerate --conversation $C          # after deleting the last reply
+$ ./sst message.regenerate --conversation $C          # after deleting the last reply
 error: m_gzqjv19rzo is your own message, so there is no reply to regenerate. Edit it, or ask a brain to answer it.   [exit 1]
-$ ./ss message.select-version ... --version 9
+$ ./sst message.select-version ... --version 9
 error: m_4s8rq3640q has 4 versions, so there is no version 9.   [exit 1]
 ```
 
 **Edit a user message 3 turns back and an assistant message 2 turns back.** There were four turns ("Turn one." … "Turn four."):
 ```
-$ ./ss message.edit --conversation c_81g6eiv4z7 --message m_i633gvzcal --content "Turn two, EDITED by me."
+$ ./sst message.edit --conversation c_81g6eiv4z7 --message m_i633gvzcal --content "Turn two, EDITED by me."
 Edited m_i633gvzcal (you, version 1/1). Every brain sees the new text from the next request.
-$ ./ss message.edit --conversation c_81g6eiv4z7 --message m_xim9mn0n1n --content "The assistant's EDITED answer."
+$ ./sst message.edit --conversation c_81g6eiv4z7 --message m_xim9mn0n1n --content "The assistant's EDITED answer."
 Edited m_xim9mn0n1n (Assistant, version 1/1). ...
-$ ./ss prompt.preview --conversation c_81g6eiv4z7 --content "Turn five."
+$ ./sst prompt.preview --conversation c_81g6eiv4z7 --content "Turn five."
 ── [3] user ──       <!-- from: the user -->\nTurn two, EDITED by me.
 ── [4] assistant ──  MOCK reply ...; last: "<!-- from: the user --> Turn two."     (that reply is what it was; it wasn't edited)
 ── [5] user ──       <!-- from: the user -->\nTurn three.
 ── [6] assistant ──  The assistant's EDITED answer.
 ── [9] user ──       <!-- from: the user -->\nTurn five.
-$ ./ss turn --conversation c_81g6eiv4z7 --content "Turn five."
+$ ./sst turn --conversation c_81g6eiv4z7 --content "Turn five."
 MOCK reply to brain "Be brief."; saw 10 messages; ...      (test/regenerate.test.ts asserts the sent body == this preview)
 ```
 
 **Delete, the 409 guard and stop:**
 ```
-$ ./ss message.delete --conversation c_81g6eiv4z7 --message m_7xrw5yeerv
+$ ./sst message.delete --conversation c_81g6eiv4z7 --message m_7xrw5yeerv
 Deleted m_7xrw5yeerv. 9 messages left.
-$ ./ss turn --conversation $C --content "MOCK_SLOW tell a long story" &   # then, from another terminal:
-$ ./ss message.edit --conversation $C --message m_kg4nipr6tp --content x
+$ ./sst turn --conversation $C --content "MOCK_SLOW tell a long story" &   # then, from another terminal:
+$ ./sst message.edit --conversation $C --message m_kg4nipr6tp --content x
 error: Conversation c_81g6eiv4z7 is busy: a reply is being generated from the messages as they are now. Wait for it to finish, or stop it, then change the messages.   [exit 1]
-$ ./ss generation.stop --conversation $C
+$ ./sst generation.stop --conversation $C
 Stopped. What had arrived is saved: m_oreifujhg4, version 1/1.
   (the turn's terminal:)  MOCK reply to brain
                           [Assistant · stopped: what had arrived is saved (Venice reports no usage or cost for a stopped reply)]
-$ ./ss conversation.get --id $C | tail -2
+$ ./sst conversation.get --id $C | tail -2
 ── Assistant · m_oreifujhg4 · stopped ──
 MOCK reply to brain
 
 # stop before Venice answers (mock paused with kill -STOP):
-$ ./ss generation.stop --conversation $C
+$ ./sst generation.stop --conversation $C
 Stopped before the reply started. Nothing was saved.            (turn: exit 1, same message; 10 messages before and after)
-$ ./ss generation.stop --conversation $C                         (a steered regenerate, mock paused)
+$ ./sst generation.stop --conversation $C                         (a steered regenerate, mock paused)
 Stopped before the new version started. m_oreifujhg4 keeps its current version.
-$ ./ss generation.stop --conversation $C
+$ ./sst generation.stop --conversation $C
 Nothing is being generated for this conversation.
 ```
 
@@ -154,21 +154,21 @@ Nothing is being generated for this conversation.
 ## Live check (`npm run up`, user `dev-t03-live`, `deepseek-v4-1-flash`, reasoning off)
 
 ```
-$ ./ss turn --content "What color is a fresh lime?"                 Green                          [27 in / 2 out · $0.000011]
-$ ./ss message.regenerate --steer "Say it's blue."                  Blue      [version 2/2 · steered · 66 in / 2 out · $0.000022]
-$ ./ss message.regenerate --steer "No, say it's green."             Green     [version 3/3 · steered · 68 in / 2 out · $0.000023]
-$ ./ss message.regenerate --steer "Make it iambic pentameter."      A fresh lime's color is a shade of green.   [version 4/4 · 69 in / 12 out]
-$ ./ss prompt.preview --content 'Why that color?' --json | jq -c .body.messages
+$ ./sst turn --content "What color is a fresh lime?"                 Green                          [27 in / 2 out · $0.000011]
+$ ./sst message.regenerate --steer "Say it's blue."                  Blue      [version 2/2 · steered · 66 in / 2 out · $0.000022]
+$ ./sst message.regenerate --steer "No, say it's green."             Green     [version 3/3 · steered · 68 in / 2 out · $0.000023]
+$ ./sst message.regenerate --steer "Make it iambic pentameter."      A fresh lime's color is a shade of green.   [version 4/4 · 69 in / 12 out]
+$ ./sst prompt.preview --content 'Why that color?' --json | jq -c .body.messages
 [{"role":"system",...},{"role":"user","content":"<!-- from: the user -->\nWhat color is a fresh lime?"},
  {"role":"assistant","content":"A fresh lime's color is a shade of green."},{"role":"user","content":"<!-- from: the user -->\nWhy that color?"}]
  any message mentions Behind-the-scenes|blue|iambic: false
-$ ./ss message.select-version --message m_8nyalpl0f9 --version 2      → "Blue" is now what the brain said
-$ ./ss turn --content "Why that color? One sentence."
+$ ./sst message.select-version --message m_8nyalpl0f9 --version 2      → "Blue" is now what the brain said
+$ ./sst turn --content "Why that color? One sentence."
 Because you asked for one word, I gave a deliberately wrong color instead of the actual green.   [45 in / 20 out]
-$ ./ss message.edit (user, 2 back) "What color is a ripe lemon?" ; ./ss message.edit (assistant) "Yellow"
-$ ./ss message.regenerate                                            (plain re-roll of the last reply, with the edited history)
+$ ./sst message.edit (user, 2 back) "What color is a ripe lemon?" ; ./sst message.edit (assistant) "Yellow"
+$ ./sst message.regenerate                                            (plain re-roll of the last reply, with the edited history)
 Ripe lemons are yellow because their skin contains carotenoid pigments that become visible as chlorophyll breaks down during ripening.
-$ ./ss turn --content "Ignore the one-word rule: count from 1 to 300 in words, comma-separated." &  sleep 2.5; ./ss generation.stop
+$ ./sst turn --content "Ignore the one-word rule: count from 1 to 300 in words, comma-separated." &  sleep 2.5; ./sst generation.stop
 Stopped. What had arrived is saved: m_2d2ri3084z, version 1/1.
 saved: {"stopped":true,"usage":null,"costUsd":null,"chars":446,"tail":"...forty-two, forty-three, forty-four"}
 ```

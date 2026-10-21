@@ -57,35 +57,35 @@ The prompt now always has someone to write: a story names more people than it sh
 ## Re-verification (scratch mock: server 4807, mock 4808, user `dev-t16-tri`; QA's commands)
 
 ```
-$ ./ss brain.add --name ImgMaker --system-prompt x --makes.name "Pic {{n}}" --makes.blueprint.system-prompt y --makes.blueprint.kind image --makes.blueprint.tool.name paint_it
+$ ./sst brain.add --name ImgMaker --system-prompt x --makes.name "Pic {{n}}" --makes.blueprint.system-prompt y --makes.blueprint.kind image --makes.blueprint.tool.name paint_it
 Added brain ImgMaker (b_kmlyi6v40y) · text · … · makes "Pic {{n}}"
-$ ./ss brain.list | grep -A1 "Its tool"
+$ ./sst brain.list | grep -A1 "Its tool"
   Its tool paint_it:
     description: Generate an image from a text prompt. The image is shown to the player.
-$ ./ss brain.add --name IdMaker --system-prompt x --makes.name "b_{{n}}" --makes.blueprint.system-prompt y
+$ ./sst brain.add --name IdMaker --system-prompt x --makes.name "b_{{n}}" --makes.blueprint.system-prompt y
 error: Invalid arguments for brain.add: makes.name: The names this pattern makes would look like brain ids (b_...), which a brain name can't
-$ ./ss turn --brain Painter --content "paint the docks"
+$ ./sst turn --brain Painter --content "paint the docks"
 MOCK image prompt after 2 messages; last: "<!-- from: the user --> paint the docks"
 Made a new brain, Scene 1 (b_ozjuovsda2), with this reply pinned to it. Rename it once you know who it is: …
 (making image img_0q867gfyrq with z-image-turbo... the conversation is free meanwhile)
-$ ./ss prompt.preview --brain Assistant --content hi | grep "^Note: Pinned"
+$ ./sst prompt.preview --brain Assistant --content hi | grep "^Note: Pinned"
 Note: Pinned to Assistant: m_ev7ug8nc59 (yours), as the brain's own words, its text verbatim. …
-$ ./ss turn --conversation $C2 --brain "Thing 1"
+$ ./sst turn --conversation $C2 --brain "Thing 1"
 error: The request would end with m_epc1dqpbjr, which is pinned to Thing 1 and sent as the brain's own words, its text verbatim, so there is nothing after it for Thing 1 to answer. Write a message for it first.
 
 # acceptance, preset at the depot
-$ ./ss turn --brain "Character Creator" --content "(the woman in the grey duster)"   → Made a new brain, Character 1 …
-$ ./ss prompt.preview --brain "Character 1" --content "Who are you?"                  → [2] user · pinned m_…, as it appears in the ledger …
-$ ./ss message.add --as "Character Creator" --content @sheet2.md                     → Character 2
-$ ./ss brain.update --brain "Character 1" --name "Miss Crandall"; ./ss prompt.preview | grep -c "<!-- from: Miss Crandall -->"   → 1
+$ ./sst turn --brain "Character Creator" --content "(the woman in the grey duster)"   → Made a new brain, Character 1 …
+$ ./sst prompt.preview --brain "Character 1" --content "Who are you?"                  → [2] user · pinned m_…, as it appears in the ledger …
+$ ./sst message.add --as "Character Creator" --content @sheet2.md                     → Character 2
+$ ./sst brain.update --brain "Character 1" --name "Miss Crandall"; ./sst prompt.preview | grep -c "<!-- from: Miss Crandall -->"   → 1
 # QA-8
-$ ./ss message.add --as "Character Creator" --content '```hidden …slip… ```'          → Character 3
-$ ./ss message.delete --message m_b7ob7mdard  → Deleted brain Character 3 (…) too: it was made from this message and had never spoken.
-$ ./ss prompt.preview --brain "Character Creator" | grep -o "will make a new brain, [^,]*"   → will make a new brain, Character 3
+$ ./sst message.add --as "Character Creator" --content '```hidden …slip… ```'          → Character 3
+$ ./sst message.delete --message m_b7ob7mdard  → Deleted brain Character 3 (…) too: it was made from this message and had never spoken.
+$ ./sst prompt.preview --brain "Character Creator" | grep -o "will make a new brain, [^,]*"   → will make a new brain, Character 3
 # QA-4
-$ ./ss conversation.clone --id $C --title "Fresh start" --without-messages
+$ ./sst conversation.clone --id $C --title "Fresh start" --without-messages
 Brains: Game Master (default), Co-GM, Show Me the Odds, Character Creator, Scene Painter (image), Character Portraitist (image)
-$ ./ss brain.list --conversation <new> | grep -o 'next Character [0-9]*'             → next Character 1
+$ ./sst brain.list --conversation <new> | grep -o 'next Character [0-9]*'             → next Character 1
 # README "An older campaign": the three new jq + brain.update lines, walked on the mock: the Creator's prompt, reminder and makes equal the preset's
 ```
 

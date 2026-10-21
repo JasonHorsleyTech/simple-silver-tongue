@@ -7,7 +7,7 @@ import type { VeniceClient } from "./venice/client.ts";
 /**
  * The command registry is the whole app surface. The HTTP adapter (src/server/app.ts) exposes each command
  * as POST /api/<name>, and the CLI (src/cli) is a thin client over those endpoints, so anything the
- * browser can do, ./ss can do too.
+ * browser can do, ./sst can do too.
  */
 
 export type Deps = {
@@ -33,7 +33,7 @@ export type Ctx = {
 /** NDJSON stream events. Later tickets add the chat event types from docs/design.md. */
 export type StreamEvent = { type: string; [key: string]: unknown };
 
-/** How the CLI asked for the text view (x-ss-cli). `reveal` (./ss --reveal, header x-ss-reveal: 1): show hidden notes unfolded (T08). */
+/** How the CLI asked for the text view (x-sst-cli). `reveal` (./sst --reveal, header x-sst-reveal: 1): show hidden notes unfolded (T08). */
 export type FormatOpts = { reveal: boolean };
 
 export type BinaryResult = { contentType: string; bytes: Uint8Array; filename?: string };
@@ -42,7 +42,7 @@ type Args = z.ZodObject<any, any>;
 
 type Base<A extends Args> = {
   name: string;
-  /** First line is the summary shown in `./ss help`; the rest shows in `./ss help <name>`. */
+  /** First line is the summary shown in `./sst help`; the rest shows in `./sst help <name>`. */
   description: string;
   args: A;
   /** Require a logged-in session. Default true. */

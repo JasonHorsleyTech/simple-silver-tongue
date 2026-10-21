@@ -12,7 +12,7 @@ import { safeJoin } from "../storage/files.ts";
 import { closeVault, forkVault } from "../storage/vault.ts";
 import { endedError, type Session } from "./sessions.ts";
 
-export const SESSION_COOKIE = "ss_session";
+export const SESSION_COOKIE = "sst_session";
 
 export type Logger = (line: string) => void;
 /**
@@ -27,8 +27,8 @@ export const consoleLogger: Logger = (line) => console.log(`${new Date().toISOSt
  * HTTP adapter over the command registry.
  *   POST /api/<name>  JSON args in, JSON out (stream commands: NDJSON events).
  *   GET  /api/<name>  binary commands (and health), args from the query string.
- * Sending `x-ss-cli: 1` wraps JSON results as {result, text}, where text is the command's CLI rendering;
- * `x-ss-reveal: 1` asks that rendering to show hidden notes instead of folding them (./ss --reveal, T08).
+ * Sending `x-sst-cli: 1` wraps JSON results as {result, text}, where text is the command's CLI rendering;
+ * `x-sst-reveal: 1` asks that rendering to show hidden notes instead of folding them (./sst --reveal, T08).
  * We never log args, results or bodies: only method, path, status and timing, and for a failed chat request a
  * record without its words (diagnose.ts).
  */
@@ -54,7 +54,7 @@ export function createApp(base: Omit<Deps, "commands">, commands: AnyCommand[], 
     c.header("Cache-Control", "no-store"); // decrypted bytes must never land in a browser disk cache
     const name = c.req.param("name");
     const cmd = index.get(name);
-    if (!cmd) return apiError(c, 404, "unknown_command", `Unknown command ${name}. Run ./ss help for the list.`);
+    if (!cmd) return apiError(c, 404, "unknown_command", `Unknown command ${name}. Run ./sst help for the list.`);
     const info = describeCommand(cmd);
 
     let raw: unknown;
@@ -89,7 +89,7 @@ export function createApp(base: Omit<Deps, "commands">, commands: AnyCommand[], 
     const ended = known !== null && "ended" in known ? known : null;
     // Lets a client drop a stale token and say why: "expired" (T06 triage), "logged-out" (logout --all),
     // "password-changed" or "deleted" (T06 frontend), and "invalid" for a token the server doesn't know (a restart).
-    if (token && !found) c.header("x-ss-session", ended?.ended ?? "invalid");
+    if (token && !found) c.header("x-sst-session", ended?.ended ?? "invalid");
     // This request's own copy of the key (see vault.ts). Logging out wipes the session's key, not this one,
     // so work already running still saves under the real key. Closed once the request's work is done.
     const session: Session | null = found ? { ...found, vault: forkVault(found.vault) } : null;
@@ -123,8 +123,8 @@ export function createApp(base: Omit<Deps, "commands">, commands: AnyCommand[], 
       if (cmd.kind === "json") {
         const result = await cmd.handler(parsed.data, ctx);
         applySession();
-        if (c.req.header("x-ss-cli")) {
-          const opts = { reveal: c.req.header("x-ss-reveal") === "1" };
+        if (c.req.header("x-sst-cli")) {
+          const opts = { reveal: c.req.header("x-sst-reveal") === "1" };
           return c.json({ result: result ?? null, text: cmd.format ? cmd.format(result, opts) : toText(result) });
         }
         return c.json(result ?? null);
@@ -290,4 +290,4 @@ const PLACEHOLDER = `<!doctype html>
 code{background:#1a1e24;padding:.1rem .35rem;border-radius:4px}</style></head>
 <body><h1>simple-silver is running</h1>
 <p>The web UI is not built yet (there is no <code>web/dist</code>). Everything works from the terminal:</p>
-<p><code>./ss help</code></p></body></html>`;
+<p><code>./sst help</code></p></body></html>`;

@@ -27,7 +27,7 @@ export type ClientOptions = {
 const SESSION_GONE = new Set(["unauthenticated", "session_ended", "session_expired"]);
 
 /**
- * Why the session is gone, from the server's x-ss-session header (sessions.ts, EndReason): it timed out (T06
+ * Why the session is gone, from the server's x-sst-session header (sessions.ts, EndReason): it timed out (T06
  * triage), this user was logged out everywhere, its password was changed, or it was deleted (T06 frontend).
  * "ended" is anything else: a token the server doesn't know, which in practice means it restarted. "no-cookie": a
  * command that needs the login was sent with no session cookie at all (in a browser: another tab logged out).
@@ -72,7 +72,7 @@ export function createClient<C extends CommandMap = Commands, S extends StreamMa
     }
     // The server marks responses to a cookie it no longer accepts, and says why. A login replaces that cookie and a
     // logout is leaving anyway. One signal per response: the header's reason, else the 401's code.
-    const header = res.headers.get("x-ss-session");
+    const header = res.headers.get("x-sst-session");
     const stale = header !== null && name !== "auth.login" && name !== "auth.logout" ? (HEADER_LOSS[header] ?? "ended") : null;
     if (!res.ok) {
       const err = await errorFrom(res);
@@ -136,7 +136,7 @@ export function createClient<C extends CommandMap = Commands, S extends StreamMa
     } catch {
       return new ApiError(0, "network", "Can't reach the simple-silver server. Start it with npm run up, then try again.");
     }
-    const header = res.headers.get("x-ss-session");
+    const header = res.headers.get("x-sst-session");
     if (header !== null) sessionLost(HEADER_LOSS[header] ?? "ended");
     if (res.ok) {
       await res.body?.cancel();

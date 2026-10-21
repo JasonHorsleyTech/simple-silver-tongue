@@ -21,10 +21,10 @@ export type CliResult = { code: number; stdout: string; stderr: string };
 export async function startTestServer(
   opts: { commands?: AnyCommand[]; mock?: MockOptions; log?: (line: string) => void; sessions?: SessionOptions } = {},
 ) {
-  const tmp = await mkdtemp(join(tmpdir(), "ss-test-"));
+  const tmp = await mkdtemp(join(tmpdir(), "sst-test-"));
   const mock: MockVenice = await startMockVenice({ delayMs: 0, slowDelayMs: 20, imageDelayMs: 0, ...opts.mock });
   const config = {
-    ...loadConfig({ SS_MODE: "mock" }),
+    ...loadConfig({ SST_MODE: "mock" }),
     dataDir: join(tmp, "data"),
     runDir: join(tmp, "run"),
     webDist: join(tmp, "no-web"),
@@ -52,7 +52,7 @@ export async function startTestServer(
     let stderr = "";
     const secrets = [...(io.secrets ?? [])];
     const code = await run(argv, {
-      env: { SS_URL: url, SS_RUN_DIR: config.runDir, ...io.env },
+      env: { SST_URL: url, SST_RUN_DIR: config.runDir, ...io.env },
       cwd: tmp,
       stdout: { write: (s) => void (stdout += typeof s === "string" ? s : Buffer.from(s).toString("utf8")) },
       stderr: { write: (s) => void (stderr += s) },

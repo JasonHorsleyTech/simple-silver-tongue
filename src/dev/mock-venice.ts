@@ -14,7 +14,7 @@ import { MOCK_MODELS } from "./mock-models.ts";
  * Endpoints: GET /models, GET /api_keys/rate_limits, POST /chat/completions (SSE or JSON, reasoning,
  * forced tool calls), POST /image/generate (a tiny real PNG).
  * Dev-only extras: GET /health, and GET /_mock/requests (the last 20 request bodies, newest first), so you
- * can compare what the app really sent against ./ss prompt.preview.
+ * can compare what the app really sent against ./sst prompt.preview.
  *
  * Triggers inside the last message (chat) or the prompt (image):
  *   MOCK_ERROR            → HTTP error before anything streams

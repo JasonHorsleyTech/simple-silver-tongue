@@ -27,19 +27,19 @@ QA's commands, after the fix:
 
 ```
 ## QA-1
-$ ./ss turn --brain "Game Master" --roll                         # 🎲 d20: 8
-$ ./ss conversation.get | grep -A1 m_zzh2cghe5s
+$ ./sst turn --brain "Game Master" --roll                         # 🎲 d20: 8
+$ ./sst conversation.get | grep -A1 m_zzh2cghe5s
 ── you · m_zzh2cghe5s · 🎲 d20: 8 ──
 🎲 I rolled a d20: **8**
-$ ./ss message.edit --message m_zzh2cghe5s --content '🎲 I rolled a d20: **3**'
-$ ./ss conversation.get | grep -A1 m_zzh2cghe5s
+$ ./sst message.edit --message m_zzh2cghe5s --content '🎲 I rolled a d20: **3**'
+$ ./sst conversation.get | grep -A1 m_zzh2cghe5s
 ── you · m_zzh2cghe5s · 🎲 d20 said 8 · edited ──
 🎲 I rolled a d20: **3**
-$ ./ss message.get --message m_zzh2cghe5s
+$ ./sst message.get --message m_zzh2cghe5s
 ── version 1/1 (active) · authored · 🎲 d20 said 8 · edited ──
 
 ## QA-3
-$ ./ss prompt.preview --content 'I carve "{{roll}}" into the table.' --roll | grep "^Note: The d20"
+$ ./sst prompt.preview --content 'I carve "{{roll}}" into the table.' --roll | grep "^Note: The d20"
 Note: The d20 isn't rolled yet. When you send, the server rolls it and puts the number (1 to 20) where {{roll}} is in your roll's line, the newest player message (a {{roll}} anywhere else is sent as written). The rest of this body is exactly what is sent.
 
 ## QA-2 (scratch NDJSON client: post turn, generation.stop on `start`; GM reminder off, roll template "MOCK_SLOW {{roll}}")
@@ -51,11 +51,11 @@ bare turn: Stopped before any reply text arrived. No reply was saved.
 Acceptance, re-run on a fresh Gilded Goat (`--without-messages`):
 
 ```
-$ ./ss turn --brain "Game Master" --roll
+$ ./sst turn --brain "Game Master" --roll
 🎲 d20: 18
 [Game Master · in "The Gilded Goat (D&D 5e)"]
 MOCK reply to brain "You are the Game Master of a r"; saw 4 messages; …
-$ ./ss prompt.preview --brain "Dice Master" --json | jq …        (last six messages)
+$ ./sst prompt.preview --brain "Dice Master" --json | jq …        (last six messages)
 ["user","<!-- from: the player --> | 🎲 I rolled a d20: **18**"]
 ["user","<!-- from: Game Master --> | MOCK reply to brain …"]
 ["user","<!-- from: the player --> | I carve \"{{roll}}\" into the tabl"]

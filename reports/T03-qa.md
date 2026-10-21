@@ -16,7 +16,7 @@ Across about 330 randomized steps and a 40-round steer chain, every later prompt
 
   The runs were seeds 7, 11 and 23 (plain); seeds 5 and 99 (plain, reminder on); and seed 314 (encrypted, reminder on). **330 steps, 0 failures.**
 - **A long chain** (`long-chain.mjs`) runs 40 rounds of "select a random version, then steer it" on one message (41 versions). Each sent body is exactly `[system, player, <selected version>, steer(this round)]`, and `steeredFrom` equals the selected index. The final next-turn prompt is `system,user,assistant,user`, its assistant text equals the active version, and no token appears outside it.
-- Hand walks with `./ss` for every acceptance bullet and the edges below, plus race scripts, a restart mid-regenerate, an encrypted user, and a small live pass.
+- Hand walks with `./sst` for every acceptance bullet and the edges below, plus race scripts, a restart mid-regenerate, an encrypted user, and a small live pass.
 
 ## Acceptance checklist
 
@@ -83,9 +83,9 @@ delete 200 / regen 400 not_a_brain_message: 86
    The app records nothing (`turn.ts` `generatedVersion`; there is no usage once the stream is cut). The same happens to a stop that lands after the last word but before the usage chunk (mock).
 2. **Delete.** `totalCost` (`src/conversations/turn.ts:197`) sums the versions still in the ledger, so deleting a message removes money already spent:
    ```
-   ./ss conversation.get --id c_x1c5mdy4kr | head -1   →  2 messages · $0.00011   (a turn + a steer + a re-roll)
-   ./ss message.delete --conversation c_x1c5mdy4kr --message m_2hxpe71ecx
-   ./ss conversation.get --id c_x1c5mdy4kr | head -1   →  1 messages · $0
+   ./sst conversation.get --id c_x1c5mdy4kr | head -1   →  2 messages · $0.00011   (a turn + a steer + a re-roll)
+   ./sst message.delete --conversation c_x1c5mdy4kr --message m_2hxpe71ecx
+   ./sst conversation.get --id c_x1c5mdy4kr | head -1   →  1 messages · $0
    ```
 - **Expected:** the running cost is what this conversation has cost Jason.
 - **Actual:** it leaves out every stop and every deleted message or version. Small sums, but this is the number Jason watches against the spending rules, and T05 images at $0.01 each will make it larger.
@@ -97,12 +97,12 @@ delete 200 / regen 400 not_a_brain_message: 86
 
 `conversation.update` accepts any string for `templates.steer` (`src/commands/conversations.ts:82`, applied at `:126`), and `planRegenerate` (`src/conversations/turn.ts:83`) neither warns nor refuses. Repro:
 ```
-./ss conversation.update --id $C --templates.steer ""
-./ss prompt.preview --conversation $C --regenerate --steer "Hidden?" --json | jq -c '.body.messages[-1], .refusal'
+./sst conversation.update --id $C --templates.steer ""
+./sst prompt.preview --conversation $C --regenerate --steer "Hidden?" --json | jq -c '.body.messages[-1], .refusal'
 {"role":"user","content":""}
 null
-./ss conversation.update --id $C --templates.steer "   "         →  {"role":"user","content":"   "}
-./ss conversation.update --id $C --templates.steer "Rewrite it."  →  {"role":"user","content":"Rewrite it."}   (the steer is gone)
+./sst conversation.update --id $C --templates.steer "   "         →  {"role":"user","content":"   "}
+./sst conversation.update --id $C --templates.steer "Rewrite it."  →  {"role":"user","content":"Rewrite it."}   (the steer is gone)
 ```
 - **Expected:** the steer Jason typed reaches the model, or he is told it won't.
 - **Actual:** it vanishes with no refusal or note. With a blank template, the request is effectively the brain's own reply followed by nothing. That is the shape T02's live probe showed makes deepseek continue or repeat itself and leak `</think>`, and the reason a blank `--steer` is refused in `buildRequest` (T02 QA-5).
@@ -118,7 +118,7 @@ null
 `planRegenerate` replaces every plain re-roll refusal with "would end with X's own earlier reply" (`src/conversations/turn.ts:87-90`). Its comment says "Only a plain re-roll can hit this: the message before it is the same brain's own reply." That's wrong when nothing comes before it:
 ```
 # ledger is just one Assistant reply (everything before it deleted)
-./ss message.regenerate --conversation c_0ytl8c3g0z
+./sst message.regenerate --conversation c_0ytl8c3g0z
 error: Without m_ywicad914q, the request would end with Assistant's own earlier reply, so a plain re-roll has nothing to answer. ...
 # the preview it just printed is "1 messages: [0] system": there is no earlier reply
 ```
@@ -141,7 +141,7 @@ error: Without m_ywicad914q, the request would end with Assistant's own earlier 
 
 ## Outside this ticket
 
-`./ss generation.follow --json | head -3` crashes the CLI with an unhandled `EPIPE` stack trace once `head` closes the pipe. There's no user content in it, it predates T03, and it's harmless.
+`./sst generation.follow --json | head -3` crashes the CLI with an unhandled `EPIPE` stack trace once `head` closes the pipe. There's no user content in it, it predates T03, and it's harmless.
 
 ## Live spend
 

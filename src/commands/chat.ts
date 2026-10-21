@@ -97,12 +97,12 @@ which is the one its generate_image call writes, word for word.`,
     wrap,
   }),
   examples: [
-    "./ss prompt.preview --conversation c_k3j9x0q2ma",
-    './ss prompt.preview --conversation c_k3j9x0q2ma --brain "Dice Master"',
-    './ss prompt.preview --conversation c_k3j9x0q2ma --content "Next message" --json',
-    './ss prompt.preview --conversation c_k3j9x0q2ma --brain "Game Master" --roll',
-    './ss prompt.preview --conversation c_k3j9x0q2ma --regenerate --steer "Make it iambic pentameter."',
-    './ss prompt.preview --conversation c_k3j9x0q2ma --regenerate --thought "Subvert it: three goblins in a trench coat." --wrap',
+    "./sst prompt.preview --conversation c_k3j9x0q2ma",
+    './sst prompt.preview --conversation c_k3j9x0q2ma --brain "Dice Master"',
+    './sst prompt.preview --conversation c_k3j9x0q2ma --content "Next message" --json',
+    './sst prompt.preview --conversation c_k3j9x0q2ma --brain "Game Master" --roll',
+    './sst prompt.preview --conversation c_k3j9x0q2ma --regenerate --steer "Make it iambic pentameter."',
+    './sst prompt.preview --conversation c_k3j9x0q2ma --regenerate --thought "Subvert it: three goblins in a trench coat." --wrap',
   ],
   handler: async (args, ctx): Promise<Preview> => {
     if (!args.regenerate && (args.message !== undefined || args.steer !== undefined || args.thought !== undefined || args.wrap)) {
@@ -171,11 +171,11 @@ An image brain's prompt streams the same way; once it is saved the conversation 
 take its turn) and this stream goes on until the image lands.`,
   args: turnArgs,
   examples: [
-    './ss turn --conversation c_k3j9x0q2ma --content "Hello there"',
-    "./ss turn --conversation c_k3j9x0q2ma --content @message.md --reveal > reply.md   # --reveal: notes unfolded",
-    "./ss turn --conversation c_k3j9x0q2ma   # no message: the brain just responds",
-    './ss turn --conversation c_k3j9x0q2ma --brain "Dice Master" --content "I swing at the goblin."',
-    './ss turn --conversation c_k3j9x0q2ma --brain "Game Master" --roll   # roll a d20, send it, the GM answers',
+    './sst turn --conversation c_k3j9x0q2ma --content "Hello there"',
+    "./sst turn --conversation c_k3j9x0q2ma --content @message.md --reveal > reply.md   # --reveal: notes unfolded",
+    "./sst turn --conversation c_k3j9x0q2ma   # no message: the brain just responds",
+    './sst turn --conversation c_k3j9x0q2ma --brain "Dice Master" --content "I swing at the goblin."',
+    './sst turn --conversation c_k3j9x0q2ma --brain "Game Master" --roll   # roll a d20, send it, the GM answers',
   ],
   async *handler(args, ctx) {
     const gen = beginGeneration(ctx.requireSession().vault, args.conversation); // 409 before any event, so it's a real HTTP status
@@ -210,7 +210,7 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
     for (const message of added) yield { type: "message", message };
   }
   const messageId = newId("m");
-  // The title lets the CLI say which campaign SS_CONVERSATION sent this to (T07 QA-6).
+  // The title lets the CLI say which campaign SST_CONVERSATION sent this to (T07 QA-6).
   yield { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId, kind: plan.brain.kind, ...modelOf(plan), conversationTitle: conv.title };
 
   const kept = plan.player && plan.roll ? "Your message and your roll are" : plan.roll ? "Your roll is" : plan.player ? "Your message is" : null;
@@ -279,11 +279,11 @@ The note is saved once Venice takes the request and stays if the reply stops or 
 answers it. Delete or edit it like any message.`,
   args: regenerateArgs,
   examples: [
-    "./ss message.regenerate --conversation c_k3j9x0q2ma",
-    './ss message.regenerate --conversation c_k3j9x0q2ma --steer "Say it\'s blue."',
-    './ss message.regenerate --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --steer @direction.md',
-    './ss message.regenerate --conversation c_k3j9x0q2ma --thought "Tired trope. Subvert it: three goblins in a trench coat." --wrap',
-    "./ss message.regenerate --conversation c_k3j9x0q2ma --thought @thought.md   # verbatim, fences and all",
+    "./sst message.regenerate --conversation c_k3j9x0q2ma",
+    './sst message.regenerate --conversation c_k3j9x0q2ma --steer "Say it\'s blue."',
+    './sst message.regenerate --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --steer @direction.md',
+    './sst message.regenerate --conversation c_k3j9x0q2ma --thought "Tired trope. Subvert it: three goblins in a trench coat." --wrap',
+    "./sst message.regenerate --conversation c_k3j9x0q2ma --thought @thought.md   # verbatim, fences and all",
   ],
   async *handler(args, ctx) {
     const gen = beginGeneration(ctx.requireSession().vault, args.conversation); // 409 before any event
@@ -683,7 +683,7 @@ For an image brain it follows the image too, like the turn's own stream. When no
 at once, with an empty done ("message": null). Images made after a reply (an edit, an add, a retry, or an image
 turn whose prompt is done) don't hold the conversation: watch one with image.follow.`,
   args: z.object({ conversation: conversationId }),
-  examples: ["./ss generation.follow --conversation c_k3j9x0q2ma"],
+  examples: ["./sst generation.follow --conversation c_k3j9x0q2ma"],
   async *handler(args, ctx) {
     const { vault } = ctx.requireSession();
     const live = followGeneration(vault, args.conversation);
@@ -727,7 +727,7 @@ Stopping saves waiting, not money: Venice still writes and bills the whole reply
 it quietly in the background, discards the text, and adds the real cost to the stopped version and to the
 conversation's total once Venice reports it. It returns once the stopped reply is saved.`,
   args: z.object({ conversation: conversationId }),
-  examples: ["./ss generation.stop --conversation c_k3j9x0q2ma"],
+  examples: ["./sst generation.stop --conversation c_k3j9x0q2ma"],
   handler: async (args, ctx): Promise<StopOutcome> => {
     const { vault } = ctx.requireSession();
     const outcome = (await stopGeneration(vault, args.conversation)) ?? { stopped: false, message: null };

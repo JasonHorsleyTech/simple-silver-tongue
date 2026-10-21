@@ -18,10 +18,10 @@ The plumbing is solid wherever I pushed it:
 
 - **Tests:** `npm run typecheck` is clean, and `npm test` passes 209/209 (before I started; I changed no code).
 - **Mock: a scratch server by hand, never `npm run up:mock`.** Jason was using 4747, so I followed the 2026-10-15 lesson:
-  - The mock ran on **4778** and the server on **4777**, both with `SS_DATA_DIR` and `SS_RUN_DIR` in my scratchpad.
-  - Each CLI had its own `SS_SESSION_FILE`.
+  - The mock ran on **4778** and the server on **4777**, both with `SST_DATA_DIR` and `SST_RUN_DIR` in my scratchpad.
+  - Each CLI had its own `SST_SESSION_FILE`.
   - Users were `qa-t16-plain` (plaintext) and `qa-t16-enc` (encrypted).
-- **Live: a scratch live server on 4787** (`SS_MODE=live`, scratch data and run dirs), as encrypted user `qa-t16-live`, with the preset as committed. The World Bible was mine, a world unlike the engineer's harbor:
+- **Live: a scratch live server on 4787** (`SST_MODE=live`, scratch data and run dirs), as encrypted user `qa-t16-live`, with the preset as committed. The World Bible was mine, a world unlike the engineer's harbor:
 
   ```
   Dry Creek, a whistle-stop on a desert railway, 1890s; dusty and quiet, no magic. The player is Ines Vara, a young land surveyor sent by the railroad to settle a water-rights dispute, carrying a sealed survey map in her satchel.
@@ -90,7 +90,7 @@ The plumbing is solid wherever I pushed it:
 **Repro** (live, the conversation above, after the player has spoken to both characters; the latest player message was "I go back to the counter and lean on the station agent…", to Show Me the Odds):
 
 ```
-./ss turn --brain "Character Creator"        # no note
+./sst turn --brain "Character Creator"        # no note
 ```
 
 **Expected:** the newest person with no sheet, as the prompt says ("Each sheet makes a new helper, so write one only for someone who has none yet").
@@ -118,12 +118,12 @@ The control is a turn whose note names a new person, which must still sheet that
 **Repro (mock):**
 
 ```
-./ss brain.add --name ImgMaker --system-prompt x --makes.name "Pic {{n}}" --makes.blueprint.system-prompt y --makes.blueprint.kind image --makes.blueprint.tool.name paint_it
+./sst brain.add --name ImgMaker --system-prompt x --makes.name "Pic {{n}}" --makes.blueprint.system-prompt y --makes.blueprint.kind image --makes.blueprint.tool.name paint_it
 error: Internal server error (see .run/server.log)
 # log: TypeError: Cannot convert undefined or null to object at applyMakes (src/commands/brains.ts:169)
 
-./ss brain.add --name ImgMaker --system-prompt x --makes.name "Pic {{n}}" --makes.blueprint.system-prompt y --makes.blueprint.kind image
-./ss brain.list        # "Each one: image · … · safe mode on · landscape", and no "Its tool …" lines
+./sst brain.add --name ImgMaker --system-prompt x --makes.name "Pic {{n}}" --makes.blueprint.system-prompt y --makes.blueprint.kind image
+./sst brain.list        # "Each one: image · … · safe mode on · landscape", and no "Its tool …" lines
 ```
 
 **Expected:** a new image blueprint is filled like a new image brain (tool text, safe mode, shape), so `--makes.blueprint.tool.*` edits it and `brain.list` shows every word the made brains will be sent.
@@ -138,10 +138,10 @@ error: Internal server error (see .run/server.log)
 **Repro (mock):**
 
 ```
-./ss brain.add --name IdMaker --system-prompt x --makes.name "b_{{n}}" --makes.blueprint.system-prompt y   # accepted
-./ss prompt.preview --brain IdMaker          # error: Every name the pattern "b_{{n}}" makes is taken. Give it {{n}} where the number goes.
-./ss message.add --as IdMaker --content hi   # same error
-./ss brain.list                              # same error, for the whole conversation (--json works)
+./sst brain.add --name IdMaker --system-prompt x --makes.name "b_{{n}}" --makes.blueprint.system-prompt y   # accepted
+./sst prompt.preview --brain IdMaker          # error: Every name the pattern "b_{{n}}" makes is taken. Give it {{n}} where the number goes.
+./sst message.add --as IdMaker --content hi   # same error
+./sst brain.list                              # same error, for the whole conversation (--json works)
 ```
 
 **Expected:** refused when set, like a pattern without `{{n}}`. `b_1` looks like a brain id, which `checkName` refuses for any name.
@@ -159,9 +159,9 @@ error: Internal server error (see .run/server.log)
 **Repro (mock, the migrated campaign with Alice and Bob):**
 
 ```
-./ss conversation.clone --id c_… --title "Fresh start" --without-messages
-./ss brain.list --conversation <new>          # … Alice, Bob: 0 pins, no madeFrom; Character Creator next 3
-./ss prompt.preview --conversation <new> --brain Alice --content hi   # system, World Bible, hi, reminder: no sheet anywhere
+./sst conversation.clone --id c_… --title "Fresh start" --without-messages
+./sst brain.list --conversation <new>          # … Alice, Bob: 0 pins, no madeFrom; Character Creator next 3
+./sst prompt.preview --conversation <new> --brain Alice --content hi   # system, World Bible, hi, reminder: no sheet anywhere
 ```
 
 **Expected (my reading of "a fresh start on the same setup"):** the kit, not last campaign's cast. Brains made from messages that aren't coming would be left out, or at least the answer would say they came without their sheets.
@@ -178,7 +178,7 @@ error: Internal server error (see .run/server.log)
 **Repro (live, after Miss Crandall had said "Cheevers" aloud):**
 
 ```
-./ss turn --brain "Co-GM" --content "(out of character) What's the station agent's name, and who's he been wiring?"
+./sst turn --brain "Co-GM" --content "(out of character) What's the station agent's name, and who's he been wiring?"
 → "Cheevers is the name — Hollis Cheevers, station agent here, and Miss Crandall called him by it. As for who he's been wiring, … you can't tell …"
 ```
 
@@ -189,8 +189,8 @@ error: Internal server error (see .run/server.log)
 ### QA-6 (nit): the payload note says "(your's)"
 
 ```
-./ss brain.pin --brain Assistant --message <a player message> --as assistant
-./ss prompt.preview --brain Assistant --content hi
+./sst brain.pin --brain Assistant --message <a player message> --as assistant
+./sst prompt.preview --brain Assistant --content hi
 Note: Pinned to Assistant: m_ovb2o0hz6h (your's), as the brain's own words, …
 ```
 
@@ -199,7 +199,7 @@ Note: Pinned to Assistant: m_ovb2o0hz6h (your's), as the brain's own words, …
 ### QA-7 (nit): an image maker's "Made a new brain" line is glued to the streamed prompt
 
 ```
-./ss turn --brain Painter --content "paint the docks"
+./sst turn --brain Painter --content "paint the docks"
 MOCK image prompt after 17 messages; last: "<!-- from: the user --> paint the docks"Made a new brain, Scene 2 (b_…), …
 ```
 
@@ -213,7 +213,7 @@ Live, after QA-1's duplicate was deleted (its Character 3 with it), the table ha
 
 ```
 # a maker with --makes.pin-as assistant and a blueprint with no reminder; message.add --as Maker "A note." → Thing 1
-./ss turn --brain "Thing 1"
+./sst turn --brain "Thing 1"
 error: The last message is Thing 1's own reply, so there is nothing new for it to answer. Write a message for it first.
 ```
 

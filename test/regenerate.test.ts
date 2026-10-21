@@ -39,7 +39,7 @@ describe("steered regeneration, versions, edit and delete: CLI → server → mo
     for (const content of turns) await ok(["turn", "--conversation", conv.id, "--content", content]);
     return conv.id;
   };
-  const cookie = () => `ss_session=${JSON.parse(readFileSync(join(t.config.runDir, "cli-session.json"), "utf8")).token}`;
+  const cookie = () => `sst_session=${JSON.parse(readFileSync(join(t.config.runDir, "cli-session.json"), "utf8")).token}`;
   const post = (cmd: string, body: unknown) =>
     t.app.fetch(new Request(`http://localhost/api/${cmd}`, { method: "POST", headers: { host: "localhost", "content-type": "application/json", cookie: cookie() }, body: JSON.stringify(body) }));
   const lines = async (res: Response) => (await res.text()).trim().split("\n").map((l) => JSON.parse(l));

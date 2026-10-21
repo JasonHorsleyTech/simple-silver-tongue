@@ -41,7 +41,7 @@ every model Venice has, and conversation.update takes any of them by id. "privat
     all: z.boolean().optional().describe("Every model Venice has, not just the curated ones"),
     refresh: z.boolean().optional().describe("Bypass the cache"),
   }),
-  examples: ["./ss models.list --type image", "./ss models.list --type text --json", "./ss models.list --all"],
+  examples: ["./sst models.list --type image", "./sst models.list --type text --json", "./sst models.list --all"],
   handler: async (args, ctx): Promise<ModelsResult> => {
     const types: ModelType[] = args.type ? [args.type] : ["text", "image"];
     const lists = await Promise.all(types.map((t) => ctx.deps.venice.listModels(t, { refresh: args.refresh })));

@@ -20,7 +20,7 @@ const keyOf = (vault: Vault, id: string) => `${vault.dir}\0${id}`;
 
 export async function loadConversation(vault: Vault, id: string): Promise<Conversation> {
   const conv = await readJson<Conversation>(vault, fileOf(id));
-  if (!conv) throw notFound(`No conversation ${id}. List yours with ./ss conversation.list.`);
+  if (!conv) throw notFound(`No conversation ${id}. List yours with ./sst conversation.list.`);
   // A copy of another conversation's file under this name would list twice and take this one's writes (T06 QA-4).
   if (conv.id !== id) throw unreadableFile(fileOf(id), `holds ${typeof conv.id === "string" ? `conversation ${conv.id}` : "no conversation id"}, not ${id} (a copy of another file?), so it isn't used`);
   upgradeConversation(conv); // older files (T07 triage: brains without stop sequences)

@@ -13,12 +13,12 @@ export const help = command({
 The CLI uses this catalog to parse flags, so it is always in step with the running server.`,
   auth: false,
   args: z.object({ command: z.string().optional().describe("A command name, e.g. user.create") }),
-  examples: ["./ss help", "./ss help user.create"],
+  examples: ["./sst help", "./sst help user.create"],
   handler: (args, ctx): HelpResult => {
     const all = ctx.deps.commands.map(describeCommand);
     if (!args.command) return { commands: all };
     const one = all.find((c) => c.name === args.command);
-    if (!one) throw notFound(`Unknown command ${args.command}. Run ./ss help for the list.`);
+    if (!one) throw notFound(`Unknown command ${args.command}. Run ./sst help for the list.`);
     return { commands: [one] };
   },
   format: (r: HelpResult) =>

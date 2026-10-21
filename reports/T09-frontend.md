@@ -56,7 +56,7 @@ No new commands. No DESIGN CONCERN. `npm run typecheck` is clean, `npm test` pas
 
 ## Verified in Chrome (DevTools MCP)
 
-Mock (`SS_DATA_DIR=<scratchpad>/data npm run up:mock`, user `dev-t09-fe`):
+Mock (`SST_DATA_DIR=<scratchpad>/data npm run up:mock`, user `dev-t09-fe`):
 - **The loop, Gilded Goat.**
   - I sent the action to the Dice Master, then pressed ⌥R and Enter. The recorded order: at 1 ms the composer is armed; at 27 ms the roll card "🎲 d20: 5" is in the ledger and Stop is showing; then the GM streams in; finally the die is off and the composer is empty.
   - A second roll-and-send with text: the text, then a 15, then the GM.

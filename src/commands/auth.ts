@@ -37,7 +37,7 @@ The browser gets an httpOnly cookie; the CLI keeps the token in .run/cli-session
     username,
     password: z.string().meta({ secret: true, prompt: "Password for {username}: " }).describe("Password. Empty (--password '') for an unencrypted user."),
   }),
-  examples: ["./ss auth.login --username jason", "./ss auth.login --username dev-a --password ''"],
+  examples: ["./sst auth.login --username jason", "./sst auth.login --username dev-a --password ''"],
   handler: async (args, ctx): Promise<Who> => {
     const { user, vault } = await unlockUser(ctx.deps.config.dataDir, args.username, args.password);
     // Image files from before T06 carry their type in the name; an encrypted user's become .bin (names only).
@@ -55,7 +55,7 @@ The browser gets an httpOnly cookie; the CLI keeps the token in .run/cli-session
 
 /** Only the CLI sees it: the data on disk is ciphertext, but what you type on a command line is kept by the shell. */
 const SHELL_HISTORY_NOTE =
-  'Note: text you type on the ./ss command line (--content "...", --steer "...") is saved in your shell history as plain text. For private text, use --content - and type or paste it (Ctrl-D ends it), or use the browser.';
+  'Note: text you type on the ./sst command line (--content "...", --steer "...") is saved in your shell history as plain text. For private text, use --content - and type or paste it (Ctrl-D ends it), or use the browser.';
 
 type LoggedOut = { loggedOut: string | null; sessions?: number };
 
@@ -67,7 +67,7 @@ With --all, end every session of this user: other browser tabs and terminals too
   args: z.object({
     all: z.boolean().optional().describe("Log this user out everywhere: every browser and terminal session"),
   }),
-  examples: ["./ss auth.logout", "./ss auth.logout --all"],
+  examples: ["./sst auth.logout", "./sst auth.logout --all"],
   handler: (args, ctx): LoggedOut => {
     const was = ctx.session?.username ?? null;
     let n = 0;

@@ -40,10 +40,10 @@ Leave --password out to be asked for it (hidden, twice): a password typed on the
       .meta({ secret: true, confirm: true, prompt: "New password for {username} (leave empty for no encryption): " })
       .describe("Password. Empty (--password '') = no encryption."),
   }),
-  examples: ["./ss user.create --username jason", "./ss user.create --username dev-a --password ''"],
+  examples: ["./sst user.create --username jason", "./sst user.create --username dev-a --password ''"],
   handler: async (args, ctx) => summarize(await createUser(ctx.deps.config.dataDir, args.username, args.password)),
   format: (u: UserSummary) =>
-    `Created ${u.username} (${u.encrypted ? "encrypted" : "unencrypted"}). Log in with: ./ss auth.login --username ${u.username}`,
+    `Created ${u.username} (${u.encrypted ? "encrypted" : "unencrypted"}). Log in with: ./sst auth.login --username ${u.username}`,
 });
 
 export const userList = command({
@@ -55,7 +55,7 @@ export const userList = command({
   format: (r: { users: UserSummary[]; unreadable: UnreadableUser[] }) => {
     const out: string[] = [];
     if (r.users.length) out.push(table(["USERNAME", "ENCRYPTED", "CREATED"], r.users.map((u) => [u.username, u.encrypted ? "yes" : "no", u.createdAt])));
-    else if (!r.unreadable.length) out.push("No users yet. Create one with ./ss user.create --username <name>.");
+    else if (!r.unreadable.length) out.push("No users yet. Create one with ./sst user.create --username <name>.");
     if (r.unreadable.length) {
       out.push(`${r.users.length ? "\n" : ""}Users whose user.json is damaged (${r.unreadable.length}):`);
       for (const u of r.unreadable) out.push(`  ${u.username}: ${u.error}`);
@@ -86,7 +86,7 @@ out everywhere.`,
       .meta({ ask: true, prompt: "This deletes {username} and all of their conversations and images, for good. Type the username again to confirm: " })
       .describe("The username again, to confirm"),
   }),
-  examples: ["./ss user.delete --username dev-old", "./ss user.delete --username dev-old --confirm dev-old"],
+  examples: ["./sst user.delete --username dev-old", "./sst user.delete --username dev-old --confirm dev-old"],
   handler: async (args, ctx): Promise<Deleted> => {
     const { dataDir } = ctx.deps.config;
     const name = args.username;
@@ -95,7 +95,7 @@ out everywhere.`,
       if (isUnreadable(err)) return { encrypted: null };
       throw err;
     });
-    if (!user) throw notFound(`No user named ${name}. ./ss user.list shows them.`);
+    if (!user) throw notFound(`No user named ${name}. ./sst user.list shows them.`);
     const dir = userDir(dataDir, name);
     const counts = await countUserFiles(dataDir, name);
 
@@ -152,7 +152,7 @@ opens with the old password, since the data key stays the same.`,
     password: z.string().meta({ secret: true, prompt: "Current password for {username}: " }).describe("The current password"),
     newPassword: z.string().meta({ secret: true, confirm: true, prompt: "New password for {username}: " }).describe("The new password (not empty)"),
   }),
-  examples: ["./ss user.change-password --username jason", "printf 'old\\nnew\\n' | ./ss user.change-password --username dev-b"],
+  examples: ["./sst user.change-password --username jason", "printf 'old\\nnew\\n' | ./sst user.change-password --username dev-b"],
   handler: async (args, ctx) => {
     await changePassword(ctx.deps.config.dataDir, args.username, args.password, args.newPassword);
     const loggedOut = ctx.deps.sessions.destroyUser(args.username, "password-changed");
@@ -160,7 +160,7 @@ opens with the old password, since the data key stays the same.`,
     return { username: args.username, loggedOut };
   },
   format: (r: { username: string; loggedOut: number }) =>
-    `Changed the password for ${r.username}.${r.loggedOut ? ` Logged out ${plural(r.loggedOut, "session")}.` : ""} Log in with: ./ss auth.login --username ${r.username}`,
+    `Changed the password for ${r.username}.${r.loggedOut ? ` Logged out ${plural(r.loggedOut, "session")}.` : ""} Log in with: ./sst auth.login --username ${r.username}`,
 });
 
 export default [userCreate, userList, userDelete, userChangePassword];

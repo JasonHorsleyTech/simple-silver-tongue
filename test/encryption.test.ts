@@ -198,7 +198,7 @@ describe("T06: an encrypted user's files hold nothing readable (CLI â†’ server â
 
   test("every /api answer says Cache-Control: no-store, so the browser never caches decrypted data on disk", async () => {
     const saved = JSON.parse(readFileSync(join(t.config.runDir, "cli-session.json"), "utf8")) as { token: string };
-    const cookie = `ss_session=${saved.token}`;
+    const cookie = `sst_session=${saved.token}`;
     const post = (name: string, body: unknown) =>
       fetch(`${t.url}/api/${name}`, { method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify(body) });
     const list = (await (await post("conversation.list", {})).json()) as { conversations: Array<{ id: string }> };
@@ -242,20 +242,20 @@ describe("T06: the CLI keeps secrets out of ps", { skip: process.platform === "w
   });
   after(() => t.close());
 
-  test("once ./ss is running, ps shows 'ss', not its arguments", async () => {
+  test("once ./sst is running, ps shows 'sst', not its arguments", async () => {
     const secret = "ps-should-never-show-this-Velzaroth";
     const child = spawn(process.execPath, [join(ROOT, "src", "cli", "main.ts"), "test.hold", "--text", secret], {
-      env: { ...process.env, SS_URL: t.url, SS_RUN_DIR: join(t.tmp, "run") },
+      env: { ...process.env, SST_URL: t.url, SST_RUN_DIR: join(t.tmp, "run") },
       stdio: "ignore",
     });
     try {
       let args = "";
-      for (let i = 0; i < 40 && !args.trim().startsWith("ss"); i++) {
+      for (let i = 0; i < 40 && !args.trim().startsWith("sst"); i++) {
         await new Promise((r) => setTimeout(r, 50));
         args = execFileSync("ps", ["-o", "args=", "-p", String(child.pid)], { encoding: "utf8" });
       }
       assert.ok(!args.includes(secret), `ps showed: ${args}`);
-      assert.match(args.trim(), /^ss\b/);
+      assert.match(args.trim(), /^sst\b/);
     } finally {
       release();
       await new Promise((r) => child.once("exit", r));

@@ -77,7 +77,7 @@ describe("dice end to end: CLI → server → mock Venice (T09)", () => {
   const lastSent = () => chatRequests()[0]?.body as ChatRequest;
   const preview = async (c: string, ...extra: string[]) => (await json(["prompt.preview", "--conversation", c, ...extra])) as { body: ChatRequest; notes: string[] };
   const rollOf = (m: LedgerMessage) => m.versions[m.activeVersion]!.roll;
-  const cookie = () => `ss_session=${JSON.parse(readFileSync(join(t.config.runDir, "cli-session.json"), "utf8")).token}`;
+  const cookie = () => `sst_session=${JSON.parse(readFileSync(join(t.config.runDir, "cli-session.json"), "utf8")).token}`;
   const post = (cmd: string, body: unknown) =>
     t.app.fetch(new Request(`http://localhost/api/${cmd}`, { method: "POST", headers: { host: "localhost", "content-type": "application/json", cookie: cookie() }, body: JSON.stringify(body) }));
 

@@ -323,9 +323,9 @@ export async function textModels(venice: VeniceClient): Promise<(id: string, bra
 function unknownModel(type: "text" | "image", id: string, brain?: Pick<Brain, "name" | "textModel" | "imageModel">): never {
   const own = brain && (type === "text" ? brain.textModel : brain.imageModel) === id;
   const fix = own
-    ? `then give ${brain.name} another with ./ss brain.update --conversation <conversation> --brain "${brain.name}" --${type}-model <id>, or --${type}-model null for the conversation's.`
-    : `then set it with ./ss conversation.update --id <conversation> --settings.${type}-model <id>.`;
-  throw new CommandError(400, "unknown_model", `Venice has no ${type} model "${id}"${own ? `, which is ${brain.name}'s own ${type} model` : ""}. See ./ss models.list --type ${type}, ${fix}`);
+    ? `then give ${brain.name} another with ./sst brain.update --conversation <conversation> --brain "${brain.name}" --${type}-model <id>, or --${type}-model null for the conversation's.`
+    : `then set it with ./sst conversation.update --id <conversation> --settings.${type}-model <id>.`;
+  throw new CommandError(400, "unknown_model", `Venice has no ${type} model "${id}"${own ? `, which is ${brain.name}'s own ${type} model` : ""}. See ./sst models.list --type ${type}, ${fix}`);
 }
 
 /** T18: which model a brain uses, and whose it is, for prompt.preview and the payload view. */

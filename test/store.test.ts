@@ -8,7 +8,7 @@ import { assertBrainIdle, assertLedgerIdle, beginGeneration, createConversationF
 import type { Vault } from "../src/storage/vault.ts";
 
 test("a generation reads the ledger only after an edit that passed its idle check before the lock (T03 QA-1)", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "ss-store-"));
+  const dir = await mkdtemp(join(tmpdir(), "sst-store-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const vault: Vault = { dir, key: null };
   const conv = newConversation({ title: "before", systemPrompt: "Be brief." });
@@ -45,7 +45,7 @@ test("a generation reads the ledger only after an edit that passed its idle chec
 });
 
 test("a brain is busy while it writes; before the generation has named its brain, every brain is (T04)", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "ss-store-"));
+  const dir = await mkdtemp(join(tmpdir(), "sst-store-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const vault: Vault = { dir, key: null };
   const gm = { id: "b_gm", name: "Game Master" };

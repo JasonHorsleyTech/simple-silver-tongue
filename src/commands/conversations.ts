@@ -40,11 +40,11 @@ hidden instruction we can't see or edit. Change the model or limits later with c
   args: z.object({
     title: title.optional().describe('Title (default "New conversation")'),
     systemPrompt,
-    textModel: z.string().min(1).optional().describe("Venice text model (default deepseek-v4-1-flash). See ./ss models.list --type text"),
+    textModel: z.string().min(1).optional().describe("Venice text model (default deepseek-v4-1-flash). See ./sst models.list --type text"),
   }),
   examples: [
-    './ss conversation.create --title "Haiku bot" --system-prompt "You answer only in haiku."',
-    "./ss conversation.create --title Tavern --system-prompt @gm-prompt.md",
+    './sst conversation.create --title "Haiku bot" --system-prompt "You answer only in haiku."',
+    "./sst conversation.create --title Tavern --system-prompt @gm-prompt.md",
   ],
   handler: async (args, ctx): Promise<Conversation> => {
     const { vault } = ctx.requireSession();
@@ -54,7 +54,7 @@ hidden instruction we can't see or edit. Change the model or limits later with c
     return conv;
   },
   format: (c: Conversation) =>
-    `Created ${c.id} "${c.title}" · ${c.settings.textModel} · brain ${c.brains[0]!.name}\nSend a message: ./ss turn --conversation ${c.id} --content "..."`,
+    `Created ${c.id} "${c.title}" · ${c.settings.textModel} · brain ${c.brains[0]!.name}\nSend a message: ./sst turn --conversation ${c.id} --content "..."`,
 });
 
 type ConversationList = { conversations: ConversationSummary[]; unreadable: UnreadableConversation[] };
@@ -77,7 +77,7 @@ export const conversationGet = command({
 The text view prints each message's active version, hidden notes folded to one line: --reveal
 shows them. --json gives the complete document (reasoning, versions, usage).`,
   args: z.object({ id: conversationId }),
-  examples: ["./ss conversation.get --id c_k3j9x0q2ma", "./ss conversation.get --id c_k3j9x0q2ma --json"],
+  examples: ["./sst conversation.get --id c_k3j9x0q2ma", "./sst conversation.get --id c_k3j9x0q2ma --json"],
   handler: async (args, ctx): Promise<Conversation> => loadConversation(ctx.requireSession().vault, args.id),
   format: formatConversation,
 });
@@ -145,11 +145,11 @@ text. The thought template is what a fresh take's note from the Muse starts as (
     templates: templates.optional(),
   }),
   examples: [
-    "./ss conversation.update --id c_k3j9x0q2ma --title 'Gilded Goat'",
-    "./ss conversation.update --id c_k3j9x0q2ma --settings.text-model venice-uncensored-1-2 --settings.max-tokens 400",
-    "./ss conversation.update --id c_k3j9x0q2ma --templates.player '{{content}}'",
-    "./ss conversation.update --id c_k3j9x0q2ma --templates.roll 'I roll the d20 and get {{roll}}.'",
-    "./ss conversation.update --id c_k3j9x0q2ma --settings.image-model krea-2-turbo --settings.image.resolution 2K --settings.image.format png",
+    "./sst conversation.update --id c_k3j9x0q2ma --title 'Gilded Goat'",
+    "./sst conversation.update --id c_k3j9x0q2ma --settings.text-model venice-uncensored-1-2 --settings.max-tokens 400",
+    "./sst conversation.update --id c_k3j9x0q2ma --templates.player '{{content}}'",
+    "./sst conversation.update --id c_k3j9x0q2ma --templates.roll 'I roll the d20 and get {{roll}}.'",
+    "./sst conversation.update --id c_k3j9x0q2ma --settings.image-model krea-2-turbo --settings.image.resolution 2K --settings.image.format png",
   ],
   handler: async (args, ctx): Promise<Conversation> => {
     const { vault } = ctx.requireSession();

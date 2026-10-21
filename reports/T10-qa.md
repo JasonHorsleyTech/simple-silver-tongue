@@ -16,8 +16,8 @@ The three minors are prompt craft, not plumbing. Each happened once in a small s
 ## How I ran it
 
 - **Tests:** `npm run typecheck` is clean, and `npm test` passes 182/182.
-- **Mock:** `SS_DATA_DIR=<scratchpad>/data npm run up:mock`, with a plaintext user `qa-t10-plain` and an encrypted user `qa-t10-enc`. A scratch data dir keeps every other user out of reach. The CLI sessions were in scratch files of my own.
-- **Live:** `SS_DATA_DIR=<scratchpad>/data npm run up`, as an encrypted user `qa-t10-live`.
+- **Mock:** `SST_DATA_DIR=<scratchpad>/data npm run up:mock`, with a plaintext user `qa-t10-plain` and an encrypted user `qa-t10-enc`. A scratch data dir keeps every other user out of reach. The CLI sessions were in scratch files of my own.
+- **Live:** `SST_DATA_DIR=<scratchpad>/data npm run up`, as an encrypted user `qa-t10-live`.
   - I used saved turns for the loop.
   - For the adversarial questions I used T07's probe method: `prompt.preview --json`, then one non-streaming POST from a scratch script, with nothing saved and the key never printed.
 - **Clean-up:** the scratch data dir is deleted, the server is stopped, and `presets/` is unchanged.
@@ -64,7 +64,7 @@ A masked dockmistress at a cargo kiosk sells berths on outbound freighters, no q
 
   `--brain '  co-gm  ' --name '  Spare GM  '` trims both and works.
 - **The whole brain comes over:** I imported a preset image brain into the Goat under `--name "Preset Portraitist"`. It kept its tool text and safe mode, and its color moved to a free one. An example's Dice Master and Joke Teller (encrypted user) came with both notes. A preset brain imported into a preset conversation has no notes. No imported brain stores `about`.
-- **`SS_CONVERSATION`** fills `--conversation` for `brain.import`, so the README's lines work as written.
+- **`SST_CONVERSATION`** fills `--conversation` for `brain.import`, so the README's lines work as written.
 - **Mid-generation:** `brain.import` during a `MOCK_SLOW` turn succeeds at once, as `brain.add` does. A second `turn` is still a 409.
 - **Race:** 5 simultaneous imports of one name gave 1 added and 4 409s, and no duplicates.
 - **Preview equals send:** the imported Actor's `prompt.preview --json` body `cmp`-matched the body the mock received, including `reasoning_effort: low` and `stop`.
@@ -107,7 +107,7 @@ A masked dockmistress at a cargo kiosk sells berths on outbound freighters, no q
 **Repro (live):** the loop above, through the Actor's "the price is forty, and one answer to one question". Then:
 
 ```
-./ss turn --brain "Show Me the Odds" --content "I try to talk her down to half price."
+./sst turn --brain "Show Me the Odds" --content "I try to talk her down to half price."
 ```
 
 **Expected:** a d20 target. The ticket's step 4 says so, and the GM's own prompt names "talking someone down" as the model uncertain action. The sheet even says she "treats every conversation as a negotiation".
@@ -197,8 +197,8 @@ Both affect only committed files, and the shipped preset is covered by `test/pre
 
 ```
 jq '.brains[1].name = "Game Master"' presets/tabletop-rpg.json > presets/qa-dupe.json
-./ss presets.list
-./ss brain.import --conversation c_... --preset qa-dupe --brain Co-GM --name X
+./sst presets.list
+./sst brain.import --conversation c_... --preset qa-dupe --brain Co-GM --name X
 ```
 
 ### QA-8 · nit · Two small wording gaps

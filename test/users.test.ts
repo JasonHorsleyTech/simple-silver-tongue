@@ -60,7 +60,7 @@ describe("T06: user.delete, user.change-password, and the CLI around them", () =
     const res = await t.app.fetch(
       new Request("http://localhost/api/turn", {
         method: "POST",
-        headers: { host: "localhost", "content-type": "application/json", cookie: `ss_session=${token}` },
+        headers: { host: "localhost", "content-type": "application/json", cookie: `sst_session=${token}` },
         body: JSON.stringify({ conversation: c, content: "MOCK_SLOW tell me a long story" }),
       }),
     );
@@ -157,12 +157,12 @@ describe("T06: user.delete, user.change-password, and the CLI around them", () =
   test("a password typed on the command line gets a warning; encrypted logins mention shell history; two terminals, two users", async () => {
     await createUser(t.config.dataDir, "dev-warn", "warn-pw", FAST_KDF);
     let r = await ok(["auth.login", "--username", "dev-warn", "--password", "warn-pw"]);
-    assert.match(r.stderr, /warning: --password on the command line is saved in your shell history \(and shows in ps while \.\/ss runs\)/);
-    assert.match(r.stdout, /Logged in as dev-warn \(encrypted\)\.\nThe session ends after 60 minutes without activity, and the server wipes its key\.\nNote: text you type on the \.\/ss command line .* shell history as plain text\. For private text, use --content -/);
+    assert.match(r.stderr, /warning: --password on the command line is saved in your shell history \(and shows in ps while \.\/sst runs\)/);
+    assert.match(r.stdout, /Logged in as dev-warn \(encrypted\)\.\nThe session ends after 60 minutes without activity, and the server wipes its key\.\nNote: text you type on the \.\/sst command line .* shell history as plain text\. For private text, use --content -/);
     r = await ok(["auth.login", "--username", "dev-warn", "--password", "-"], { stdin: "warn-pw\n" });
     assert.doesNotMatch(r.stderr, /warning/);
     await createUser(t.config.dataDir, "dev-warn-plain", "", FAST_KDF);
-    const other = { SS_SESSION_FILE: join(t.tmp, "terminal-2.json") };
+    const other = { SST_SESSION_FILE: join(t.tmp, "terminal-2.json") };
     r = await ok(["auth.login", "--username", "dev-warn-plain", "--password", ""], { env: other });
     assert.doesNotMatch(r.stderr, /warning/, "an empty password is no secret");
     assert.doesNotMatch(r.stdout, /Note:/, "a plaintext user's data is plain anyway");

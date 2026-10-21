@@ -27,7 +27,7 @@ const BUSY_HINT = "A reply is being written. Change messages once it's done, or 
 type Mode = "view" | "edit" | "delete" | "steer";
 
 /** The regenerate box's last tab (Revise or Fresh take), remembered in this browser. */
-const REGEN_MODE_KEY = "ss.regenerateMode";
+const REGEN_MODE_KEY = "sst.regenerateMode";
 
 /**
  * One ledger message, showing its active version, with its actions:

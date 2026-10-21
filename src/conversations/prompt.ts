@@ -78,7 +78,7 @@ export const emptySystemPrompt = (brain: { name: string }, convId: string) =>
   new CommandError(
     400,
     "empty_system_prompt",
-    `Brain "${brain.name}" has an empty system prompt, so nothing was sent (some Venice models inject their own prompt when there is none). Give it one: ./ss brain.update --conversation ${convId} --brain "${brain.name}" --system-prompt "..."`,
+    `Brain "${brain.name}" has an empty system prompt, so nothing was sent (some Venice models inject their own prompt when there is none). Give it one: ./sst brain.update --conversation ${convId} --brain "${brain.name}" --system-prompt "..."`,
   );
 
 /** A brain by id, then by name (case-insensitive). No ref: the conversation's default brain. */

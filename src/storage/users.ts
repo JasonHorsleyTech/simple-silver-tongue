@@ -72,7 +72,7 @@ export async function loadUser(dataDir: string, username: string): Promise<UserR
 function damagedUser(username: string, why: string) {
   return unreadableFile(
     `users/${username}/user.json`,
-    `damaged: ${why}. So ${username} can't log in. Put back a good copy if you have one (an encrypted user's data can't be read without it), or remove the user with ./ss user.delete --username ${username}.`,
+    `damaged: ${why}. So ${username} can't log in. Put back a good copy if you have one (an encrypted user's data can't be read without it), or remove the user with ./sst user.delete --username ${username}.`,
   );
 }
 
@@ -130,7 +130,7 @@ const sameUser = (a: UserRecord | null, b: UserRecord) => a !== null && a.create
 /** Check the password and return the user's vault (key is null for plaintext users). */
 export async function unlockUser(dataDir: string, username: string, password: string): Promise<{ user: UserRecord; vault: Vault }> {
   const user = await loadUser(dataDir, username);
-  if (!user) throw notFound(`No user named ${username}. Create one with ./ss user.create --username ${username}.`);
+  if (!user) throw notFound(`No user named ${username}. Create one with ./sst user.create --username ${username}.`);
   const dir = userDir(dataDir, username);
   let vault: Vault;
   if (!user.encrypted) {

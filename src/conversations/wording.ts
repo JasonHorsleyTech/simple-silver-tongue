@@ -88,7 +88,7 @@ export const alwaysReasonsNote = (model: string, how: "refused" | "ignored", bra
 
 /** Added to Venice's own 400 when it refuses reasoning off for a thinking-only model (GLM 5.3), so the fix is in the error. */
 export const reasoningRefusedHint = (brain: string) =>
-  `Turn reasoning on for ${brain}: the Reasoning switch in its settings, or ./ss brain.update --brain "${brain}" --reasoning.enabled.`;
+  `Turn reasoning on for ${brain}: the Reasoning switch in its settings, or ./sst brain.update --brain "${brain}" --reasoning.enabled.`;
 
 /** Image brains' tool text (T05 sends it). All of it reaches the model, and all of it is editable per brain. */
 export const DEFAULT_TOOL = {

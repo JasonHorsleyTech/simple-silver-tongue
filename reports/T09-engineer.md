@@ -58,10 +58,10 @@ No DESIGN CONCERN. Below are the ticket's open calls and the one place where I t
 
 ## Transcript (trimmed)
 
-Mock (`npm run up:mock`, user `dev-t09-mock`, `conversation.import --example dnd-tavern`, `SS_CONVERSATION` set):
+Mock (`npm run up:mock`, user `dev-t09-mock`, `conversation.import --example dnd-tavern`, `SST_CONVERSATION` set):
 
 ```
-$ ./ss prompt.preview --brain "Game Master" --content "I tell him the letter is for my sister." --roll
+$ ./sst prompt.preview --brain "Game Master" --content "I tell him the letter is for my sister." --roll
 Exact request for brain "Game Master" (b_unplag6fun): POST /chat/completions
 Note: The d20 isn't rolled yet. When you send, the server rolls it and puts the number (1 to 20) where {{roll}} is; the rest of this body is exactly what is sent.
 Note: Stop sequences: "<!-- from:". ...
@@ -69,13 +69,13 @@ Note: Stop sequences: "<!-- from:". ...
 <!-- from: the player -->
 🎲 I rolled a d20: **{{roll}}**
 
-$ ./ss turn --brain "Game Master" --content "I tell him the letter is for my sister." --roll
+$ ./sst turn --brain "Game Master" --content "I tell him the letter is for my sister." --roll
 🎲 d20: 1
 [Game Master · in "The Gilded Goat (D&D 5e)"]
 MOCK reply to brain "You are the Game Master of a r"; saw 6 messages; last: "<!-- System reminder --> You a… no <!-- from: ... --> lines."
 [Game Master · 1641 in / 35 out · $0.00053]
 
-$ ./ss prompt.preview --brain "Dice Master"          (the last messages)
+$ ./sst prompt.preview --brain "Dice Master"          (the last messages)
 ── [3] user ──
 <!-- from: the player -->
 I tell him the letter is for my sister.
@@ -88,7 +88,7 @@ I tell him the letter is for my sister.
 <!-- from: Game Master -->
 MOCK reply to brain ...
 
-$ ./ss conversation.get                              (tail)
+$ ./sst conversation.get                              (tail)
 ── you · m_1ltg01gsla ──
 I tell him the letter is for my sister.
 
@@ -98,24 +98,24 @@ I tell him the letter is for my sister.
 ── Game Master · m_o2ckwugind · $0.00053 ──
 MOCK reply to brain ...
 
-$ ./ss message.roll
+$ ./sst message.roll
 🎲 d20: 6
-Added m_vfjg0onoxd (your roll). Every brain sees it from the next request. Have a brain answer it: ./ss turn --conversation c_2qyuc10n1w --brain <name>
+Added m_vfjg0onoxd (your roll). Every brain sees it from the next request. Have a brain answer it: ./sst turn --conversation c_2qyuc10n1w --brain <name>
 (mock /_mock/requests still lists 1 chat request: message.roll asked no brain)
 
-$ ./ss turn --brain "Scene Painter" --roll
+$ ./sst turn --brain "Scene Painter" --roll
 🎲 d20: 4
 [Scene Painter · in "The Gilded Goat (D&D 5e)"]
 MOCK image prompt after 9 messages; last: "<!-- System reminder --> Call generate_image with one prompt"
 (making image img_c7c6ox02yc with z-image-turbo... the conversation is free meanwhile)
-(image ready: ./ss image.get --id img_c7c6ox02yc --open)
+(image ready: ./sst image.get --id img_c7c6ox02yc --open)
 [Scene Painter · 1086 in / 30 out · $0.00036 · image img_c7c6ox02yc done (z-image-turbo, png, $0.01)]
 ```
 
 Live (`npm run up`, encrypted user `dev-t09-live`, `conversation.import --example dnd-tavern` then `conversation.clone --title "Gilded Goat, T09 dice"`):
 
 ```
-$ ./ss turn --content "I slide into the hooded figure's booth and tell her, with a straight face, that I'm a royal courier and can carry her letter anywhere in the kingdom for free."
+$ ./sst turn --content "I slide into the hooded figure's booth and tell her, with a straight face, that I'm a royal courier and can carry her letter anywhere in the kingdom for free."
 [Game Master · in "Gilded Goat, T09 dice"]
 You slide onto the bench opposite the hooded figure. Up close you can see freckles, and a wisp of red hair escaping the hood. ...
 Moss the cat chooses this moment to abandon the fireside and settle, heavily, on the end of your bench.
@@ -123,24 +123,24 @@ Moss the cat chooses this moment to abandon the fireside and settle, heavily, on
 That's a Deception check.
 [Game Master · 1636 in / 144 out · $0.00066]
 
-$ ./ss turn --brain "Dice Master" --content "What do I roll?"
+$ ./sst turn --brain "Dice Master" --content "What do I roll?"
 **Deception check:** roll 1d20 + 5, DC 14. Make it, and she believes you're a royal courier.
 [Dice Master · 1265 in / 32 out · $0.00042]
 
-$ ./ss turn --brain "Game Master" --roll
+$ ./sst turn --brain "Game Master" --roll
 🎲 d20: 18
 [Game Master · in "Gilded Goat, T09 dice"]
 The freckled face goes still, then brightens in a way that is almost painful to watch. "A royal courier. Here. Of course—of *course*. ..."
 The letter slides across the table ... "I'd have five gold."
 [Game Master · 1848 in / 167 out · $0.00036]
 
-$ ./ss message.edit --message m_5qdv6y3sca --content '🎲 I rolled a d20: **3**'      # the honor system, as a check
-$ ./ss message.regenerate
+$ ./sst message.edit --message m_5qdv6y3sca --content '🎲 I rolled a d20: **3**'      # the honor system, as a check
+$ ./sst message.regenerate
 "A royal courier," she repeats slowly. "In a travel-stained blue coat. In Millbrook. In the rain." ...
 "No," she says. "No, you're not." But she doesn't get up, and she doesn't put the letter away. ...
 [Game Master · version 2/2 · 1848 in / 132 out · $0.00025]
 
-$ ./ss conversation.get | grep -A1 m_5qdv6y3sca
+$ ./sst conversation.get | grep -A1 m_5qdv6y3sca
 ── you · m_5qdv6y3sca · 🎲 d20: 18 · edited ──
 🎲 I rolled a d20: **3**
 ```

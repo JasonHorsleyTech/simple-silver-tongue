@@ -16,7 +16,7 @@ Changing the conversation's model moves only the brains without their own, and `
 - **Tests:** `npm test` passes 230/230 and `npm run typecheck` is clean, at fd36d8f. I changed no code.
 - **Jason's server was left alone.** His live server on 4747 was never stopped, restarted or touched, and `web/dist` was not rebuilt.
 - **Mock:** a scratch mock on 4878 and a server on 4877, started by hand. Data, run dir and web dist were all in my scratchpad. User `qa-t18-a` (plaintext). I restarted that server once mid-run to check persistence.
-- **Live:** a scratch live server on 4887 (`SS_MODE=live`, `env -u VENICE_BASE_URL`), user `qa-t18-live`. Cheap models only, as Jason asked: no Grok, no GLM, Z-Image Turbo for the one image.
+- **Live:** a scratch live server on 4887 (`SST_MODE=live`, `env -u VENICE_BASE_URL`), user `qa-t18-live`. Cheap models only, as Jason asked: no Grok, no GLM, Z-Image Turbo for the one image.
 - **Preview against send:** a small script (`cmp.sh`). It saves `prompt.preview … --json`, runs the command, then `diff`s `jq -S .body` against the newest `/chat/completions` body in the mock's `/_mock/requests`.
 
 The conversation for most of the run was the Tabletop RPG preset plus a one-line World Bible:
@@ -57,12 +57,12 @@ The conversation for most of the run was the Tabletop RPG preset plus a one-line
 T18 lets `--settings.image.resolution` through when the conversation's image model **or any image brain's own** lists it. That is exactly Jason's case: the conversation on Z-Image, the Scene Painter on Krea, 2K. The campaign import still checks the resolution against the conversation's image model only. So the round trip that `conversation.get --json` promises fails for a state the app itself accepted.
 
 ```
-./ss conversation.update --settings.image-model z-image-turbo            # (the default)
-./ss brain.update --brain "Scene Painter" --image-model krea-2-turbo
-./ss conversation.update --settings.image.resolution 2K                   # accepted: Krea lists 2K
-./ss prompt.preview --brain "Scene Painter" --json | jq .image.params     # resolution "2K" sent to Krea, correct
-./ss conversation.get --json > export.json
-./ss conversation.import --campaign @export.json
+./sst conversation.update --settings.image-model z-image-turbo            # (the default)
+./sst brain.update --brain "Scene Painter" --image-model krea-2-turbo
+./sst conversation.update --settings.image.resolution 2K                   # accepted: Krea lists 2K
+./sst prompt.preview --brain "Scene Painter" --json | jq .image.params     # resolution "2K" sent to Krea, correct
+./sst conversation.get --json > export.json
+./sst conversation.import --campaign @export.json
 error: The campaign: settings.image: z-image-turbo has no resolution setting: its size is the brain's shape alone.
 ```
 
@@ -109,8 +109,8 @@ The curated pair that per-brain models make likely shows the gap:
 A Co-GM at "medium" on Gemma, put back on a DeepSeek conversation with `--text-model null`, sends `reasoning_effort: "medium"` to DeepSeek.
 
 ```
-./ss brain.update --brain Co-GM --reasoning.effort medium     # Co-GM on its own deepseek-v4-1-flash
-./ss prompt.preview --brain Co-GM --content x --json | jq '{e: .body.reasoning_effort, notes}'
+./sst brain.update --brain Co-GM --reasoning.effort medium     # Co-GM on its own deepseek-v4-1-flash
+./sst prompt.preview --brain Co-GM --content x --json | jq '{e: .body.reasoning_effort, notes}'
 {"e":"medium", "notes":[reasoning on, stop sequences, stop+reasoning]}   # no word about medium
 ```
 
@@ -124,10 +124,10 @@ A Co-GM at "medium" on Gemma, put back on a DeepSeek conversation with `--text-m
 `brain.update --kind text` keeps an image brain's tool text, safe mode and (now) its image model, unused. `conversation.get --json` exports them, and the import refuses the file:
 
 ```
-./ss conversation.create --title "Kind switch" --system-prompt "Narrate."
-./ss brain.add --name P --kind image --system-prompt paint
-./ss brain.update --brain P --kind text
-./ss conversation.get --json > ks.json && ./ss conversation.import --campaign @ks.json
+./sst conversation.create --title "Kind switch" --system-prompt "Narrate."
+./sst brain.add --name P --kind image --system-prompt paint
+./sst brain.update --brain P --kind text
+./sst conversation.get --json > ks.json && ./sst conversation.import --campaign @ks.json
 error: The campaign: brains.1: safe mode, shape, tool text and an image model are for image brains, and P is a text brain.
 ```
 

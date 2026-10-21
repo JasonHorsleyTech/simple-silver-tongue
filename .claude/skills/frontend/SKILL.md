@@ -22,7 +22,7 @@ description: Pass 4 of the simple-silver ticket loop. Build the browser UI for a
 ## Verify in the real browser
 1. Run `npm run up:mock`, which rebuilds the web app and restarts the server.
 2. Load the Chrome DevTools MCP tools: `ToolSearch` with query `chrome-devtools` (or `select:mcp__chrome-devtools__navigate_page,mcp__chrome-devtools__take_snapshot,...`).
-3. Open `http://localhost:4747`. Log in as a `dev-tNN-*` user, creating it via `./ss` first.
+3. Open `http://localhost:4747`. Log in as a `dev-tNN-*` user, creating it via `./sst` first.
 4. Perform **every** flow in the ticket's Frontend scope by clicking and typing, as Jason would.
 5. Check `list_console_messages` for errors and `list_network_requests` to confirm calls go to `/api/<command>`.
 6. Take a few screenshots: save the useful ones to `reports/screens/TNN-<name>.png` (keep it to 2–4), and look at them yourself. Fix ugly or broken layouts before finishing.

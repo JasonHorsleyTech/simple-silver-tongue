@@ -79,7 +79,7 @@ for (const p of mock ? [SERVER, MOCK] : [SERVER]) {
 
 const web = buildWeb();
 
-const env: NodeJS.ProcessEnv = { ...process.env, SS_PORT: String(SERVER.port) };
+const env: NodeJS.ProcessEnv = { ...process.env, SST_PORT: String(SERVER.port) };
 
 if (mock) {
   // The mock (and the server in mock mode) must never see the real key.
@@ -90,12 +90,12 @@ if (mock) {
     fail(`mock Venice did not start. Last log lines:\n${tail(MOCK.logFile)}`);
   }
   Object.assign(env, {
-    SS_MODE: "mock",
+    SST_MODE: "mock",
     VENICE_BASE_URL: `http://127.0.0.1:${MOCK.port}/api/v1`,
     VENICE_ADMIN_KEY: "mock-key",
   });
 } else {
-  env.SS_MODE = "live";
+  env.SST_MODE = "live";
   delete env.VENICE_BASE_URL;
   // The server loads .env itself; here we only check that a key will be there.
   if (existsSync(join(ROOT, ".env"))) process.loadEnvFile(join(ROOT, ".env"));
@@ -116,7 +116,7 @@ console.log(
     `  Venice: ${mock ? `MOCK (http://127.0.0.1:${MOCK.port}/api/v1)` : "live (api.venice.ai)"}`,
     `  web:    ${web}`,
     `  pid ${pid} · log .run/server.log · stop with npm run down`,
-    "  Sessions live in server memory, so log in again: ./ss auth.login --username <name>",
-    `  ${idle > 0 ? `A login ends after ${minutes(idle)} without activity` : "Logins never time out"} (SS_SESSION_IDLE_MINUTES${idle > 0 ? "; 0 = never" : ""})`,
+    "  Sessions live in server memory, so log in again: ./sst auth.login --username <name>",
+    `  ${idle > 0 ? `A login ends after ${minutes(idle)} without activity` : "Logins never time out"} (SST_SESSION_IDLE_MINUTES${idle > 0 ? "; 0 = never" : ""})`,
   ].join("\n"),
 );

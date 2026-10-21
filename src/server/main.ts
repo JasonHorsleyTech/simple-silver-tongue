@@ -12,7 +12,7 @@ import { createSessionStore } from "./sessions.ts";
 
 // Live mode reads the Venice key from .env at runtime. Mock mode never loads it, so the real key
 // can't reach the mock server.
-if (process.env.SS_MODE !== "mock") {
+if (process.env.SST_MODE !== "mock") {
   const envFile = join(ROOT, ".env");
   if (existsSync(envFile)) process.loadEnvFile(envFile);
 }
@@ -28,9 +28,9 @@ process.on("SIGUSR1", () => log("SIGUSR1 ignored: the debugger is disabled on th
 const config = loadConfig();
 const apiKey = veniceApiKey();
 if (!apiKey) log("WARNING: VENICE_ADMIN_KEY is not set; Venice commands will fail until it is in .env");
-const idleRaw = process.env.SS_SESSION_IDLE_MINUTES;
+const idleRaw = process.env.SST_SESSION_IDLE_MINUTES;
 if (idleRaw && Number(idleRaw) !== config.sessionIdleMinutes) {
-  log(`WARNING: SS_SESSION_IDLE_MINUTES must be a number of minutes, 0 or more (0 = never); using ${config.sessionIdleMinutes}`);
+  log(`WARNING: SST_SESSION_IDLE_MINUTES must be a number of minutes, 0 or more (0 = never); using ${config.sessionIdleMinutes}`);
 }
 const sessions = createSessionStore({ idleMinutes: config.sessionIdleMinutes });
 
@@ -46,7 +46,7 @@ const app = createApp(
 
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
   log(`simple-silver listening on http://${config.host}:${info.port} (${config.mode} Venice: ${config.veniceBaseUrl})`);
-  log(sessions.idleMinutes > 0 ? `sessions end after ${minutes(sessions.idleMinutes)} without activity (SS_SESSION_IDLE_MINUTES)` : "sessions never time out (SS_SESSION_IDLE_MINUTES=0)");
+  log(sessions.idleMinutes > 0 ? `sessions end after ${minutes(sessions.idleMinutes)} without activity (SST_SESSION_IDLE_MINUTES)` : "sessions never time out (SST_SESSION_IDLE_MINUTES=0)");
 });
 
 server.on("error", (err: NodeJS.ErrnoException) => {

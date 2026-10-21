@@ -59,7 +59,7 @@ export function HiddenNote({
     <div
       ref={root}
       data-hidden-note={shown ? "open" : "folded"}
-      className={cx("rounded-lg border", shown ? "border-line bg-panel" : "ss-hatch border-dashed border-line-strong")}
+      className={cx("rounded-lg border", shown ? "border-line bg-panel" : "sst-hatch border-dashed border-line-strong")}
     >
       <button
         type="button"

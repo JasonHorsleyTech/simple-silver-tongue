@@ -157,10 +157,10 @@ describe("campaigns: the example, import, clone (T07)", () => {
     assert.deepEqual(await bytes(cloneImage.id), await bytes(origImage.id), "the same picture, under its own id");
 
     // T07 QA-3: the CLI's hint after an image is --open, which puts its plaintext copy in the OS's per-user temp
-    // folder (0700 / 0600), never in the project folder where `./ss` runs.
+    // folder (0700 / 0600), never in the project folder where `./sst` runs.
     const scratch = (await json(["conversation.import", "--example", "dnd-tavern", "--without-messages"])) as Conversation;
     const painter = await ok(["turn", "--conversation", scratch.id, "--brain", "Scene Painter"]);
-    const hint = painter.stderr.match(/image ready: \.\/ss image\.get --id (img_[a-z0-9]+) --open\)/);
+    const hint = painter.stderr.match(/image ready: \.\/sst image\.get --id (img_[a-z0-9]+) --open\)/);
     assert.ok(hint, painter.stderr);
     assert.doesNotMatch(painter.stderr, /--out/);
     const opened = await ok(["image.get", "--id", hint[1]!, "--open"]);
@@ -238,10 +238,10 @@ describe("campaigns: the example, import, clone (T07)", () => {
     assert.equal((await json(["conversation.list"])).conversations.length, before);
   });
 
-  test("SS_CONVERSATION stands in for --conversation in the CLI", async () => {
+  test("SST_CONVERSATION stands in for --conversation in the CLI", async () => {
     await ok(["auth.login", "--username", "dev-t07", "--password", "t07-secret"]);
     const conv = (await json(["conversation.import", "--example", "dnd-tavern", "--without-messages"])) as Conversation;
-    const env = { SS_CONVERSATION: conv.id };
+    const env = { SST_CONVERSATION: conv.id };
     const r = await t.cli(["turn", "--brain", "Dice Master", "--content", "What do I roll?", "--json"], { env });
     assert.equal(r.code, 0, r.stderr);
     assert.equal((await get(conv.id)).messages.length, 2);
@@ -263,9 +263,9 @@ describe("campaigns: the example, import, clone (T07)", () => {
     assert.match(named.stderr, /\[Dice Master · in "Renamed by env"\]/);
     const flagged = await t.cli(["turn", "--conversation", conv.id, "--brain", "Dice Master", "--content", "Again?"], { env });
     assert.match(flagged.stderr, /\[Dice Master\]/, "with a flag, the header stays as it was");
-    const stale = await t.cli(["turn", "--content", "hi"], { env: { SS_CONVERSATION: "c_gone0000" } });
+    const stale = await t.cli(["turn", "--content", "hi"], { env: { SST_CONVERSATION: "c_gone0000" } });
     assert.equal(stale.code, 1);
-    assert.match(stale.stderr, /came from SS_CONVERSATION=c_gone0000/);
+    assert.match(stale.stderr, /came from SST_CONVERSATION=c_gone0000/);
   });
 
   test("new conversations: accurate image framing, no watermark", async () => {

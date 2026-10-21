@@ -2,7 +2,7 @@
 
 Mock only. No live calls were needed: the browser's part is our own commands, and the engineer already proved that a brain on its own model reaches Venice with it. `npm run typecheck` is clean and `npm test` passes 233/233 (one new test).
 
-**I left Jason's server on 4747 alone.** I didn't restart or stop it, and I didn't rebuild `web/dist`. I built the web app into my scratchpad and served it from my own server on :4907, with a scratch mock on :4908. Both had their own `SS_DATA_DIR` and `SS_RUN_DIR`, and the only user was `dev-t18-fe`. I killed both processes at the end.
+**I left Jason's server on 4747 alone.** I didn't restart or stop it, and I didn't rebuild `web/dist`. I built the web app into my scratchpad and served it from my own server on :4907, with a scratch mock on :4908. Both had their own `SST_DATA_DIR` and `SST_RUN_DIR`, and the only user was `dev-t18-fe`. I killed both processes at the end.
 
 ## What Jason will see
 

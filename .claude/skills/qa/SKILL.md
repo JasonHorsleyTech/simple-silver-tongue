@@ -16,9 +16,9 @@ description: Pass 2 of the simple-silver ticket loop. Exercise the ticket's work
 **Find real bugs by actually using the app from the terminal.** You change no application code. Your only output is a report.
 
 1. Run `npm run up:mock`. Use fresh users named `qa-tNN-*`. Plain users make it easy to read the JSON on disk; use an encrypted user when the ticket touches storage.
-2. Walk every acceptance bullet yourself with `./ss`. Don't trust the engineer's transcript.
+2. Walk every acceptance bullet yourself with `./sst`. Don't trust the engineer's transcript.
 3. Then go adversarial, focusing on what this ticket touched:
-   - **No hidden text.** Compare `./ss prompt.preview` against design.md's assembly rules, message by message. Any text that isn't user-editable is a blocker.
+   - **No hidden text.** Compare `./sst prompt.preview` against design.md's assembly rules, message by message. Any text that isn't user-editable is a blocker.
    - Ordering and perspective: which brain sees what as `assistant` vs framed `user`.
    - Edge cases: empty content, unknown ids or names, the wrong message for regenerate, deleting things in use, very long Markdown, unicode, odd characters in `--content @file`.
    - State: restart the server mid-flow (`npm run up:mock` again) and check everything persisted and reloads. Concurrent turns on one conversation should get a 409.

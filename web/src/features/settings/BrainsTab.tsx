@@ -351,7 +351,7 @@ function BrainCard({
   );
 }
 
-const SOURCE_KEY = "ss.addBrainFrom";
+const SOURCE_KEY = "sst.addBrainFrom";
 type Source = "blank" | "library";
 
 /** "Add a brain": a blank one (name, kind, system prompt), or (T10) one brought over from a preset or an example. */

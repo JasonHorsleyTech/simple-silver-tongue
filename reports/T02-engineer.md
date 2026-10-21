@@ -65,23 +65,23 @@ design.md said regenerate builds the request *excluding* the message being regen
 ## Terminal transcript (mock, `npm run up:mock`)
 
 ```
-$ ./ss user.create --username dev-t02-plain --password ''
-Created dev-t02-plain (unencrypted). Log in with: ./ss auth.login --username dev-t02-plain
-$ ./ss auth.login --username dev-t02-plain --password ''
+$ ./sst user.create --username dev-t02-plain --password ''
+Created dev-t02-plain (unencrypted). Log in with: ./sst auth.login --username dev-t02-plain
+$ ./sst auth.login --username dev-t02-plain --password ''
 Logged in as dev-t02-plain (unencrypted).
-$ ./ss conversation.create --title 'Haiku bot' --system-prompt 'You answer only in haiku.'
+$ ./sst conversation.create --title 'Haiku bot' --system-prompt 'You answer only in haiku.'
 Created c_ijw9bcejhg "Haiku bot" · deepseek-v4-1-flash · brain Assistant
-$ ./ss turn --conversation c_ijw9bcejhg --content 'Tell me about the sea.'
+$ ./sst turn --conversation c_ijw9bcejhg --content 'Tell me about the sea.'
 [Assistant]
 MOCK reasoning (effort: low) over 2 messages.
 MOCK reply to brain "You answer only in haiku."; saw 2 messages; last: "<!-- from: the user --> Tell me about the sea."
 [Assistant · 19 in / 42 out · $0.000056]
-$ ./ss turn --conversation c_ijw9bcejhg --content 'Now about mountains.'
+$ ./sst turn --conversation c_ijw9bcejhg --content 'Now about mountains.'
 ... saw 4 messages; last: "<!-- from: the user --> Now about mountains."
-$ ./ss turn --conversation c_ijw9bcejhg --content 'And finally, the moon.'
+$ ./sst turn --conversation c_ijw9bcejhg --content 'And finally, the moon.'
 ... saw 6 messages; last: "<!-- from: the user --> And finally, the moon."
 [Assistant · 101 in / 42 out · $0.000081]
-$ ./ss conversation.get --id c_ijw9bcejhg
+$ ./sst conversation.get --id c_ijw9bcejhg
 Haiku bot (c_ijw9bcejhg) · deepseek-v4-1-flash · 6 messages · $0.00021
 Brains: Assistant (default) [b_ai1vqdgliq, text, reasoning low]
 
@@ -91,7 +91,7 @@ Tell me about the sea.
 ── Assistant · m_3n14dk4djt · $0.000056 · reasoning 45 chars (--json) ──
 MOCK reply to brain "You answer only in haiku."; saw 2 messages; last: "<!-- from: the user --> Tell me about the sea."
 ... (4 more, alternating)
-$ ./ss prompt.preview --conversation c_ijw9bcejhg --content 'One more?'
+$ ./sst prompt.preview --conversation c_ijw9bcejhg --content 'One more?'
 Exact request for brain "Assistant" (b_ai1vqdgliq): POST /chat/completions
 {"model":"deepseek-v4-1-flash","stream":true,"stream_options":{"include_usage":true},"venice_parameters":{"include_venice_system_prompt":false,"enable_web_search":"off","enable_web_scraping":false},"reasoning_effort":"low"}
 8 messages:
@@ -109,17 +109,17 @@ MOCK reply to brain "You answer only in haiku."; saw 2 messages; ...
 ── [7] user ──
 <!-- from: the user -->
 One more?
-$ ./ss turn --conversation c_ijw9bcejhg
+$ ./sst turn --conversation c_ijw9bcejhg
 error: The last message is Assistant's own reply, so there is nothing new for it to answer. Send a message with --content.   [exit 1]
-$ ./ss conversation.list
+$ ./sst conversation.list
 ID            TITLE      MESSAGES  COST      MODEL                UPDATED
 c_ijw9bcejhg  Haiku bot  6         $0.00021  deepseek-v4-1-flash  2026-10-14 06:21:04
 ```
 
 Preview equals send, checked by hand as well as in `test/chat.test.ts`. The content was chosen to trip naive templating:
 ```
-$ ./ss prompt.preview --conversation $C --content 'Fourth: {{brain}} $& and "quotes"' --json   → .body → preview.json
-$ ./ss turn --conversation $C --content 'Fourth: {{brain}} $& and "quotes"'
+$ ./sst prompt.preview --conversation $C --content 'Fourth: {{brain}} $& and "quotes"' --json   → .body → preview.json
+$ ./sst turn --conversation $C --content 'Fourth: {{brain}} $& and "quotes"'
 $ curl -s localhost:4748/_mock/requests   → requests[0].body → sent.json
 $ cmp preview.json sent.json && echo IDENTICAL
 IDENTICAL          (last message: '<!-- from: the user -->\nFourth: {{brain}} $& and "quotes"')
@@ -127,27 +127,27 @@ IDENTICAL          (last message: '<!-- from: the user -->\nFourth: {{brain}} $&
 
 Errors, the lock and encryption:
 ```
-$ ./ss conversation.create --title x --system-prompt '   '
+$ ./sst conversation.create --title x --system-prompt '   '
 error: Invalid arguments for conversation.create: systemPrompt: The system prompt can't be empty: some Venice models inject their own when there is none   [exit 1]
-$ (./ss turn --conversation $C --content 'MOCK_SLOW long one' &); sleep 0.5; ./ss turn --conversation $C --content 'me too'
+$ (./sst turn --conversation $C --content 'MOCK_SLOW long one' &); sleep 0.5; ./sst turn --conversation $C --content 'me too'
 error: Conversation c_ijw9bcejhg is busy: a reply is still being generated. Wait for it to finish, then try again.   [exit 1]
-$ ./ss turn --conversation $C --content 'MOCK_ERROR up front'
+$ ./sst turn --conversation $C --content 'MOCK_ERROR up front'
 error: Venice 500 on /chat/completions: mock: forced error (MOCK_ERROR)   [exit 1]    (nothing saved)
-$ ./ss turn --conversation $C --content 'MOCK_MIDSTREAM_ERROR halfway'
+$ ./sst turn --conversation $C --content 'MOCK_MIDSTREAM_ERROR halfway'
 [Assistant]
 MOCK reasoning (effort: low) over 10 messages.
 MOCK reply to brain "You answer only
 error: The Venice stream broke off (UND_ERR_SOCKET).   [exit 1]
-$ ./ss conversation.get --id $C --json | ... authors
+$ ./sst conversation.get --id $C --json | ... authors
 player brain player brain player brain player brain player      (MOCK_SLOW finished and saved; MOCK_ERROR saved nothing; the mid-stream failure kept only the player message)
-$ ./ss conversation.update --id $C --settings.text-model nope
-error: Venice has no text model "nope". See ./ss models.list --type text, then set it with ./ss conversation.update ...   [exit 1]
-$ ./ss brain.update --conversation $C --system-prompt ''
+$ ./sst conversation.update --id $C --settings.text-model nope
+error: Venice has no text model "nope". See ./sst models.list --type text, then set it with ./sst conversation.update ...   [exit 1]
+$ ./sst brain.update --conversation $C --system-prompt ''
 error: Invalid arguments for brain.update: systemPrompt: The system prompt can't be empty: ...   [exit 1]
 
-$ ./ss user.create --username dev-t02-enc --password pw-t02 && ./ss auth.login --username dev-t02-enc --password pw-t02
-$ ./ss conversation.create --title GILDED-GOAT --system-prompt 'You are the SECRET-GM.'   -> c_s9cgriesvx
-$ ./ss turn --conversation c_s9cgriesvx --content 'I order the PLUM-WINE.'
+$ ./sst user.create --username dev-t02-enc --password pw-t02 && ./sst auth.login --username dev-t02-enc --password pw-t02
+$ ./sst conversation.create --title GILDED-GOAT --system-prompt 'You are the SECRET-GM.'   -> c_s9cgriesvx
+$ ./sst turn --conversation c_s9cgriesvx --content 'I order the PLUM-WINE.'
 MOCK reply to brain "You are the SECRET-GM."; saw 2 messages; last: "<!-- from: the user --> I order the PLUM-WINE."
 $ grep -rlE 'GILDED|SECRET-GM|PLUM-WINE|MOCK reply' data/users/dev-t02-enc || echo 'no plaintext on disk'; head -c 6 .../c_s9cgriesvx.json
 no plaintext on disk
@@ -161,39 +161,39 @@ Also checked on the mock: `--settings.max-tokens 5` cuts the reply (`finishReaso
 ## Terminal transcript (live, `npm run up`)
 
 ```
-$ ./ss venice.balance
+$ ./sst venice.balance
 Venice balance: $8.01216187 USD · DIEM 0 · tier paid
-$ ./ss conversation.create --title "Live colors" --system-prompt "You are terse. Reply in at most ten words."
+$ ./sst conversation.create --title "Live colors" --system-prompt "You are terse. Reply in at most ten words."
 Created c_4vpob2lwk6 "Live colors" · deepseek-v4-1-flash · brain Assistant
-$ ./ss turn --conversation c_4vpob2lwk6 --content "Name a color."
+$ ./sst turn --conversation c_4vpob2lwk6 --content "Name a color."
 [Assistant]
 We need answer. User asks "Name a color." Need terse, at most ten words. We can just say Blue. Ensure no extra.
 Blue.
 [Assistant · 52 in / 34 out · $0.000056]
-$ ./ss turn --conversation c_4vpob2lwk6 --content "Name another one."
+$ ./sst turn --conversation c_4vpob2lwk6 --content "Name another one."
 ... Red.
 [Assistant · 68 in / 34 out · $0.000061]
-$ ./ss turn --conversation c_4vpob2lwk6 --content "And one more, please."
+$ ./sst turn --conversation c_4vpob2lwk6 --content "And one more, please."
 ... Green.
 [Assistant · 86 in / 48 out · $0.000083]
 usage per reply: {"promptTokens":52,"completionTokens":34,"reasoningTokens":30} 0.0000564 stop
                  {"promptTokens":68,"completionTokens":34,"reasoningTokens":30} 0.0000612 stop
                  {"promptTokens":86,"completionTokens":48,"reasoningTokens":44} 0.0000834 stop
 
-$ ./ss turn --conversation c_4vpob2lwk6          # (before the refusal existed) request ends with its own reply
+$ ./sst turn --conversation c_4vpob2lwk6          # (before the refusal existed) request ends with its own reply
 [Assistant]
 ### Trip 1: Wrong ... No trip.</think>Green.      ← it repeated itself, and reasoning plus </think> landed in content
-$ ./ss brain.update --conversation c_4vpob2lwk6 --no-reasoning.enabled
-$ ./ss turn --conversation c_4vpob2lwk6 --content "One last color."
+$ ./sst brain.update --conversation c_4vpob2lwk6 --no-reasoning.enabled
+$ ./sst turn --conversation c_4vpob2lwk6 --content "One last color."
 [Assistant]
 Yellow.
 [Assistant · 129 in / 3 out · $0.000042]          ← reasoning_effort "none": no reasoning at all
-$ ./ss turn --conversation c_4vpob2lwk6          # after restarting on current code
+$ ./sst turn --conversation c_4vpob2lwk6          # after restarting on current code
 error: The last message is Assistant's own reply, so there is nothing new for it to answer. Send a message with --content.
 $ node steer-probe.ts                             # two regenerate requests, built with buildRequest (see Design concern)
 A: … reply: "Vert."  ($0.0000525)
 B: … reply: "Jaune."  ($0.0000555)
-$ ./ss venice.balance
+$ ./sst venice.balance
 Venice balance: $8.01171997 USD · DIEM 0 · tier paid
 ```
 

@@ -34,7 +34,7 @@ describe("a fresh take: the Muse's note right before the message, then the brain
   };
   const get = async (id: string) => (await json(["conversation.get", "--id", id])) as Conversation;
   const lastSent = () => t.mock.state.requests.find((r) => r.path === "/chat/completions")?.body as ChatRequest;
-  const cookie = () => `ss_session=${JSON.parse(readFileSync(join(t.config.runDir, "cli-session.json"), "utf8")).token}`;
+  const cookie = () => `sst_session=${JSON.parse(readFileSync(join(t.config.runDir, "cli-session.json"), "utf8")).token}`;
   const post = (cmd: string, body: unknown) =>
     t.app.fetch(new Request(`http://localhost/api/${cmd}`, { method: "POST", headers: { host: "localhost", "content-type": "application/json", cookie: cookie() }, body: JSON.stringify(body) }));
   const events = async (res: Response) => (await res.text()).trim().split("\n").map((l) => JSON.parse(l));

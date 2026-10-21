@@ -24,7 +24,7 @@
   - `DEFAULT_TOOL.resultContent` was also inaccurate after T05 triage, so it now reads "The prompt was sent to the image model. The player sees the image once it is made."
   - `hideWatermark` defaults to `true` for new conversations and imports.
 - **Polish from the playthrough:**
-  - `SS_CONVERSATION=c_...` makes the CLI fill in `--conversation` wherever a command takes one. A flag still wins. Without it, every line of terminal play needed the id pasted in. `./ss help` mentions it.
+  - `SST_CONVERSATION=c_...` makes the CLI fill in `--conversation` wherever a command takes one. A flag still wins. Without it, every line of terminal play needed the id pasted in. `./sst help` mentions it.
   - Import and clone print where to play next.
 - **`README.md` for Jason** covers start and stop, his own account (with what encryption means and that there's no reset), importing the example, playing, cloning for Pathfinder, terminal play, and privacy in short.
 - **Tests:** `test/campaigns.test.ts` has 8 tests:
@@ -34,7 +34,7 @@
   - Clone with images (same bytes, new id, neutral `.bin` name), deleting a clone leaves the original's image, `--without-messages`, and a missing file becomes an error.
   - An encrypted import is ciphertext.
   - Bad files are refused with their path, and nothing is created.
-  - `SS_CONVERSATION`.
+  - `SST_CONVERSATION`.
   - The new defaults.
   - Three existing tests changed with the new wording and the watermark default.
 
@@ -47,31 +47,31 @@
 | `conversation.clone` | new |
 | `conversation.create` | new conversations: `hideWatermark: true`, new `otherBrainImage` wording |
 | `brain.add --kind image` | new image brains: new `tool.resultContent` wording |
-| CLI | `SS_CONVERSATION` fills in `--conversation`; help footer line |
+| CLI | `SST_CONVERSATION` fills in `--conversation`; help footer line |
 
 ## The playthrough, live, as an encrypted `dev-` user (trimmed transcript)
 
 This was Jason's paragraph, end to end, with `deepseek-v4-1-flash` and `z-image-turbo`. User `dev-t07-play` was encrypted with a made-up password.
 
 ```
-$ ./ss venice.balance
+$ ./sst venice.balance
 Venice balance: $7.88493917 USD · DIEM 0 · tier paid        (after prompt tuning; $7.89027371 at the start of the pass)
-$ printf 'goat-and-crown-7\ngoat-and-crown-7\n' | ./ss user.create --username dev-t07-play
-Created dev-t07-play (encrypted). Log in with: ./ss auth.login --username dev-t07-play
-$ ./ss conversation.import --example dnd-tavern
+$ printf 'goat-and-crown-7\ngoat-and-crown-7\n' | ./sst user.create --username dev-t07-play
+Created dev-t07-play (encrypted). Log in with: ./sst auth.login --username dev-t07-play
+$ ./sst conversation.import --example dnd-tavern
 Imported c_oxoe1avbnm "The Gilded Goat (D&D 5e)" · deepseek-v4-1-flash · images z-image-turbo
 Brains: Game Master (default), Dice Master, Joke Teller, Scene Painter (image), Character Portraitist (image)
 Setup: World Bible · 1 message
 
 # 1. Walk up to the hooded figure
-$ ./ss turn --conversation $C --content 'I shake the rain off my coat, buy a cider from Tobin, and walk over to the hooded figure in the corner booth. "Evening. Mind if I sit? Every other seat in here smells of turnip."'
+$ ./sst turn --conversation $C --content 'I shake the rain off my coat, buy a cider from Tobin, and walk over to the hooded figure in the corner booth. "Evening. Mind if I sit? Every other seat in here smells of turnip."'
 [Game Master]
 Tobin pours the cider without being asked twice and slides it down the bar. "Three coppers. And it's onion soup you can smell, not turnips. Pell and Garrick just *talk* turnips." ...
 At the corner booth, the hooded head jerks up. Gloved fingers go still on the letter, then tuck it flat under both hands. "Oh — I — yes. Fine. Sit." The voice is young, female, and about as steady as a shutter in this wind. ...
 [Game Master · 1366 in / 180 out · $0.00029]
 
 # 2. Regenerate it with a slight steer (prompt.preview --regenerate first: the steer is the last message, after the GM's reply and reminder)
-$ ./ss message.regenerate --conversation $C --steer "Same scene, but she's so flustered that she knocks her cider over."
+$ ./sst message.regenerate --conversation $C --steer "Same scene, but she's so flustered that she knocks her cider over."
 [Game Master]
 ... As she reaches to shift her cup out of your way, her gloved hand catches the rim instead. Cider goes across the table in a brown tide.
 She snatches the letter up an instant before the wave reaches it, holding it to her chest, dripping. "Sorry. Sorry. I'm — sorry." ...
@@ -79,23 +79,23 @@ Moss the cat opens one eye.
 [Game Master · version 2/2 · steered · 1596 in / 206 out · $0.00038]
 
 # 3. A second agent with its own instructions: what dice do I roll? Then roll.
-$ ./ss turn --conversation $C --brain "Dice Master" --content "I help mop up the cider with my sleeve and try to put her at ease. What do I roll?"
+$ ./sst turn --conversation $C --brain "Dice Master" --content "I help mop up the cider with my sleeve and try to put her at ease. What do I roll?"
 [Dice Master]
 **Persuasion check:** roll 1d20 + 5, DC 12. Make it, and she starts to relax.
-$ ./ss turn --conversation $C --brain "Dice Master" --content "I rolled a 13."
+$ ./sst turn --conversation $C --brain "Dice Master" --content "I rolled a 13."
 [Dice Master]
 **13 + 5 = 18 vs DC 12: success.**
-$ ./ss turn --conversation $C                       # the GM continues from the roll
+$ ./sst turn --conversation $C                       # the GM continues from the roll
 [Game Master]
 She watches you ruin a perfectly good sleeve on her spilled cider, and something in her shoulders gives way. A small laugh escapes, mostly nerves. "You didn't have to do that." ...
 
 # 4. Another agent: a funny joke about this situation
-$ ./ss turn --conversation $C --brain "Joke Teller" --content "Tell me a funny joke about this situation."
+$ ./sst turn --conversation $C --brain "Joke Teller" --content "Tell me a funny joke about this situation."
 [Joke Teller]
 A bard walks into a tavern, ruins his sleeve on a stranger's cider, and she says, "You didn't have to do that." Ma'am, he's a level 1 bard — that sleeve was the plan.
 
 # 5. An agent whose text goes straight to the image generator
-$ ./ss turn --conversation $C --brain "Scene Painter"
+$ ./sst turn --conversation $C --brain "Scene Painter"
 [Scene Painter]
 A low timber-framed tavern common room at night, seen from beside a corner booth. A young woman in a deep green hooded cloak, freckles and a red curl loose on her cheek, has pushed her hood back a little and sits with gloved hands resting on a sealed letter laid face-down on the wet table; a spilled cup of cider spreads between her and a ruined wet sleeve ... an enormous grey cat watches from the stool nearest the fire with one eye open, a bald broad barkeep in a leather apron wipes a mug behind a scarred oak bar, and two farmers bend over knucklebones by the rain-streaked window. ... Painterly fantasy illustration, warm candlelight, rich colour, detailed.
 (making image img_mfw7a72zsq with z-image-turbo... the conversation is free meanwhile)
@@ -103,45 +103,45 @@ A low timber-framed tavern common room at night, seen from beside a corner booth
    → a real 1024×768 WebP: the green hood, the red curl, the spilled cider, the cat, Tobin, the farmers; no watermark.
 
 # 6. Edit the image prompt, which repaints (adds "a sprig of white heather pinned at its clasp")
-$ ./ss message.edit --conversation $C --message m_zd2gtfickf --content @prompt2.txt
+$ ./sst message.edit --conversation $C --message m_zd2gtfickf --content @prompt2.txt
 Edited m_zd2gtfickf (Scene Painter, version 1/1). Every brain sees the new prompt from the next request. Making its image img_xdhvkdram3 ...
-$ ./ss image.follow --conversation $C --message m_zd2gtfickf
+$ ./sst image.follow --conversation $C --message m_zd2gtfickf
 [image img_xdhvkdram3 done (z-image-turbo, webp, $0.01)]      → the same scene, now with white heather at her cloak clasp
 
 # 7. The GM knows what the picture shows: the player says only "the little sprig"
-$ ./ss turn --conversation $C --content 'I smile and nod at the little sprig pinned to her cloak. "I do carry letters, sometimes. Is that for luck? ..."'
+$ ./sst turn --conversation $C --content 'I smile and nod at the little sprig pinned to her cloak. "I do carry letters, sometimes. Is that for luck? ..."'
 [Game Master]
 Odessa's hand jumps to the white sprig at her cloak clasp, and for a moment she looks caught out. "It's heather. My aunt says it's for luck. It's — just a weed, really." ...
 "There's a place. Hollowmere. ... It's grain tariffs. Very boring. Extremely official." Her ears are going pink. "I'd pay you five gold."
 
 # 8. Tweak a system prompt mid-game, and keep playing
-$ ./ss brain.update --conversation $C --brain "Joke Teller" --system-prompt @jokes.md   # appended: "Tonight, every joke is a limerick"
-$ ./ss turn --conversation $C --brain "Joke Teller"
+$ ./sst brain.update --conversation $C --brain "Joke Teller" --system-prompt @jokes.md   # appended: "Tonight, every joke is a limerick"
+$ ./sst turn --conversation $C --brain "Joke Teller"
 [Joke Teller]
 A girl with a letter and a heather sprig swore
 It was grain tariffs, boring and sure. ...
 
 # 9. Add a new brain mid-game, and keep playing
-$ ./ss brain.add --conversation $C --name "Bard's Muse" --system-prompt "You are the Muse of Wren Ashdown, ... write one short verse Wren could sing right now ..."
-$ ./ss turn --conversation $C --brain "Bard's Muse"
+$ ./sst brain.add --conversation $C --name "Bard's Muse" --system-prompt "You are the Muse of Wren Ashdown, ... write one short verse Wren could sing right now ..."
+$ ./sst turn --conversation $C --brain "Bard's Muse"
 [Bard's Muse]
 The rain drums down on Millbrook town,
 The fire burns warm and low;
 A hooded lass sets her cider down,
 And spills what she won't show.
-$ ./ss turn --conversation $C --content 'I hum the Muse'"'"'s verse under my breath ... "Five gold and a song about it afterwards. Deal. Who do I ask for in Hollowmere?"'
+$ ./sst turn --conversation $C --content 'I hum the Muse'"'"'s verse under my breath ... "Five gold and a song about it afterwards. Deal. Who do I ask for in Hollowmere?"'
 [Game Master]
 Odessa's hand closes over the letter — then, slowly, she slides it across the table, face-down, as if it might bite. "Tam. Tam Miller. ..."
-$ ./ss turn --conversation $C --brain "Character Portraitist"
+$ ./sst turn --conversation $C --brain "Character Portraitist"
 [Character Portraitist]
 A head-and-shoulders portrait of Odessa, a young woman in her early twenties ... a small sprig of white heather is pinned at the cloak's clasp. ...
 [... image img_tye7ng04ir done (z-image-turbo, webp, $0.01)]   → the same face, hood, cloak and heather as the scene
 
 # 10. "We're doing Pathfinder", from this campaign's setup
-$ ./ss conversation.clone --id $C --title "Pathfinder at the Goat" --without-messages
+$ ./sst conversation.clone --id $C --title "Pathfinder at the Goat" --without-messages
 Cloned into c_f4ddr3p9ed "Pathfinder at the Goat" · ... Brains: Game Master (default), Dice Master, Joke Teller, Scene Painter (image), Character Portraitist (image), Bard's Muse
-$ ./ss setup.update ... ; ./ss brain.update ... --brain "Game Master" ... ; ./ss brain.update ... --brain "Dice Master" ...   # "Pathfinder Second Edition"
-$ ./ss turn --conversation c_f4ddr3p9ed --content "Open the scene: I come in out of the rain, lute on my back."
+$ ./sst setup.update ... ; ./sst brain.update ... --brain "Game Master" ... ; ./sst brain.update ... --brain "Dice Master" ...   # "Pathfinder Second Edition"
+$ ./sst turn --conversation c_f4ddr3p9ed --content "Open the scene: I come in out of the rain, lute on my back."
 [Game Master]
 Rain drums on the shutters as you shoulder the door open. The Gilded Goat's warmth hits you all at once: woodsmoke, wet wool, onion soup. ...
 
@@ -174,7 +174,7 @@ I got an 11.
 
 The model continued the framing pattern and played the whole table itself. I fixed it the way Jason would, mid-game. I used `brain.update` on the GM's prompt and reminder to say "never write `<!-- from: ... -->` comments yourself", then made a plain `message.regenerate`. Version 2 was good GM narration, and nothing like it happened in the 7 GM replies after that. The committed example has the fix. A final check of the committed example on a fresh import also held: an uncertain action → "That's an Insight check" and a stop → Dice Master "Rolling for you: **11 + 3 = 14 vs DC 12: success.**" → the GM narrated the success. That was 4 calls. AGENTS.md has a lesson on it.
 
-**Terminal flow against the mock (README steps, fresh data dir).** I ran these: `user.create` (encrypted) → `auth.login` → `conversation.import --example dnd-tavern` → `export SS_CONVERSATION=...` → `turn` → `turn --brain "Dice Master"` → `message.regenerate --steer` → `turn --brain "Scene Painter"` (image done). All exit 0.
+**Terminal flow against the mock (README steps, fresh data dir).** I ran these: `user.create` (encrypted) → `auth.login` → `conversation.import --example dnd-tavern` → `export SST_CONVERSATION=...` → `turn` → `turn --brain "Dice Master"` → `message.regenerate --steer` → `turn --brain "Scene Painter"` (image done). All exit 0.
 
 ## Prompt tuning (live, before the playthrough)
 
@@ -200,7 +200,7 @@ All tuning was on a plaintext `dev-` user.
 
 ## Known gaps
 
-- **The browser can't start the example or clone yet.** That is Frontend scope (notes added to the T07 ticket). Until then, README.md says to import from the terminal (`./ss auth.login` + `./ss conversation.import --example dnd-tavern`) and then play in the browser.
+- **The browser can't start the example or clone yet.** That is Frontend scope (notes added to the T07 ticket). Until then, README.md says to import from the terminal (`./sst auth.login` + `./sst conversation.import --example dnd-tavern`) and then play in the browser.
 - **Image size is per conversation.** The Character Portraitist paints at the Scene Painter's 1024×768 landscape size. A per-brain size would need a new field and UI.
 - **Odd behaviour seen:**
   - A model can still impersonate the table. Only prompts guard against it, and the app doesn't flag a reply that contains a `<!-- from:` line it wrote itself.
@@ -218,5 +218,5 @@ All tuning was on a plaintext `dev-` user.
   - the campaign file format and its checks;
   - `examples.list`, `conversation.import`, `conversation.clone`, and how images are handled in each;
   - the example campaign's design (secrets in the GM's own prompt, reminders on everywhere, templates that say "the player");
-  - `SS_CONVERSATION`.
+  - `SST_CONVERSATION`.
 - The command list includes `examples.list`.

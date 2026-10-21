@@ -57,7 +57,7 @@ The API is unchanged. `block.open` is now always `!closed`, and both fields are 
 
 QA's CLI repros, plus the scene break, each added with `message.add --as player --content @file`:
 ```
-$ ./ss conversation.get --id $C
+$ ./sst conversation.get --id $C
 ── you · m_kj1e5bvl0m ──            (tab.md: "- ```hidden" / "\tSECRET-TAB …" / "\t```" / "After the tab note.")
 - [Hidden · 1 line]
 After the tab note.
@@ -86,17 +86,17 @@ The door closes.
 Later.
 [Hidden · 1 line]
 
-(7 hidden notes folded: ./ss conversation.get --id c_5uperxhnl0 --reveal shows them; --json has the raw text.)
+(7 hidden notes folded: ./sst conversation.get --id c_5uperxhnl0 --reveal shows them; --json has the raw text.)
 secret count in folded view: 0 · with --reveal: 7
 ```
 
 Acceptance, quickly:
 ```
-$ ./ss turn --conversation $C --content "Who is the hooded figure? MOCK_HIDDEN"        exit 0
+$ ./sst turn --conversation $C --content "Who is the hooded figure? MOCK_HIDDEN"        exit 0
 MOCK reply to brain "You are the Game Master."; saw 2 messages; …
 [Hidden · 5 lines]
 The hooded figure slides a folded map across the table.
-(1 hidden note folded: ./ss message.get --conversation c_fnymomyet1 --message m_1qd6kg1hgc --reveal shows it; …)
+(1 hidden note folded: ./sst message.get --conversation c_fnymomyet1 --message m_1qd6kg1hgc --reveal shows it; …)
 secrets in stdout+stderr: 0
 conversation.get / --reveal / --json: MOCK_SECRET 0 / 1 / 1 times
 prompt.preview --brain "Character Creator": "<!-- from: Assistant -->" + the GM's message, verbatim (diff with get --json: equal)
@@ -104,19 +104,19 @@ prompt.preview --brain "Character Creator": "<!-- from: Assistant -->" + the GM'
 
 The reasoning fold (QA-3):
 ```
-$ ./ss brain.update --conversation $C --brain "Character Creator" --reasoning.enabled
-$ ./ss turn --conversation $C --brain "Character Creator" --content MOCK_HIDDEN_ONLY
+$ ./sst brain.update --conversation $C --brain "Character Creator" --reasoning.enabled
+$ ./sst turn --conversation $C --brain "Character Creator" --content MOCK_HIDDEN_ONLY
 [Hidden · 6 lines]                                                           (stdout)
 [Character Creator]                                                          (stderr)
 [Reasoning, folded: --reveal streams it; conversation.get --json has it]
 [Character Creator · 170 in / 120 out · $0.00019]
 (1 hidden note folded: …)
-$ ./ss message.regenerate --conversation $C --reveal                         (stderr)
+$ ./sst message.regenerate --conversation $C --reveal                         (stderr)
 [Character Creator]
 MOCK reasoning (effort: low) over 4 messages.
 ```
 
-`./ss help turn` now shows `Hidden notes and reasoning fold to one line each; --reveal shows them` and the `--reveal > reply.md` example.
+`./sst help turn` now shows `Hidden notes and reasoning fold to one line each; --reveal shows them` and the `--reveal > reply.md` example.
 
 There were no live calls. The server and the mock are stopped.
 

@@ -33,8 +33,8 @@ export function D20Face({ value, rolling, land, dim, className }: { value: numbe
       aria-hidden
       className={cx(
         "relative grid size-12 shrink-0 place-items-center",
-        rolling && "motion-safe:animate-[ss-tumble_0.9s_cubic-bezier(.45,.05,.55,.95)_infinite]",
-        land && "motion-safe:animate-[ss-land_0.5s_cubic-bezier(.2,.9,.3,1.25)_both]",
+        rolling && "motion-safe:animate-[sst-tumble_0.9s_cubic-bezier(.45,.05,.55,.95)_infinite]",
+        land && "motion-safe:animate-[sst-land_0.5s_cubic-bezier(.2,.9,.3,1.25)_both]",
         className,
       )}
     >

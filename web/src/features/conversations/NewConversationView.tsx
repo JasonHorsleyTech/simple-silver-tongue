@@ -21,7 +21,7 @@ import { refreshConversations } from "./store.ts";
 export const DEFAULT_SYSTEM_PROMPT = "You are a thoughtful, concise assistant. Format your answers in Markdown.";
 
 type Way = "example" | "preset" | "scratch";
-const WAY_KEY = "ss.newFrom";
+const WAY_KEY = "sst.newFrom";
 const WAYS: { id: Way; label: string; line: string; Icon: typeof Dices }[] = [
   { id: "example", label: "Ready to play", line: "A world, its brains and an opening scene", Icon: Dices },
   { id: "preset", label: "From a preset", line: "Brains with no world: you write it", Icon: UsersRound },

@@ -8,7 +8,7 @@ import { Notice } from "../../components/Notice.tsx";
 import { TextField } from "../../components/TextField.tsx";
 
 /**
- * user.change-password from the browser (T06 frontend): the same command as ./ss user.change-password. The current
+ * user.change-password from the browser (T06 frontend): the same command as ./sst user.change-password. The current
  * password unwraps the data key and the new one rewraps it, so no file is touched. It logs the user out everywhere,
  * this tab included; the login screen then says so, with the user already chosen.
  */

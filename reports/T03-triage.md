@@ -15,7 +15,7 @@ No design concern. Every change fits the design, and design.md records each one.
 | **QA-3** · minor · a blank or placeholder-less steer template silently drops the steer | **FIX** | Each template must keep the placeholder its text goes into: `{{content}}` for player and other-brain text, `{{prompt}}` for other-brain image, `{{instruction}}` for steer. `conversation.update` refuses one without it, with a message saying what would go missing ("The steer template has no {{instruction}}, so your steer would be left out of the request. Put {{instruction}} back in the template, where the text should go."). `buildRequest` refuses to *use* one (`bad_template`, 400, nothing sent), which covers files written before the check. So a template can't drop text silently, now or in T04/T05. I chose a refusal over QA's "notes" idea: a note only shows if you open the preview, and the steer would still have been dropped. Tests: pure (all four templates, blank, whitespace-only, fixed text) and CLI end to end (update refused and nothing changed; a hand-broken file refuses the preview and the regenerate with nothing sent upstream, while a plain re-roll still works). |
 | **QA-4** · nit · the re-roll refusal gives the wrong reason when the reply is the only message | **FIX** | `planRegenerate` replaces the refusal only when the body really ends with the brain's own `assistant` message. A lone reply now gets `nothingToAnswer`'s "the request would hold only its system prompt. Write a message for it first." Pure test added. |
 | Engineer's open question · no way to delete a single version | **DISMISS** | As QA showed (330 oracle steps, a 41-version chain), a version reaches a prompt only while it is active, so an unwanted one is clutter in the pager, not stale text, and Jason can select away from it. If it is ever added: `steeredFrom` is an index, so it needs renumbering (or version ids). Deleting a version's cost from the total is no longer a concern, since `spentUsd` keeps it. |
-| QA "Outside this ticket" · `./ss generation.follow --json \| head -3` crashes with an `EPIPE` stack trace | **DEFER → T07** | Real but harmless (no user content), it predates T03, and it is CLI polish. Logged under T07 **Deferred in**. |
+| QA "Outside this ticket" · `./sst generation.follow --json \| head -3` crashes with an `EPIPE` stack trace | **DEFER → T07** | Real but harmless (no user content), it predates T03, and it is CLI polish. Logged under T07 **Deferred in**. |
 
 ## Other changes
 
@@ -40,7 +40,7 @@ Deleted m_n0blvojard. 1 message left.
 qa-repro (c_qxdgdnm3w4) · deepseek-v4-1-flash · 1 messages · $0.00011
 
 # QA-2, stop (before: the mock charged $0.00063, recorded null)
-$ ./ss turn --conversation $C --content "MOCK_SLOW MOCK_MARKDOWN go" &  sleep 1.2; ./ss generation.stop --conversation $C
+$ ./sst turn --conversation $C --content "MOCK_SLOW MOCK_MARKDOWN go" &  sleep 1.2; ./sst generation.stop --conversation $C
 Stopped. What had arrived is saved: m_zw42ybg6rt, version 1/1.
 Stopping saves waiting, not money: Venice still writes and bills the whole reply, so its cost is added to the conversation once Venice reports it.
 mock charged: 0.00062880
@@ -53,12 +53,12 @@ mock charged: 0.00062880
 #   data/users/dev-t03-tri-enc and .run/server.log, and 0 ERROR lines
 
 # QA-3 (before: the steer silently became "" / "Rewrite it.")
-$ ./ss conversation.update --id $C --templates.steer ""
+$ ./sst conversation.update --id $C --templates.steer ""
 error: Invalid arguments for conversation.update: templates.steer: The steer template has no {{instruction}}, so your steer would be left out of the request. Put {{instruction}} back in the template, where the text should go.
-$ ./ss conversation.update --id $C --templates.steer "Rewrite it."      → same error, exit 1; the template is unchanged
+$ ./sst conversation.update --id $C --templates.steer "Rewrite it."      → same error, exit 1; the template is unchanged
 
 # QA-4 (before: "...would end with Assistant's own earlier reply...")
-$ ./ss message.regenerate --conversation $C          # the ledger is one lone reply
+$ ./sst message.regenerate --conversation $C          # the ledger is one lone reply
 error: There is nothing for Assistant to answer yet: the request would hold only its system prompt. Write a message for it first.
 ```
 

@@ -12,7 +12,7 @@
     "up:mock": "node scripts/up.ts --mock",
     "down": "node scripts/down.ts",
     "logs": "touch .run/server.log 2>/dev/null; tail -n 100 -F .run/server.log",
-    "ss": "node src/cli/main.ts",
+    "sst": "node src/cli/main.ts",
     "mock": "node src/dev/mock-venice.ts",
     "test": "node --test --test-concurrency=1 \"test/**/*.test.ts\"",
     "typecheck": "tsc --noEmit && npm --prefix web run --silent typecheck",

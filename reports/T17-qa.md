@@ -21,14 +21,14 @@ I'd keep the brain and tighten the "note right before" rule (QA-1). None of this
 
 - **Tests:** `npm test` passes 214/214 and `npm run typecheck` is clean, at 60c46df. I changed no code.
 - **Mock: a scratch server by hand.** Jason's live server on 4747 was left running and untouched (pid 10265, started at 16:57:27 on the committed code).
-  - The mock ran on 4778 and the server on 4777, with `SS_DATA_DIR` and `SS_RUN_DIR` in my scratchpad.
+  - The mock ran on 4778 and the server on 4777, with `SST_DATA_DIR` and `SST_RUN_DIR` in my scratchpad.
   - Users: `qa-t17-a` (plaintext) and `qa-t17-enc` (encrypted).
 - **Migration: T15-era files made by the old code.** I checked out aac80e3 (T16 frontend, schema 6) in a scratch worktree and ran it on 4787 against the same mock and scratch data dir. As `qa-t17-old` I made real T15 fresh takes there:
   - a merged text version and an image version, with the default template;
   - a merged version under a customised template.
   
   Then I loaded them with the current server.
-- **Live: a scratch live server on 4797** (`SS_MODE=live`, scratch data and run dirs), as `qa-t17-live`.
+- **Live: a scratch live server on 4797** (`SST_MODE=live`, scratch data and run dirs), as `qa-t17-live`.
   - The scene was free to build: the preset, the Goat's World Bible as setup, its opener via `message.add --as "Game Master"`, "I walk up to the hooded figure in the corner booth." as the player, and a `(placeholder)` GM reply to take afresh.
   - The idea was the goblins in a trench coat, `--wrap`ped.
 - **Browser:** a quick smoke test in Chrome (DevTools MCP, isolated context) against the scratch mock server. The login picker there listed only my `qa-t17-*` users.
@@ -92,14 +92,14 @@ I'd keep the brain and tighten the "note right before" rule (QA-1). None of this
 The rule "the message right before is already the Muse's note, so give it a new version" matches any text message by the brain called Muse. A brain called Muse that is something else, such as a poet in Jason's own campaign or one in an older file, loses its reply: the fresh take's idea becomes that message's active version. From then on every brain reads the note in its place, and the poem is gone from every request.
 
 ```
-./ss conversation.create --title Poet --system-prompt "You help."
-./ss brain.add --name Muse --system-prompt "You are a poet who writes four-line poems."
-./ss turn --brain Muse --content "Write me a poem."
-./ss turn --brain Assistant
-./ss message.regenerate --thought "Critique the poem kindly."
-./ss prompt.preview --json | jq -c '[.body.messages[]|[.role,.content[0:70]]]'
+./sst conversation.create --title Poet --system-prompt "You help."
+./sst brain.add --name Muse --system-prompt "You are a poet who writes four-line poems."
+./sst turn --brain Muse --content "Write me a poem."
+./sst turn --brain Assistant
+./sst message.regenerate --thought "Critique the poem kindly."
+./sst prompt.preview --json | jq -c '[.body.messages[]|[.role,.content[0:70]]]'
 # → [system], [user "Write me a poem."], [user "<!-- from: Muse -->\nCritique the poem kindly."], [assistant …]
-./ss message.get --message <the poem>   # "2 versions, version 2 active": v1 the poem (generated), v2 "Critique the poem kindly." (authored)
+./sst message.get --message <the poem>   # "2 versions, version 2 active": v1 the poem (generated), v2 "Critique the poem kindly." (authored)
 ```
 
 - **Expected:** a fresh take adds its own note and leaves other messages alone. It should version only a note that is itself a fresh take's or hand-written idea.
@@ -113,8 +113,8 @@ The rule "the message right before is already the Muse's note, so give it a new 
 `upgradeTemplates` runs on every load and on every campaign import, whatever the file's schema version. A conversation already at schema 7 whose thought template you deliberately set back to T15's wording gets the new default back on every read. The file keeps your text, but the app shows and uses the default. That breaks "every word is editable" in a narrow case.
 
 ```
-./ss conversation.update --id c_… --templates.thought $'```hidden\n{{thought}}\n\nThat sounds good, I\'ll respond next.\n```' --json | jq .templates.thought   # your text
-./ss conversation.get --id c_… --json | jq .templates.thought        # "An idea for {{brain}}'s next reply…"
+./sst conversation.update --id c_… --templates.thought $'```hidden\n{{thought}}\n\nThat sounds good, I\'ll respond next.\n```' --json | jq .templates.thought   # your text
+./sst conversation.get --id c_… --json | jq .templates.thought        # "An idea for {{brain}}'s next reply…"
 jq .templates.thought <the file on disk>                              # still your text
 ```
 
@@ -130,9 +130,9 @@ jq .templates.thought <the file on disk>                              # still yo
 `saveMuseNote`'s three mid-flight 409s (`src/commands/chat.ts:353,356,361`) have the same code, but they are nearly unreachable.
 
 ```
-./ss brain.add --name Muse --kind image --system-prompt paint
-./ss turn --content hi
-curl -s -H 'content-type: application/json' -H "cookie: ss_session=<token>" -d '{"conversation":"c_…","thought":"x"}' localhost:4777/api/message.regenerate
+./sst brain.add --name Muse --kind image --system-prompt paint
+./sst turn --content hi
+curl -s -H 'content-type: application/json' -H "cookie: sst_session=<token>" -d '{"conversation":"c_…","thought":"x"}' localhost:4777/api/message.regenerate
 # {"error":{"code":"conflict","message":"A fresh take's note is written by the brain called Muse, and Muse here is an image brain. Rename it …"}}
 ```
 

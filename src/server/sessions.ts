@@ -25,7 +25,7 @@ export type Session = {
 };
 
 /**
- * Why a session a client may still hold is over (T06 frontend). Each is also the `x-ss-session` header a request with
+ * Why a session a client may still hold is over (T06 frontend). Each is also the `x-sst-session` header a request with
  * that token gets, so a tab or a terminal can say what happened instead of guessing. "invalid" (not here) is a token
  * the server never knew or no longer remembers: in practice, one from before a restart.
  */

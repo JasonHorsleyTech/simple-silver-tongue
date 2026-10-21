@@ -65,14 +65,14 @@ const startedView = (s: Started): ImageMessageView => ({ ...viewOf(s.conv, s.mes
 
 /** The CLI's line for a brain a new message made (T16). */
 export const madeLine = (b: Brain, conversationId: string) =>
-  `It made a new brain, ${b.name} (${b.id}), with this message pinned to it. Rename it once you know who it is: ./ss brain.update --conversation ${conversationId} --brain ${b.id} --name "..."`;
+  `It made a new brain, ${b.name} (${b.id}), with this message pinned to it. Rename it once you know who it is: ./sst brain.update --conversation ${conversationId} --brain ${b.id} --name "..."`;
 
 /** The CLI's words for an edit or add of an image message. */
 function paintingLine(r: ImageMessageView): string {
   const v = activeVersion(r.message);
   if (!r.painting) return v.image ? ` It keeps its ${imageLine(v.image)}.` : "";
   const keeps = v.image?.previous ? ` ${v.image.previous.id} stays until it is ready.` : "";
-  return ` Making its image ${r.painting.imageId} with ${r.painting.model}.${keeps} Other brains can go on meanwhile. Watch it: ./ss image.follow --conversation ${r.conversationId} --message ${r.message.id}`;
+  return ` Making its image ${r.painting.imageId} with ${r.painting.model}.${keeps} Other brains can go on meanwhile. Watch it: ./sst image.follow --conversation ${r.conversationId} --message ${r.message.id}`;
 }
 
 const target = { conversation: conversationId, message: messageId };
@@ -101,9 +101,9 @@ Refused while a reply is being generated (it would land after your message, answ
     content: messageText("The message can't be empty", "The message (Markdown; @file.md or - for stdin)"),
   }),
   examples: [
-    './ss message.add --conversation c_k3j9x0q2ma --as "Game Master" --content @opening-scene.md',
-    './ss message.add --conversation c_k3j9x0q2ma --as player --content "I look around the tavern."',
-    './ss message.add --conversation c_k3j9x0q2ma --as Muse --content @idea.md   # a note from the Muse; then turn --brain "Game Master"',
+    './sst message.add --conversation c_k3j9x0q2ma --as "Game Master" --content @opening-scene.md',
+    './sst message.add --conversation c_k3j9x0q2ma --as player --content "I look around the tavern."',
+    './sst message.add --conversation c_k3j9x0q2ma --as Muse --content @idea.md   # a note from the Muse; then turn --brain "Game Master"',
   ],
   handler: async (args, ctx): Promise<ImageMessageView> => {
     const { vault } = ctx.requireSession();
@@ -144,7 +144,7 @@ wording with conversation.update --templates.roll), and every brain reads it fra
 It runs on the honor system: it is an ordinary message, to edit or delete. To roll and have a brain answer in one
 go, use turn --roll. Refused while a reply is being generated.`,
   args: z.object({ conversation: conversationId }),
-  examples: ["./ss message.roll --conversation c_k3j9x0q2ma"],
+  examples: ["./sst message.roll --conversation c_k3j9x0q2ma"],
   handler: async (args, ctx): Promise<MessageView> => {
     const { vault } = ctx.requireSession();
     const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
@@ -157,7 +157,7 @@ go, use turn --roll. Refused while a reply is being generated.`,
   },
   format: (r: MessageView) => {
     const v = activeVersion(r.message);
-    return `${v.roll ? rollLabel(v.roll) : v.content}\nAdded ${r.message.id} (your roll). Every brain sees it from the next request. Have a brain answer it: ./ss turn --conversation ${r.conversationId} --brain <name>`;
+    return `${v.roll ? rollLabel(v.roll) : v.content}\nAdded ${r.message.id} (your roll). Every brain sees it from the next request. Have a brain answer it: ./sst turn --conversation ${r.conversationId} --brain <name>`;
   },
 });
 
@@ -167,7 +167,7 @@ export const messageGet = command({
 The active version is the one every brain sees. Switch with message.select-version. Hidden notes fold to one
 line: --reveal shows them.`,
   args: z.object(target),
-  examples: ["./ss message.get --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a"],
+  examples: ["./sst message.get --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a"],
   handler: async (args, ctx): Promise<MessageView> => {
     const conv = await loadConversation(ctx.requireSession().vault, args.conversation);
     return viewOf(conv, findMessage(conv, args.message));
@@ -189,8 +189,8 @@ While this version's image is still being made, its prompt can't be edited (409)
     content: messageText("The new text can't be empty. To remove a message, delete it", "The new text (Markdown; @file.md or - for stdin)"),
   }),
   examples: [
-    './ss message.edit --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --content "I order the plum wine."',
-    "./ss message.edit --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --content @fixed.md",
+    './sst message.edit --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --content "I order the plum wine."',
+    "./sst message.edit --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --content @fixed.md",
   ],
   handler: async (args, ctx): Promise<ImageMessageView> => {
     const { vault } = ctx.requireSession();
@@ -224,7 +224,7 @@ that brain has never spoken; one that has spoken stays and only loses the pin. T
 An image message's image files (every version's) are deleted with it. Refused while a reply is being generated,
 and while any of the message's images is still being made (Venice is making and billing it: wait for it to land).`,
   args: z.object(target),
-  examples: ["./ss message.delete --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a"],
+  examples: ["./sst message.delete --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a"],
   handler: async (args, ctx) => {
     const { vault } = ctx.requireSession();
     const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
@@ -278,7 +278,7 @@ Refused while a reply is being generated.`,
     ...target,
     version: z.number().int().min(1).describe("Version number, from 1 (the original)"),
   }),
-  examples: ["./ss message.select-version --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --version 2"],
+  examples: ["./sst message.select-version --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --version 2"],
   handler: async (args, ctx): Promise<MessageView> => {
     const { vault } = ctx.requireSession();
     const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
@@ -319,8 +319,8 @@ being generated.`,
     as: authorRef.describe(`Who said it now: "${PLAYER}" (you), or a brain's name or id`),
   }),
   examples: [
-    './ss message.set-author --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --as "Character 2"',
-    "./ss message.set-author --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --as player",
+    './sst message.set-author --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --as "Character 2"',
+    "./sst message.set-author --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --as player",
   ],
   handler: async (args, ctx): Promise<MessageView & { from: string; changed: boolean; museAdded?: Brain }> => {
     const { vault } = ctx.requireSession();

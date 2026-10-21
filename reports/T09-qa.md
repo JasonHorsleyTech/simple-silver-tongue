@@ -73,7 +73,7 @@ The live run also had a roll-and-send to the **Dice Master**: it rolled 12, and 
   - **Encrypted:** I decrypted a conversation through `unlockUser` + `readJson`, removed its roll template, wrote it back as schema 2 (still `SSENC1` on disk), and loaded it. `conversation.get` shows schema 3 with the default, `prompt.preview --roll` shows the `{{roll}}` line, and `turn --roll` works. Cloning a schema-2 source gives a schema-3 clone.
 - **Encryption on disk:** I used a unique phrase in the roll template and the typed text (`ZEBRAPHRASE … QUOKKA`, `PANGOLINWORD`), plus "rolled a d20". None of them appear in `data/users/qa-t09-enc/` or `.run/`. `.run/server.log` holds no message text and no stack traces. The 409s are logged as `message.roll failed: 409 conflict` only.
 - **CLI:**
-  - `SS_CONVERSATION` fills in `message.roll`'s `--conversation`.
+  - `SST_CONVERSATION` fills in `message.roll`'s `--conversation`.
   - `message.roll --content` is a usage error (exit 2).
   - `--no-roll` and `--roll=false` preview no roll.
   - `help turn`, `help message.roll` and the command list all describe the roll.
@@ -85,9 +85,9 @@ The live run also had a roll-and-send to the **Dice Master**: it rolled 12, and 
 
 **Repro (mock):**
 ```
-./ss turn --conversation c_… --brain "Game Master" --roll          # 🎲 d20: 12
-./ss message.edit --conversation c_… --message m_<roll> --content '🎲 I rolled a d20: **3**'
-./ss conversation.get --id c_…
+./sst turn --conversation c_… --brain "Game Master" --roll          # 🎲 d20: 12
+./sst message.edit --conversation c_… --message m_<roll> --content '🎲 I rolled a d20: **3**'
+./sst conversation.get --id c_…
   ── you · m_<roll> · 🎲 d20: 12 · edited ──
   🎲 I rolled a d20: **3**
 ```
@@ -116,11 +116,11 @@ This is a nit because the duplicate is visible (the CLI prints the second `🎲 
 
 **Repro (mock):**
 ```
-./ss prompt.preview --conversation c_… --content 'I carve "{{roll}}" into the table.' --roll
+./sst prompt.preview --conversation c_… --content 'I carve "{{roll}}" into the table.' --roll
   Note: The d20 isn't rolled yet. When you send, the server rolls it and puts the number (1 to 20) where {{roll}} is; ...
   I carve "{{roll}}" into the table.
   🎲 I rolled a d20: **{{roll}}**
-./ss turn --conversation c_… --content 'I carve "{{roll}}" into the table.' --roll
+./sst turn --conversation c_… --content 'I carve "{{roll}}" into the table.' --roll
   sent: I carve "{{roll}}" into the table.  /  🎲 I rolled a d20: **8**
 ```
 

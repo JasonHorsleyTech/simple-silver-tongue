@@ -73,7 +73,7 @@ export function LiveReply({
         {live.image ? (
           <LiveImage prompt={live.content} aspect={expectedAspect(brain)} color={brain?.color} failed={failed} />
         ) : live.content ? (
-          <div className={failed ? "opacity-55" : "ss-caret"}>
+          <div className={failed ? "opacity-55" : "sst-caret"}>
             <MessageText text={live.content} writing={!failed} empty={<TypingDots />} color={brain?.color} />
           </div>
         ) : !failed && live.phase !== "reasoning" ? (

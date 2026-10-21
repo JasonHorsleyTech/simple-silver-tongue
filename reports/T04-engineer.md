@@ -26,7 +26,7 @@ No design concern. The T02 prompt builder already did what design.md says for se
   - Every setup command returns the whole ordered list.
 - **`message.add --as player|<brain>`** appends hand-written words with `source: "authored"`, e.g. the GM's opener. That brain sees them as its own `assistant` message; everyone else sees them framed with its name. Refused (409) while a reply is being generated.
 - **`turn --brain` / `prompt.preview --brain`** were already there (T02). The help text now says that any brain can take any turn and that an empty message makes it just respond.
-- **Help lists nested fields.** `./ss help brain.update` now lists each field of an object argument as its own flag (`--final-reminder.content`, `--tool.description`, `--reasoning.effort none|...`), instead of a bare `<json>`. That makes the tool text and reminder discoverable from the terminal. `conversation.update`'s settings and templates benefit too.
+- **Help lists nested fields.** `./sst help brain.update` now lists each field of an object argument as its own flag (`--final-reminder.content`, `--tool.description`, `--reasoning.effort none|...`), instead of a bare `<json>`. That makes the tool text and reminder discoverable from the terminal. `conversation.update`'s settings and templates benefit too.
 - **The pre-fill text** (`REMINDER_EXAMPLE`, `DEFAULT_TOOL`, `setupPrefill`) lives in the dependency-free `src/conversations/wording.ts`, so the browser can show the server's own words, as it does for `STOP_BILL_NOTE`.
 - **The `conversation.get` text view** marks hand-written brain lines "written by you", flags brains whose reminder is on, and shows setup ids.
 
@@ -50,32 +50,32 @@ No design concern. The T02 prompt builder already did what design.md says for se
 
 **The D&D table:**
 ```
-$ C=$(./ss conversation.create --title "Gilded Goat (mock)" --system-prompt "You are the GM of a D&D one-shot in a tavern. ..." --json | jq -r .id)
-$ ./ss brain.update --conversation $C --name "Game Master"
+$ C=$(./sst conversation.create --title "Gilded Goat (mock)" --system-prompt "You are the GM of a D&D one-shot in a tavern. ..." --json | jq -r .id)
+$ ./sst brain.update --conversation $C --name "Game Master"
 Updated brain Game Master (b_3bvhmjagm5) · text · reasoning off · final reminder off · system prompt 101 chars
-$ ./ss setup.add --conversation $C
+$ ./sst setup.add --conversation $C
 ── 1. World Bible (s_vgcmfiryba) · 33 chars · changed ──
 <!-- This is the World Bible. -->
-$ ./ss setup.update --conversation $C --setup "world bible" --content $'<!-- This is the World Bible. -->\nThe Gilded Goat is a smoky tavern in Saltmarsh. ...'
-$ ./ss message.add --conversation $C --as "Game Master" --content "Rain hammers the shutters of the Gilded Goat. ..."
+$ ./sst setup.update --conversation $C --setup "world bible" --content $'<!-- This is the World Bible. -->\nThe Gilded Goat is a smoky tavern in Saltmarsh. ...'
+$ ./sst message.add --conversation $C --as "Game Master" --content "Rain hammers the shutters of the Gilded Goat. ..."
 Added m_9eqs2lfbkg (in Game Master's mouth). Every brain sees it from the next request.
-$ ./ss brain.add --conversation $C --name "Dice Master" --system-prompt "You are the Dice Master. ..."
+$ ./sst brain.add --conversation $C --name "Dice Master" --system-prompt "You are the Dice Master. ..."
 Added brain Dice Master (b_k3vtveni4d) · text · reasoning off · final reminder on
-$ ./ss brain.list --conversation $C        (excerpt)
+$ ./sst brain.list --conversation $C        (excerpt)
 ── Dice Master (b_k3vtveni4d) · text · reasoning off · final reminder on · #f59e0b · 0 messages ──
 Final reminder (on: sent last):
 <!-- System reminder -->
 Stay in your role: do only the job your system prompt describes, and reply only as yourself.
-$ ./ss brain.update --conversation $C --brain "dice master" --final-reminder.content $'<!-- System reminder -->\nYou are the Dice Master: only call for checks and roll dice. Never narrate the story.'
+$ ./sst brain.update --conversation $C --brain "dice master" --final-reminder.content $'<!-- System reminder -->\nYou are the Dice Master: only call for checks and roll dice. Never narrate the story.'
 ```
 
 **Player → GM → player → Dice Master → player → GM:**
 ```
-$ ./ss turn --conversation $C --content "I walk over and sit across from the hooded figure."
+$ ./sst turn --conversation $C --content "I walk over and sit across from the hooded figure."
 [Game Master] MOCK reply to brain "You are the GM of a D&D one-sh"; saw 4 messages; ...
-$ ./ss turn --conversation $C --brain "Dice Master" --content "I try to read the stranger's intentions."
+$ ./sst turn --conversation $C --brain "Dice Master" --content "I try to read the stranger's intentions."
 [Dice Master] MOCK reply to brain "You are the Dice Master. When "; saw 7 messages; last: "<!-- System reminder --> You a…ice. Never narrate the story."
-$ ./ss turn --conversation $C --content "I nod and order two ales."
+$ ./sst turn --conversation $C --content "I nod and order two ales."
 [Game Master] MOCK reply to brain "You are the GM of a D&D one-sh"; saw 8 messages; ...
 ```
 
@@ -98,20 +98,20 @@ The Dice Master gets its own system prompt, then the World Bible. GM lines and p
 
 **Preview == send** (a Dice Master turn), then **an edit**, **a third brain**, **a new GM prompt**:
 ```
-$ ./ss prompt.preview --conversation $C --brain "Dice Master" --content "I attack the figure!" --json | jq -S .body > pv.json
-$ ./ss turn --conversation $C --brain "Dice Master" --content "I attack the figure!"
+$ ./sst prompt.preview --conversation $C --brain "Dice Master" --content "I attack the figure!" --json | jq -S .body > pv.json
+$ ./sst turn --conversation $C --brain "Dice Master" --content "I attack the figure!"
 $ curl -s localhost:4748/_mock/requests | jq -S '[.requests[]|select(.path=="/chat/completions")][0].body' > sent.json
 $ cmp pv.json sent.json && echo IDENTICAL
 IDENTICAL
-$ ./ss message.edit --conversation $C --message m_9eqs2lfbkg --content "EDITED: Thunder rolls. The hooded figure slides a silver coin across the table."
-$ ./ss prompt.preview --conversation $C --brain "Dice Master" --json | jq -r '.body.messages[2].content'
+$ ./sst message.edit --conversation $C --message m_9eqs2lfbkg --content "EDITED: Thunder rolls. The hooded figure slides a silver coin across the table."
+$ ./sst prompt.preview --conversation $C --brain "Dice Master" --json | jq -r '.body.messages[2].content'
 <!-- from: Game Master -->
 EDITED: Thunder rolls. The hooded figure slides a silver coin across the table.
-$ ./ss brain.add --conversation $C --name "Joke Teller" --system-prompt "You are the Joke Teller, a halfling bard. ..."
-$ ./ss turn --conversation $C --brain "Joke Teller"                      # empty message: it just responds
+$ ./sst brain.add --conversation $C --name "Joke Teller" --system-prompt "You are the Joke Teller, a halfling bard. ..."
+$ ./sst turn --conversation $C --brain "Joke Teller"                      # empty message: it just responds
 [Joke Teller] MOCK reply to brain "You are the Joke Teller, a hal"; saw 10 messages; last: "<!-- System reminder --> Stay …, and reply only as yourself."
-$ ./ss brain.update --conversation $C --brain "Game Master" --system-prompt "You are the GM. EDITED PROMPT: keep it grim."
-$ ./ss turn --conversation $C --content "I pocket the coin."
+$ ./sst brain.update --conversation $C --brain "Game Master" --system-prompt "You are the GM. EDITED PROMPT: keep it grim."
+$ ./sst turn --conversation $C --content "I pocket the coin."
 [Game Master] MOCK reply to brain "You are the GM. EDITED PROMPT:"; saw 11 messages; ...
 ```
 
@@ -126,51 +126,51 @@ Deep campaign (c_aep8db198o) · deepseek-v4-1-flash · 53 messages · $0.008
 
 **Regenerate stays in the message's brain**, with its reminder before the steer:
 ```
-$ ./ss message.regenerate --conversation $C --steer "Roll a natural 1."   # the Dice Master's reply is last
+$ ./sst message.regenerate --conversation $C --steer "Roll a natural 1."   # the Dice Master's reply is last
 ... last three messages: [assistant (its reply), user "<!-- System reminder -->...", user "<!-- Behind-the-scenes direction ..."]
 [Dice Master · version 2/2 · steered · 456 in / 35 out · $0.00018]
 ```
 
 **Refusals:**
 ```
-$ ./ss brain.delete --conversation $C --brain "Dice Master"
+$ ./sst brain.delete --conversation $C --brain "Dice Master"
 error: Dice Master has 1 message in this conversation, so it can't be deleted: the other brains still see it under its name. Rename it or change its system prompt instead.
-$ ./ss brain.delete --conversation $C --brain "Game Master"
+$ ./sst brain.delete --conversation $C --brain "Game Master"
 error: Game Master is the default brain. Make another brain the default first (brain.set-default), then delete it.
-$ ./ss brain.update --conversation $C --brain "Joke Teller" --kind image
+$ ./sst brain.update --conversation $C --brain "Joke Teller" --kind image
 error: Joke Teller has 1 message, so it stays a text brain. Add a new image brain instead.
-$ ./ss brain.add --conversation $C --name "dice master" --system-prompt x
+$ ./sst brain.add --conversation $C --name "dice master" --system-prompt x
 error: Another brain is already called "Dice Master".
-$ ./ss brain.add --conversation $C --name "Player" --system-prompt x
+$ ./sst brain.add --conversation $C --name "Player" --system-prompt x
 error: "Player" is reserved: message.add --as player means you.
-$ ./ss turn --conversation $C --brain "Bard" --content x
+$ ./sst turn --conversation $C --brain "Bard" --content x
 error: No brain "Bard" in this conversation. Brains: Game Master, Dice Master, Joke Teller.
-$ ./ss turn --conversation $C --brain "Scene Painter"           # an image brain, created and previewable already
+$ ./sst turn --conversation $C --brain "Scene Painter"           # an image brain, created and previewable already
 error: "Scene Painter" is an image brain; image replies arrive in T05.
-$ ./ss brain.update --conversation $C --brain "Scene Painter" --kind text; ./ss brain.update ... --safe-mode
+$ ./sst brain.update --conversation $C --brain "Scene Painter" --kind text; ./sst brain.update ... --safe-mode
 error: Safe mode and tool text are for image brains, and Scene Painter is a text brain. Pass --kind image too.
-$ ./ss message.add --conversation $C --as player --content "  "
+$ ./sst message.add --conversation $C --as player --content "  "
 error: Invalid arguments for message.add: content: The message can't be empty
 ```
 
 **Mid-reply** (`Bard` with its reminder off, so the mock sees `MOCK_SLOW`; `Spare` unused):
 ```
-$ ./ss turn --conversation $C --brain Bard --content "MOCK_SLOW sing us a song" &
-$ ./ss brain.delete --conversation $C --brain Bard
+$ ./sst turn --conversation $C --brain Bard --content "MOCK_SLOW sing us a song" &
+$ ./sst brain.delete --conversation $C --brain Bard
 error: Can't delete Bard: Bard is writing a reply right now. Wait for it to finish, or stop it, then try again.
-$ ./ss brain.update --conversation $C --brain Bard --kind image
+$ ./sst brain.update --conversation $C --brain Bard --kind image
 error: Can't change the kind of Bard: Bard is writing a reply right now. ...
-$ ./ss message.add --conversation $C --as player --content "hi"
+$ ./sst message.add --conversation $C --as player --content "hi"
 error: Conversation c_4np0e9z756 is busy: a reply is being generated from the messages as they are now. ...
-$ ./ss brain.delete --conversation $C --brain Spare
+$ ./sst brain.delete --conversation $C --brain Spare
 Deleted brain Spare (b_i0nuoqw8j7). Brains left: Game Master, Dice Master, Joke Teller, Bard.
-$ ./ss brain.update --conversation $C --brain Bard --system-prompt "You sing badly."     → ok
-$ ./ss setup.add --conversation $C --label "House rules" --content "Keep replies short." --position 1   → ok
-$ ./ss generation.stop --conversation $C
+$ ./sst brain.update --conversation $C --brain Bard --system-prompt "You sing badly."     → ok
+$ ./sst setup.add --conversation $C --label "House rules" --content "Keep replies short." --position 1   → ok
+$ ./sst generation.stop --conversation $C
 Stopped. What had arrived is saved: m_0wiepqnqqe, version 1/1.
-$ ./ss brain.delete --conversation $C --brain Bard
+$ ./sst brain.delete --conversation $C --brain Bard
 error: Bard has 1 message in this conversation, so it can't be deleted: ...
-$ ./ss setup.move --conversation $C --setup "house rules" --position 3
+$ ./sst setup.move --conversation $C --setup "house rules" --position 3
 error: Position 3 is past the end: there are 2 places.
 ```
 

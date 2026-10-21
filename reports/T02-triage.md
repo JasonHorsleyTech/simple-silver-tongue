@@ -15,7 +15,7 @@ No live calls (spend $0.00). The new default sends exactly the body QA already m
 | **QA-5** · minor · the refusal lives only in `planTurn`, and a blank steer is silently dropped | **FIX** (structural) | (1) `reviewBody(brain, body, model)` in `turn.ts` is the one place a plan gets its `refusal` and `notes`. `planTurn` uses it, and the T03 ticket now says `planRegenerate` must too. (2) `openChatStream` calls a new `assertAnswerable(body)` next to `assertSendable`, so even a plan that forgets can't send such a body. (3) `buildRequest` throws `bad_request` on a blank `steer` instead of dropping it. T03 should trim the user's `--steer` and treat blank as no steer (noted on T03). Tests: pure, plus `venice-chat.test.ts` (the send path refuses with nothing sent). |
 | **QA-6** · minor · live, `max_tokens` counts reasoning, so a reply can be empty | **FIX** (cheap) | The mock now spends `max_tokens` on reasoning words first, then content, as live, so the empty reply is reproducible for free (mock test and CLI test). The empty reply **is saved as it came**: it was paid for, its reasoning is worth seeing, and T03's regenerate and delete can replace it. Dropping it would also break the "the reply finishes and is saved" contract. The `done` note now says `cut off by max_tokens while reasoning: no reply text` (or `no reply text` with no cut). Defaulting reasoning to off makes this rare. The T02 frontend scope now asks for an explicit "no reply text" bubble. |
 | **QA-7** · nit · `relayReply` merges parallel tool-call arguments | **DEFER → T05** | Unreachable in T02: `turn` refuses image brains, and text brains have no tools. What a second call should mean (keep the first, or one image per call) is a T05 product decision, and T05 reworks `tool_args` streaming anyway. Logged under T05 **Deferred in**, with a caution not to send `parallel_tool_calls` until a live call shows Venice honours it. |
-| **QA-8** · nit · broken-stream errors don't say what happened or what to do | **FIX** (cheap) | When Venice drops mid-reply, the `turn` error now ends with "Your message is saved; the reply isn't. To retry, run turn again without --content." (or "No reply was saved." for a no-content turn). The CLI turns undici's bare `terminated` into "lost the connection to the server mid-stream (did it restart?). Check what was saved with ./ss conversation.get." Both are a few lines, and the first one helps the web chat view too. |
+| **QA-8** · nit · broken-stream errors don't say what happened or what to do | **FIX** (cheap) | When Venice drops mid-reply, the `turn` error now ends with "Your message is saved; the reply isn't. To retry, run turn again without --content." (or "No reply was saved." for a no-content turn). The CLI turns undici's bare `terminated` into "lost the connection to the server mid-stream (did it restart?). Check what was saved with ./sst conversation.get." Both are a few lines, and the first one helps the web chat view too. |
 
 ## Design concern
 
@@ -35,34 +35,34 @@ QA's own commands, rerun. QA-2 was reproduced on the old code first: the player 
 
 ```
 $ # QA-2, after the fix: CLI killed 1 s in while the mock is SIGSTOPped
-$ kill -STOP $MP; ./ss turn --conversation $C --content "early bye" & sleep 1; kill %1; kill -CONT $MP; sleep 3
-$ ./ss conversation.get --id $C
+$ kill -STOP $MP; ./sst turn --conversation $C --content "early bye" & sleep 1; kill %1; kill -CONT $MP; sleep 3
+$ ./sst conversation.get --id $C
 ── you · m_obw6ma3m3c ──  early bye
 ── Assistant · m_nzsqgid09o · $0.000044 ──  MOCK reply to brain "Sys."; saw 2 messages; ...
-$ ./ss turn --conversation $C --content again        → exit 0
-$ ./ss conversation.delete --id $C                    → Deleted.
+$ ./sst turn --conversation $C --content again        → exit 0
+$ ./sst conversation.delete --id $C                    → Deleted.
   (same with curl --max-time 1, curl exit 28; same for an encrypted user, the file is SSENC1 and decrypts;
    a disconnect 1.2 s into a MOCK_SLOW reply still gets 409 while running, then saves, then the lock is free)
 
 $ # QA-1
-$ ./ss conversation.create --title qa1 --system-prompt "You are terse."; ./ss conversation.get --id $C | sed -n 2p
+$ ./sst conversation.create --title qa1 --system-prompt "You are terse."; ./sst conversation.get --id $C | sed -n 2p
 Brains: Assistant (default) [b_qj34mh6gdb, text, reasoning off]
-$ ./ss prompt.preview --conversation $C --content Hi | head -2      → no note, "reasoning_effort":"none"
-$ ./ss brain.update --conversation $C --reasoning.enabled
+$ ./sst prompt.preview --conversation $C --content Hi | head -2      → no note, "reasoning_effort":"none"
+$ ./sst brain.update --conversation $C --reasoning.enabled
 Updated brain Assistant (b_qj34mh6gdb) · reasoning low · final reminder off · system prompt 14 chars
 Reasoning on: the provider adds a small hidden instruction we can't see or edit.
-$ ./ss prompt.preview --conversation $C --content Hi | head -2
+$ ./sst prompt.preview --conversation $C --content Hi | head -2
 Exact request for brain "Assistant" (b_qj34mh6gdb): POST /chat/completions
 Note: Reasoning on: the provider adds a small hidden instruction we can't see or edit.
-$ ./ss prompt.preview --conversation $C --content Hi --json | jq -c '{notes, effort: .body.reasoning_effort}'
+$ ./sst prompt.preview --conversation $C --content Hi --json | jq -c '{notes, effort: .body.reasoning_effort}'
 {"notes":["Reasoning on: the provider adds a small hidden instruction we can't see or edit."],"effort":"low"}
 
 $ # QA-3
-$ ./ss turn --conversation $I
+$ ./sst turn --conversation $I
 error: There is nothing for Assistant to answer yet: the request would hold only its system prompt. Send a message with --content.   [exit 1, nothing upstream]
 
 $ # QA-4 (a truncated file plus a partial {"id","title"} doc)
-$ ./ss conversation.list
+$ ./sst conversation.list
 ID            TITLE    MESSAGES  COST  MODEL                UPDATED
 c_tkgv6nreta  sysonly  0         $0    deepseek-v4-1-flash  2026-10-14 06:54:21
 ...
@@ -71,22 +71,22 @@ Unreadable conversation files (2):
   c_partial01: not a conversation document (fields are missing)        [exit 0]
 
 $ # QA-6 (max_tokens 5, reasoning on)
-$ ./ss turn --conversation $D --content Hi
+$ ./sst turn --conversation $D --content Hi
 MOCK reasoning (effort: low) over
 [Assistant · 11 in / 9 out · $0.000014 · cut off by max_tokens while reasoning: no reply text]
 saved: {"content":"","finishReason":"length","reasoning":"MOCK reasoning (effort: low) over "}
 
 $ # QA-8
-$ ./ss turn --conversation $D --content "MOCK_MIDSTREAM_ERROR halfway"
+$ ./sst turn --conversation $D --content "MOCK_MIDSTREAM_ERROR halfway"
 error: The Venice stream broke off (UND_ERR_SOCKET). Your message is saved; the reply isn't. To retry, run turn again without --content.
 $ # npm run up:mock during a MOCK_SLOW turn:
-error: lost the connection to the server mid-stream (did it restart?). Check what was saved with ./ss conversation.get.   (no .tmp files left)
+error: lost the connection to the server mid-stream (did it restart?). Check what was saved with ./sst conversation.get.   (no .tmp files left)
 
 $ # Acceptance: 3 turns stream and save; the preview equals the send byte for byte; the ledger is complete
-$ ./ss turn ... x3  → saw 2 / 4 / 6 messages, each with an "[Assistant · N in / M out · $…]" note
+$ ./sst turn ... x3  → saw 2 / 4 / 6 messages, each with an "[Assistant · N in / M out · $…]" note
 $ cmp preview.json sent.json && echo IDENTICAL        (content: 'Fourth: {{brain}} $& and "quotes"')
 IDENTICAL
-$ ./ss conversation.get --id $C --json | jq -r '[.messages[].author.type] | join(" ")'
+$ ./sst conversation.get --id $C --json | jq -r '[.messages[].author.type] | join(" ")'
 player brain player brain player brain
 ```
 

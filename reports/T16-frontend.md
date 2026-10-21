@@ -97,7 +97,7 @@ Afterwards, `prompt.preview --brain Alice` had her sheet pinned at index 1, her 
 ## Verified in Chrome (DevTools MCP, isolated context, scratch server)
 
 Every flow was on the mock. The setup:
-- My own server on **4817** and mock on **4818**, with `SS_DATA_DIR`, `SS_RUN_DIR` and `SS_WEB_DIST` in my scratchpad (the 2026-10-15 lesson).
+- My own server on **4817** and mock on **4818**, with `SST_DATA_DIR`, `SST_RUN_DIR` and `SST_WEB_DIST` in my scratchpad (the 2026-10-15 lesson).
 - User `dev-t16-ui`, the only user in that data dir.
 - The web app built into the scratch `dist` with `vite build --outDir`.
 

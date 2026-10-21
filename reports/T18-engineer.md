@@ -47,55 +47,55 @@ A brain may now name its own text model (`Brain.textModel`), and an image brain 
 Mock: a scratch server on :4857 and mock on :4858, with their own data/run dirs, user `dev-t18-mock`, the Tabletop RPG preset. The conversation is on `venice-uncensored-1-2`, standing in for Grok (the mock has no Grok).
 
 ```
-$ ./ss brain.update --brain "Co-GM" --text-model z-ai-glm-5-3
+$ ./sst brain.update --brain "Co-GM" --text-model z-ai-glm-5-3
 Updated brain Co-GM (b_mgqd22yxf6) · text · model z-ai-glm-5-3 (its own) · reasoning off · …
-$ ./ss brain.update --brain "Scene Painter" --image-model krea-2-turbo
+$ ./sst brain.update --brain "Scene Painter" --image-model krea-2-turbo
 Updated brain Scene Painter (b_sse2fs605t) · image · image model krea-2-turbo (its own) · …
-$ ./ss brain.list | grep "^──"
+$ ./sst brain.list | grep "^──"
 ── Game Master (b_…) · text · default · model venice-uncensored-1-2 (the conversation's) · …
 ── Co-GM (b_…) · text · model z-ai-glm-5-3 (its own) · …
 ── Scene Painter (b_…) · image · model venice-uncensored-1-2 (the conversation's) · image model krea-2-turbo (its own) · …
 ── Character Portraitist (b_…) · image · model venice-uncensored-1-2 (the conversation's) · image model z-image-turbo (the conversation's) · …
-$ ./ss prompt.preview --brain "Co-GM" --content "How far is the drop?"
+$ ./sst prompt.preview --brain "Co-GM" --content "How far is the drop?"
 Exact request for brain "Co-GM" (b_mgqd22yxf6): POST /chat/completions
 Text model: GLM 5.3 (z-ai-glm-5-3), the brain's own; the conversation's is venice-uncensored-1-2.
 Note: GLM 5.3 always reasons: Venice refuses a request with reasoning off (a 400, "thinking-only"). Turn reasoning on for Co-GM.
 {"model":"z-ai-glm-5-3", … "disable_thinking":true …}
-$ ./ss turn --brain "Co-GM" --content "How far is the drop to the harbor?"
-error: Venice 400 on /chat/completions: GLM-5.3 is a thinking-only model; … Turn reasoning on for Co-GM: … ./ss brain.update --brain "Co-GM" --reasoning.enabled.
-$ ./ss brain.update --brain "Co-GM" --reasoning.enabled && ./ss turn --brain "Co-GM" --content "…"
+$ ./sst turn --brain "Co-GM" --content "How far is the drop to the harbor?"
+error: Venice 400 on /chat/completions: GLM-5.3 is a thinking-only model; … Turn reasoning on for Co-GM: … ./sst brain.update --brain "Co-GM" --reasoning.enabled.
+$ ./sst brain.update --brain "Co-GM" --reasoning.enabled && ./sst turn --brain "Co-GM" --content "…"
 [Co-GM · own model z-ai-glm-5-3 · in "Two models"]
 [Co-GM · 984 in / 48 out · $0.002]
-$ ./ss turn --brain "Scene Painter"
+$ ./sst turn --brain "Scene Painter"
 (making image img_vbvgbmrsz9 with krea-2-turbo... the conversation is free meanwhile)
 [Scene Painter · 1076 in / 30 out · $0.00024 · image img_vbvgbmrsz9 done (krea-2-turbo, png, $0.04)]
 mock /image/generate: {"model":"krea-2-turbo","safe_mode":true,"format":"webp","hide_watermark":true,"aspect_ratio":"3:2"}
-$ ./ss conversation.update --settings.text-model deepseek-v4-1-flash
+$ ./sst conversation.update --settings.text-model deepseek-v4-1-flash
 Updated c_4e1k8jgx1f "Two models" · deepseek-v4-1-flash · …
 Brains on a model of their own, which they keep: Co-GM (z-ai-glm-5-3), Scene Painter (images: krea-2-turbo). The others use the conversation's.
-$ ./ss conversation.clone --title "Under abliterated" --text-model abliteration-abliterated-model-large-v2
+$ ./sst conversation.clone --title "Under abliterated" --text-model abliteration-abliterated-model-large-v2
 Cloned into c_1djeak8hhx "Under abliterated" · abliteration-abliterated-model-large-v2 · images z-image-turbo
 Brains: Game Master (default), Co-GM (reasoning low) (its own model z-ai-glm-5-3), …, Scene Painter (image) (its own image model krea-2-turbo), …
 Co-GM, Scene Painter have models of their own and keep them; the rest use the conversation's. …
-$ ./ss conversation.get --json > export.json && ./ss conversation.import --campaign @export.json --json | jq '[.brains[]|{name,textModel,imageModel}]'
+$ ./sst conversation.get --json > export.json && ./sst conversation.import --campaign @export.json --json | jq '[.brains[]|{name,textModel,imageModel}]'
 … {"name":"Co-GM","textModel":"z-ai-glm-5-3"} … {"name":"Scene Painter","imageModel":"krea-2-turbo"} …
-$ ./ss brain.update --brain "Co-GM" --text-model null && ./ss prompt.preview --brain Co-GM --content x | sed -n 2p
+$ ./sst brain.update --brain "Co-GM" --text-model null && ./sst prompt.preview --brain Co-GM --content x | sed -n 2p
 Text model: DeepSeek V4.1 Flash (deepseek-v4-1-flash), the conversation's.
-$ ./ss brain.update --brain "Co-GM" --text-model nope
-error: --text-model: Venice has no text model "nope". ./ss models.list --type text lists the curated ones (--all: every one); any id Venice lists works.
+$ ./sst brain.update --brain "Co-GM" --text-model nope
+error: --text-model: Venice has no text model "nope". ./sst models.list --type text lists the curated ones (--all: every one); any id Venice lists works.
 ```
 
-Live: a scratch live server on :4867 (`SS_MODE=live`, `env -u VENICE_BASE_URL`, its own data/run dirs), user `dev-t18-live`, the Tabletop RPG preset, a three-line harbor World Bible and a GM opener. Jason's scenario: the conversation on Grok 4.7 (image model Krea 2 Turbo), the Co-GM on GLM 5.3 with reasoning low, and the Scene Painter on its own DeepSeek V4.1 Flash and Z-Image Turbo.
+Live: a scratch live server on :4867 (`SST_MODE=live`, `env -u VENICE_BASE_URL`, its own data/run dirs), user `dev-t18-live`, the Tabletop RPG preset, a three-line harbor World Bible and a GM opener. Jason's scenario: the conversation on Grok 4.7 (image model Krea 2 Turbo), the Co-GM on GLM 5.3 with reasoning low, and the Scene Painter on its own DeepSeek V4.1 Flash and Z-Image Turbo.
 
 ```
-$ ./ss turn --content "I walk up to the hooded figure at the bar."
+$ ./sst turn --content "I walk up to the hooded figure at the bar."
 A gloved hand stays on the cup. Under the hood, a pale face, sharp and tired, looks you over once. …
 [Game Master · 2406 in / 187 out · $0.0048]
-$ ./ss turn --brain "Co-GM" --content "How far is the drop from the harbor wall?"
+$ ./sst turn --brain "Co-GM" --content "How far is the drop from the harbor wall?"
 [Co-GM · own model z-ai-glm-5-3 · in "T18 live"]
 From the top of Grey Wick's harbor wall it's about fifteen feet down to the water, more like twenty at low tide …
 [Co-GM · 994 in / 340 out · $0.0036]
-$ ./ss turn --brain "Scene Painter"
+$ ./sst turn --brain "Scene Painter"
 (making image img_dagoccegol with z-image-turbo... the conversation is free meanwhile)
 [Scene Painter · 1417 in / 213 out · $0.00068 · image img_dagoccegol done (z-image-turbo, webp, $0.01)]
 versions: GM model grok-4-7 (reasoning 92, cached 1152) · Co-GM z-ai-glm-5-3 (reasoning 278) · Painter deepseek-v4-1-flash, image z-image-turbo $0.01

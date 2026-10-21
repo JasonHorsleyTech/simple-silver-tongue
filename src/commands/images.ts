@@ -25,7 +25,7 @@ it with --open (a copy in your private temp folder, opened in the default viewer
 Either way the copy is a plain file, readable without your password. An image that is still being made, failed or
 was deleted is a 404.`,
   args: z.object({ id: imageId }),
-  examples: ["./ss image.get --id img_k3j9x0q2ma --open", "./ss image.get --id img_k3j9x0q2ma --out ~/Desktop/scene.webp"],
+  examples: ["./sst image.get --id img_k3j9x0q2ma --open", "./sst image.get --id img_k3j9x0q2ma --out ~/Desktop/scene.webp"],
   handler: async (args, ctx) => {
     const file = await readImageFile(ctx.requireSession().vault, args.id);
     if (!file) throw notFound(`No image ${args.id}: it is still being made, it failed, or it was deleted. conversation.get shows each image's state.`);
@@ -45,7 +45,7 @@ away: retrying it makes a new version with the same prompt, so you keep both and
 Streams like turn: image_pending, then image_done or image_error, then done. It doesn't hold the conversation, so
 other brains can take their turn meanwhile; it is refused (409) while this version's own image is still being made.`,
   args: target,
-  examples: ["./ss image.retry --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a"],
+  examples: ["./sst image.retry --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a"],
   async *handler(args, ctx) {
     const { vault } = ctx.requireSession();
     const s = await retryImage(vault, ctx.deps.venice, args.conversation, args.message); // 409 / 400 before any event
@@ -66,7 +66,7 @@ edit or an add, after a reload, from another terminal. It streams image_pending 
 being made, then image_done or image_error as each lands, and ends with done and the message as saved. When none
 is being made it ends at once with done and the message as it is, so a result that landed first is never missed.`,
   args: z.object({ conversation: conversationId, message: messageId.describe("The image message (m_...)") }),
-  examples: ["./ss image.follow --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a"],
+  examples: ["./sst image.follow --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a"],
   async *handler(args, ctx) {
     const { vault } = ctx.requireSession();
     const { message, spentUsd } = yield* followImages(vault, args.conversation, args.message);

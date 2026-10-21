@@ -1,6 +1,6 @@
 /**
  * The commands the web app calls, with their argument and result shapes. They mirror the server's zod
- * schemas (`./ss help <name>` shows each one). When a ticket gives the UI a new command, add a line here:
+ * schemas (`./sst help <name>` shows each one). When a ticket gives the UI a new command, add a line here:
  * the client is typed from these maps, so a typo in a command name or an argument is a type error.
  *
  * The conversation document and model types are the server's own (type-only imports of dependency-free
@@ -114,7 +114,7 @@ export { formatDiagnostics, type ChatDiagnostics } from "../../../src/venice/dia
 
 /**
  * T06 triage: the server ends a session after `minutes` without activity, `secondsLeft` from now if nothing uses it
- * (auth.whoami doesn't count as use). Null: sessions never time out (SS_SESSION_IDLE_MINUTES=0).
+ * (auth.whoami doesn't count as use). Null: sessions never time out (SST_SESSION_IDLE_MINUTES=0).
  */
 export type Idle = { minutes: number; secondsLeft: number | null } | null;
 export type User = { username: string; encrypted: boolean; idle: Idle };
@@ -134,7 +134,7 @@ export type Health = {
   uptimeSec: number;
   web: "built" | "not built";
   commands: number;
-  /** T06 frontend: the idle limit (SS_SESSION_IDLE_MINUTES; 0 = never), for the login screen after a reload. */
+  /** T06 frontend: the idle limit (SST_SESSION_IDLE_MINUTES; 0 = never), for the login screen after a reload. */
   sessionIdleMinutes: number;
 };
 

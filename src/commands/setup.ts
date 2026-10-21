@@ -46,7 +46,7 @@ const listing = (conv: Conversation, extra: Partial<SetupListing> = {}): SetupLi
 
 function formatListing(r: SetupListing): string {
   const head = r.deleted ? `Deleted setup message ${r.deleted}.` : r.changed ? `Saved setup message ${r.changed}.` : "";
-  if (!r.setup.length) return [head, "No setup messages. Add one: ./ss setup.add --conversation <id> --content @world-bible.md"].filter(Boolean).join("\n");
+  if (!r.setup.length) return [head, "No setup messages. Add one: ./sst setup.add --conversation <id> --content @world-bible.md"].filter(Boolean).join("\n");
   const rows = r.setup.map((s, i) => {
     const sent = s.content.trim() ? `${s.role} · ${s.content.length} chars` : `${s.role} · blank: not sent`;
     return `── ${i + 1}. ${s.label} (${s.id}) · ${sent}${s.id === r.changed ? " · changed" : ""} ──\n${s.content}`;
@@ -58,7 +58,7 @@ export const setupList = command({
   name: "setup.list",
   description: `Show a conversation's setup messages (World Bible, ...) in the order every brain sees them, in full.`,
   args: z.object({ conversation: conversationId }),
-  examples: ["./ss setup.list --conversation c_k3j9x0q2ma"],
+  examples: ["./sst setup.list --conversation c_k3j9x0q2ma"],
   handler: async (args, ctx): Promise<SetupListing> => listing(await loadConversation(ctx.requireSession().vault, args.conversation)),
   format: formatListing,
 });
@@ -78,9 +78,9 @@ it as its own words, for a staged exchange) or system (a second system message, 
     position: position.optional().describe("Where it goes, from 1 (default: last)"),
   }),
   examples: [
-    "./ss setup.add --conversation c_k3j9x0q2ma --content @world-bible.md",
-    './ss setup.add --conversation c_k3j9x0q2ma --label "House rules" --content "Keep replies under 150 words." --position 1',
-    './ss setup.add --conversation c_k3j9x0q2ma --label "Rules, understood" --role assistant --content "Understood. I will keep to those rules."',
+    "./sst setup.add --conversation c_k3j9x0q2ma --content @world-bible.md",
+    './sst setup.add --conversation c_k3j9x0q2ma --label "House rules" --content "Keep replies under 150 words." --position 1',
+    './sst setup.add --conversation c_k3j9x0q2ma --label "Rules, understood" --role assistant --content "Understood. I will keep to those rules."',
   ],
   handler: async (args, ctx): Promise<SetupListing> => {
     const { vault } = ctx.requireSession();
@@ -100,8 +100,8 @@ export const setupUpdate = command({
   description: `Change a setup message's text, label or role (user, assistant, system). Every brain sees the change from its next request.`,
   args: z.object({ conversation: conversationId, setup: setupRef, label: label.optional(), role: role.optional(), content: content.optional() }),
   examples: [
-    './ss setup.update --conversation c_k3j9x0q2ma --setup "World Bible" --content @world-bible.md',
-    './ss setup.update --conversation c_k3j9x0q2ma --setup "World Bible" --role system',
+    './sst setup.update --conversation c_k3j9x0q2ma --setup "World Bible" --content @world-bible.md',
+    './sst setup.update --conversation c_k3j9x0q2ma --setup "World Bible" --role system',
   ],
   handler: async (args, ctx): Promise<SetupListing> => {
     if (args.label === undefined && args.content === undefined && args.role === undefined) throw badRequest("Nothing to change. Pass --content, --label or --role.");
@@ -122,7 +122,7 @@ export const setupMove = command({
   name: "setup.move",
   description: `Move a setup message to another position (from 1). Every brain sees them in this order.`,
   args: z.object({ conversation: conversationId, setup: setupRef, position }),
-  examples: ['./ss setup.move --conversation c_k3j9x0q2ma --setup "House rules" --position 1'],
+  examples: ['./sst setup.move --conversation c_k3j9x0q2ma --setup "House rules" --position 1'],
   handler: async (args, ctx): Promise<SetupListing> => {
     const { vault } = ctx.requireSession();
     const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
@@ -141,7 +141,7 @@ export const setupDelete = command({
   name: "setup.delete",
   description: `Delete a setup message. From the next request on, no brain sees it.`,
   args: z.object({ conversation: conversationId, setup: setupRef }),
-  examples: ['./ss setup.delete --conversation c_k3j9x0q2ma --setup "House rules"'],
+  examples: ['./sst setup.delete --conversation c_k3j9x0q2ma --setup "House rules"'],
   handler: async (args, ctx): Promise<SetupListing> => {
     const { vault } = ctx.requireSession();
     const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {

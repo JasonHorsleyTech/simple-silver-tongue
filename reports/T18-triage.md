@@ -28,35 +28,35 @@
 ## Re-verification (scratch mock, QA's commands)
 
 ```
-$ ./ss conversation.update --settings.image-model z-image-turbo
-$ ./ss brain.update --brain "Scene Painter" --image-model krea-2-turbo
-$ ./ss conversation.update --settings.image.resolution 2K
+$ ./sst conversation.update --settings.image-model z-image-turbo
+$ ./sst brain.update --brain "Scene Painter" --image-model krea-2-turbo
+$ ./sst conversation.update --settings.image.resolution 2K
 Brains on a model of their own, which they keep: Scene Painter (images: krea-2-turbo). The others use the conversation's.
-$ ./ss prompt.preview --brain "Scene Painter" --json | jq -c '.image.params|{model,resolution}'
+$ ./sst prompt.preview --brain "Scene Painter" --json | jq -c '.image.params|{model,resolution}'
 {"model":"krea-2-turbo","resolution":"2K"}
-$ ./ss conversation.get --json > export.json && ./ss conversation.import --campaign @export.json
+$ ./sst conversation.get --json > export.json && ./sst conversation.import --campaign @export.json
 Imported c_8fbsql8zzc "QA1 re" · deepseek-v4-1-flash · images z-image-turbo
 Brains: …, Scene Painter (image) (its own image model krea-2-turbo), Character Portraitist (image)
 $ # the stale sibling (krea + 2K, then z-image), before the fix: "z-image-turbo has no resolution setting"
 Imported c_m13kb33kl3 "Stale" · deepseek-v4-1-flash · images z-image-turbo
-$ jq '.settings.image.resolution="2k"' qa1.json > typo.json && ./ss conversation.import --campaign @typo.json
+$ jq '.settings.image.resolution="2k"' qa1.json > typo.json && ./sst conversation.import --campaign @typo.json
 error: The campaign: settings.image.resolution: no Venice image model offers "2k" (they offer 1K, 2K). Fix it in the file, or leave it out for each model's default.
 
 $ # QA-4: an image brain P switched to text, exported, imported (before: "brains.1: safe mode, shape, tool text and an image model are for image brains")
 Imported c_g9qpmximlw "Kind switch" · deepseek-v4-1-flash · images z-image-turbo
 $ # an image blueprint switched to text: imported, blueprint {"kind":"text","imageModel":null,"tool":false}
 
-$ ./ss brain.update --brain P --reasoning.enabled --reasoning.effort medium && ./ss prompt.preview --brain P --content x
+$ ./sst brain.update --brain P --reasoning.enabled --reasoning.effort medium && ./sst prompt.preview --brain P --content x
 Note: DeepSeek V4.1 Flash doesn't list the reasoning effort "medium" (it lists low, high, max). It is sent as set, and Venice may pick a depth of its own or refuse it. Give P a level its model lists.
 
-$ ./ss turn --brain Painter --content "MOCK_RUNAWAY paint the rain"     # ~1 s, 2,003 characters printed
+$ ./sst turn --brain Painter --content "MOCK_RUNAWAY paint the rain"     # ~1 s, 2,003 characters printed
 error: Painter wrote over 2000 characters of text and no generate_image call, so the app ended the reply there (an image brain answers with that call; text beside it isn't kept). Its text model, deepseek-v4-1-flash, may not make the forced call reliably: if this happens again, give Painter another (brain.update --text-model). Your message is saved; the reply isn't. To retry, send again to Painter with no new message: turn --brain b_… without --content, or Retry in the browser.
-$ ./ss turn --content "Next."          # runs at once: the lock was free
+$ ./sst turn --content "Next."          # runs at once: the lock was free
 $ # spentUsd 0.0000333 at once, 0.002652 a few seconds later: the drain recorded the runaway reply's cost
 
-$ ./ss conversation.update --settings.max-tokens 900     # Scene Painter with both models of its own
+$ ./sst conversation.update --settings.max-tokens 900     # Scene Painter with both models of its own
 Brains on a model of their own, which they keep: Scene Painter (venice-uncensored-1-2; images: krea-2-turbo). The others use the conversation's.
-$ ./ss conversation.clone --title Clone2                  # image model only
+$ ./sst conversation.clone --title Clone2                  # image model only
 Scene Painter has a model of its own and keeps it; … brain.update --brain <name> --image-model null puts one on the conversation's.
 
 $ # acceptance spot check: Co-GM on its own venice-uncensored-1-2

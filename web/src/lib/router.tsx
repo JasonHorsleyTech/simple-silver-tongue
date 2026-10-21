@@ -6,7 +6,7 @@ import { useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent } from
  * The server answers every non-/api path with index.html, so deep links and reloads land here.
  */
 
-const NAV_EVENT = "ss:navigate";
+const NAV_EVENT = "sst:navigate";
 
 function subscribe(onChange: () => void) {
   window.addEventListener("popstate", onChange);

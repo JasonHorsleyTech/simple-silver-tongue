@@ -39,17 +39,17 @@ login ok
 
 Against `npm run up:mock`:
 ```
-$ ./ss user.create --username dev-tri-a --password '' && ./ss auth.login --username dev-tri-a --password '' && ./ss auth.whoami
+$ ./sst user.create --username dev-tri-a --password '' && ./sst auth.login --username dev-tri-a --password '' && ./sst auth.whoami
 Created dev-tri-a (unencrypted). ...
 Logged in as dev-tri-a (unencrypted).
 dev-tri-a (unencrypted)
-$ printf 'tri-pw-1\n' | ./ss user.create --username dev-tri-b
+$ printf 'tri-pw-1\n' | ./sst user.create --username dev-tri-b
 Created dev-tri-b (encrypted). ...
-$ ./ss auth.login --username dev-tri-b --password wrong      → error: Wrong password for dev-tri-b. (exit 1)
-$ printf 'tri-pw-1\n' | ./ss auth.login --username dev-tri-b && ./ss auth.whoami
+$ ./sst auth.login --username dev-tri-b --password wrong      → error: Wrong password for dev-tri-b. (exit 1)
+$ printf 'tri-pw-1\n' | ./sst auth.login --username dev-tri-b && ./sst auth.whoami
 Logged in as dev-tri-b (encrypted).
 dev-tri-b (encrypted)
-$ ./ss auth.logout && ./ss auth.whoami
+$ ./sst auth.logout && ./sst auth.whoami
 Logged out dev-tri-b.
 Not logged in.
 
@@ -61,11 +61,11 @@ $ curl -b jar -H 'content-type: application/json' -d '{}' /api/auth.whoami      
 $ curl -X OPTIONS (preflight from localhost:3000)                                                    → 405, no Access-Control-* headers
 
 # QA-6
-$ ./ss user.create --username dev-tri-d < /dev/null
-error: --password is required and there is no terminal to prompt on. Pass --password '' for none, or pipe it on stdin. Run ./ss help user.create.   (exit 2, no user)
+$ ./sst user.create --username dev-tri-d < /dev/null
+error: --password is required and there is no terminal to prompt on. Pass --password '' for none, or pipe it on stdin. Run ./sst help user.create.   (exit 2, no user)
 
 # QA-8
-$ ./ss auth.login --username dev-tri-b --password '@Horse-qa1'
+$ ./sst auth.login --username dev-tri-b --password '@Horse-qa1'
 error: Wrong password for dev-tri-b.             (exit 1; was: "cannot read Horse-qa1", exit 2)
 
 # QA-7 (mock, venice-uncensored-1-2, max_tokens 5)
@@ -78,7 +78,7 @@ image/generate → x-venice-is-blurred: false, x-venice-is-content-violation: fa
 QA-5, with `python3 -m http.server 4748` running:
 ```
 $ npm run up            → simple-silver is up → http://localhost:4747 · Venice: live     (was: refused)
-$ ./ss models.list --type image | head -1   → Image models (45)                        (live acceptance bullet; /models is free)
+$ ./sst models.list --type image | head -1   → Image models (45)                        (live acceptance bullet; /models is free)
 $ npm run down          → stopped the server · mock was not running · note: port 4748 is in use by another program ... Not ours, so left alone.  (exit 0; was 1)
 $ npm run up:mock       → up: port 4748 is in use by another program ...  (exit 1, correct: mock mode needs it)
 python3 on 4747 → up:mock still refuses and names it.

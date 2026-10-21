@@ -74,13 +74,13 @@ Live, in the browser, I started "Chinatown live" from the preset and wrote a one
 
 ## Verified in Chrome (Chrome DevTools MCP)
 
-All checks used user `dev-t10-web` (encrypted), with `SS_DATA_DIR=<scratchpad>/data`: `npm run up:mock`, then `npm run up` for the live part.
+All checks used user `dev-t10-web` (encrypted), with `SST_DATA_DIR=<scratchpad>/data`: `npm run up:mock`, then `npm run up` for the live part.
 - **The start page:**
   - the tabs switch, and the choice survives a reload;
   - the preset's title field is focused;
   - "What each brain does" opens and closes;
   - there is no horizontal scroll at the smallest window Chrome allows (500 px).
-- **Typed "Chinatown" + Enter:** I landed on `/c/…` with seven brains, no setup and the nudge. "Write the World Bible" opened Setup with the cursor at the end of the comment. I typed the World Bible and saved it with ⌘ Enter. `./ss setup.list` showed the text, and the nudge was gone.
+- **Typed "Chinatown" + Enter:** I landed on `/c/…` with seven brains, no setup and the nudge. "Write the World Bible" opened Setup with the cursor at the end of the comment. I typed the World Bible and saved it with ⌘ Enter. `./sst setup.list` showed the text, and the nudge was gone.
 - **On a Gilded Goat copy:**
   - Add a brain → From a preset → Character Actor → Enter. The card opened with the templates note and the hidden-notes note.
   - Adding it again pre-filled "Character Actor 2".
@@ -106,8 +106,8 @@ The balance went from **$7.68124515** to **$7.67786183**, so **$0.0034**. That w
 ## Server and data
 
 - **The server is stopped** (`npm run down`), so the next plain `npm run up` uses `data/`.
-- **The `jason` folder:** while my mock server held port 4747 with `SS_DATA_DIR` pointed at the scratchpad, a user `jason` was created in that scratch data dir. The folder is `/private/tmp/claude-502/-Users-jasonhorsley-code-simple-silver/52056a7f-1f3e-4937-b2ba-0fdb4b6db6c4/scratchpad/data/users/jason`. Its `user.json` is from 15:11, and its `conversations/` was last changed at 15:16.
-  - I didn't create it. Most likely it was `./ss user.create --username jason` (or the browser) reaching my test server instead of his own.
+- **The `jason` folder:** while my mock server held port 4747 with `SST_DATA_DIR` pointed at the scratchpad, a user `jason` was created in that scratch data dir. The folder is `/private/tmp/claude-502/-Users-jasonhorsley-code-simple-silver/52056a7f-1f3e-4937-b2ba-0fdb4b6db6c4/scratchpad/data/users/jason`. Its `user.json` is from 15:11, and its `conversations/` was last changed at 15:16.
+  - I didn't create it. Most likely it was `./sst user.create --username jason` (or the browser) reaching my test server instead of his own.
   - I never read, listed or touched its contents.
   - My switch to the live server at about 15:18 would have logged that session out.
   - If it was Jason, that account and conversation live only in the scratchpad, not in `data/`. The scratchpad also holds my `dev-t10-web` user and earlier passes' files.

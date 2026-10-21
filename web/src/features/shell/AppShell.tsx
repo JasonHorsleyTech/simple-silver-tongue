@@ -9,7 +9,7 @@ import { usePath } from "../../lib/router.tsx";
 import { readLocal, writeLocal } from "../../lib/storage.ts";
 import { Sidebar, SidebarRail } from "./Sidebar.tsx";
 
-const SIDEBAR_KEY = "ss.sidebarCollapsed";
+const SIDEBAR_KEY = "sst.sidebarCollapsed";
 
 /**
  * The logged-in frame: a sidebar (conversations, user, logout) and a main area for the current route.

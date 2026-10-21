@@ -24,7 +24,7 @@ export const brainRef = ref("A blank brain names no one: give a brain's name or 
 );
 const brainTarget = ref("A blank brain names no one: give a brain's name or id").describe("Brain name (case-insensitive) or id (b_...)");
 
-/** Venice's documented reasoning effort levels. Each model supports a subset (./ss models.list --type text). */
+/** Venice's documented reasoning effort levels. Each model supports a subset (./sst models.list --type text). */
 export const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 /** The word message.add --as uses for you, so no brain can be called that. */
@@ -88,14 +88,14 @@ export const textModel = z
   .min(1)
   .nullable()
   .describe(
-    "This brain's own text model (a Venice id: ./ss models.list --type text), used for its requests instead of the conversation's; an image brain writes its prompts with it. null: back to the conversation's (the default), so it follows a change of the conversation's model",
+    "This brain's own text model (a Venice id: ./sst models.list --type text), used for its requests instead of the conversation's; an image brain writes its prompts with it. null: back to the conversation's (the default), so it follows a change of the conversation's model",
   );
 export const imageModel = z
   .string()
   .trim()
   .min(1)
   .nullable()
-  .describe("Image brains: their own image model (a Venice id: ./ss models.list --type image), which paints their prompts instead of the conversation's. null: back to the conversation's (the default)");
+  .describe("Image brains: their own image model (a Venice id: ./sst models.list --type image), which paints their prompts instead of the conversation's. null: back to the conversation's (the default)");
 
 /** T16: how a pinned message is sent to the brain it is pinned to. */
 export const pinAs = z
@@ -232,7 +232,7 @@ export async function checkBrainModels(
       if (typeof id !== "string") continue;
       await lookupModel(ctx.deps.venice, type, id).catch((err: unknown) => {
         if (err instanceof CommandError && err.code === "unknown_model") {
-          throw new CommandError(400, "unknown_model", `${where(i, field)}: Venice has no ${type} model "${id}". ./ss models.list --type ${type} lists the curated ones (--all: every one); any id Venice lists works.`);
+          throw new CommandError(400, "unknown_model", `${where(i, field)}: Venice has no ${type} model "${id}". ./sst models.list --type ${type} lists the curated ones (--all: every one); any id Venice lists works.`);
         }
         throw err;
       });
@@ -359,7 +359,7 @@ Each brain's stop sequences are listed too: Venice ends its reply just before an
 messages (T16) and, for a brain that makes brains, its name pattern and the whole blueprint. Each brain's line
 names the model it uses (T18): its own, or the conversation's.`,
   args: z.object({ conversation: conversationId }),
-  examples: ["./ss brain.list --conversation c_k3j9x0q2ma"],
+  examples: ["./sst brain.list --conversation c_k3j9x0q2ma"],
   handler: async (args, ctx): Promise<BrainListing> => {
     const conv = await loadConversation(ctx.requireSession().vault, args.conversation);
     const pinned = new Set(conv.brains.flatMap((b) => b.pins.map((p) => p.messageId)));
@@ -418,11 +418,11 @@ It uses the conversation's models unless you give it its own (T18): --text-model
     imageModel: imageModel.optional(),
   }),
   examples: [
-    './ss brain.add --conversation c_k3j9x0q2ma --name "Dice Master" --system-prompt @dice.md',
-    './ss brain.add --conversation c_k3j9x0q2ma --name "Co-GM" --system-prompt @co-gm.md --text-model z-ai-glm-5-3 --reasoning.enabled   # its own model',
-    './ss brain.add --conversation c_k3j9x0q2ma --name "Dice Master" --system-prompt "You roll dice." --final-reminder.content "<!-- System reminder --> Only roll."',
-    './ss brain.add --conversation c_k3j9x0q2ma --name "Scene Painter" --kind image --system-prompt "You paint the scene."',
-    './ss brain.add --conversation c_k3j9x0q2ma --name "Portraitist" --kind image --shape portrait --system-prompt @portraits.md',
+    './sst brain.add --conversation c_k3j9x0q2ma --name "Dice Master" --system-prompt @dice.md',
+    './sst brain.add --conversation c_k3j9x0q2ma --name "Co-GM" --system-prompt @co-gm.md --text-model z-ai-glm-5-3 --reasoning.enabled   # its own model',
+    './sst brain.add --conversation c_k3j9x0q2ma --name "Dice Master" --system-prompt "You roll dice." --final-reminder.content "<!-- System reminder --> Only roll."',
+    './sst brain.add --conversation c_k3j9x0q2ma --name "Scene Painter" --kind image --system-prompt "You paint the scene."',
+    './sst brain.add --conversation c_k3j9x0q2ma --name "Portraitist" --kind image --shape portrait --system-prompt @portraits.md',
   ],
   handler: async (args, ctx): Promise<Brain> => {
     const { vault } = ctx.requireSession();
@@ -480,19 +480,19 @@ the conversation's. prompt.preview --brain shows which model, and whose.`,
     imageModel: imageModel.optional(),
   }),
   examples: [
-    './ss brain.update --conversation c_k3j9x0q2ma --system-prompt "You are a terse pirate."',
-    './ss brain.update --conversation c_k3j9x0q2ma --brain "Co-GM" --text-model z-ai-glm-5-3 --reasoning.enabled   # its own model (GLM always reasons)',
-    './ss brain.update --conversation c_k3j9x0q2ma --brain "Co-GM" --text-model null   # back to the conversation\'s',
-    './ss brain.update --conversation c_k3j9x0q2ma --brain "Scene Painter" --image-model krea-2-turbo',
-    "./ss brain.update --conversation c_k3j9x0q2ma --system-prompt @prompt.md --reasoning.effort high",
-    './ss brain.update --conversation c_k3j9x0q2ma --brain "Dice Master" --final-reminder.content @reminder.md',
-    "./ss brain.update --conversation c_k3j9x0q2ma --no-reasoning.enabled",
-    `./ss brain.update --conversation c_k3j9x0q2ma --brain "Game Master" --stop "${FRAMING_STOP}" --stop "<!-- System"`,
-    "./ss brain.update --conversation c_k3j9x0q2ma --stop '[]'   # no stop sequences",
-    './ss brain.update --conversation c_k3j9x0q2ma --brain "Character Portraitist" --shape portrait',
-    `./ss brain.update --conversation c_k3j9x0q2ma --brain "Place Creator" --makes.name "Place ${MAKES_NUMBER}" --makes.blueprint.system-prompt @place.md`,
-    "./ss brain.update --conversation c_k3j9x0q2ma --brain \"Character Creator\" --no-makes.enabled   # keep the setting, make nothing",
-    "./ss brain.update --conversation c_k3j9x0q2ma --brain \"Character Creator\" --makes @makes.json   # the whole setting as JSON",
+    './sst brain.update --conversation c_k3j9x0q2ma --system-prompt "You are a terse pirate."',
+    './sst brain.update --conversation c_k3j9x0q2ma --brain "Co-GM" --text-model z-ai-glm-5-3 --reasoning.enabled   # its own model (GLM always reasons)',
+    './sst brain.update --conversation c_k3j9x0q2ma --brain "Co-GM" --text-model null   # back to the conversation\'s',
+    './sst brain.update --conversation c_k3j9x0q2ma --brain "Scene Painter" --image-model krea-2-turbo',
+    "./sst brain.update --conversation c_k3j9x0q2ma --system-prompt @prompt.md --reasoning.effort high",
+    './sst brain.update --conversation c_k3j9x0q2ma --brain "Dice Master" --final-reminder.content @reminder.md',
+    "./sst brain.update --conversation c_k3j9x0q2ma --no-reasoning.enabled",
+    `./sst brain.update --conversation c_k3j9x0q2ma --brain "Game Master" --stop "${FRAMING_STOP}" --stop "<!-- System"`,
+    "./sst brain.update --conversation c_k3j9x0q2ma --stop '[]'   # no stop sequences",
+    './sst brain.update --conversation c_k3j9x0q2ma --brain "Character Portraitist" --shape portrait',
+    `./sst brain.update --conversation c_k3j9x0q2ma --brain "Place Creator" --makes.name "Place ${MAKES_NUMBER}" --makes.blueprint.system-prompt @place.md`,
+    "./sst brain.update --conversation c_k3j9x0q2ma --brain \"Character Creator\" --no-makes.enabled   # keep the setting, make nothing",
+    "./sst brain.update --conversation c_k3j9x0q2ma --brain \"Character Creator\" --makes @makes.json   # the whole setting as JSON",
   ],
   handler: async (args, ctx): Promise<Brain> => {
     const { vault } = ctx.requireSession();
@@ -542,7 +542,7 @@ A brain with messages in the ledger can't be deleted: every other brain still se
 The default brain can't be deleted either: make another one the default first (brain.set-default). Refused
 while the brain is writing a reply.`,
   args: z.object({ conversation: conversationId, brain: brainTarget }),
-  examples: ['./ss brain.delete --conversation c_k3j9x0q2ma --brain "Joke Teller"'],
+  examples: ['./sst brain.delete --conversation c_k3j9x0q2ma --brain "Joke Teller"'],
   handler: async (args, ctx) => {
     const { vault } = ctx.requireSession();
     const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
@@ -573,7 +573,7 @@ export const brainSetDefault = command({
   description: `Make a brain the default: the one turn talks to without --brain (and the browser's big Send button).
 Nothing else changes: each brain keeps its own final reminder setting.`,
   args: z.object({ conversation: conversationId, brain: brainTarget }),
-  examples: ['./ss brain.set-default --conversation c_k3j9x0q2ma --brain "Game Master"'],
+  examples: ['./sst brain.set-default --conversation c_k3j9x0q2ma --brain "Game Master"'],
   handler: async (args, ctx): Promise<Brain> => {
     const { vault } = ctx.requireSession();
     const { result } = await mutateConversation(vault, args.conversation, (c) => {
@@ -605,8 +605,8 @@ only --as. Any message, yours or a brain's, any time (it changes the brain's nex
 prompt.preview --brain shows where it goes.`,
   args: z.object({ conversation: conversationId, brain: brainTarget, message: messageId, as: pinAs.optional() }),
   examples: [
-    './ss brain.pin --conversation c_k3j9x0q2ma --brain "Character 1" --message m_7f2k9d0x1a',
-    './ss brain.pin --conversation c_k3j9x0q2ma --brain "Game Master" --message m_7f2k9d0x1a --as system',
+    './sst brain.pin --conversation c_k3j9x0q2ma --brain "Character 1" --message m_7f2k9d0x1a',
+    './sst brain.pin --conversation c_k3j9x0q2ma --brain "Game Master" --message m_7f2k9d0x1a --as system',
   ],
   handler: async (args, ctx): Promise<BrainPinned> => {
     const { vault } = ctx.requireSession();
@@ -632,7 +632,7 @@ export const brainUnpin = command({
   name: "brain.unpin",
   description: `Unpin a message from a brain (T16): from its next request on, the brain sees it at its place in the ledger again.`,
   args: z.object({ conversation: conversationId, brain: brainTarget, message: messageId }),
-  examples: ['./ss brain.unpin --conversation c_k3j9x0q2ma --brain "Character 1" --message m_7f2k9d0x1a'],
+  examples: ['./sst brain.unpin --conversation c_k3j9x0q2ma --brain "Character 1" --message m_7f2k9d0x1a'],
   handler: async (args, ctx): Promise<BrainPinned> => {
     const { vault } = ctx.requireSession();
     const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
@@ -662,8 +662,8 @@ here makes no second one.`,
     name: brainName.optional().describe("The new brain's name (default: the next one from the author's pattern, which then counts up)"),
   }),
   examples: [
-    "./ss brain.make --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a",
-    './ss brain.make --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --name "Ada Quon"',
+    "./sst brain.make --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a",
+    './sst brain.make --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --name "Ada Quon"',
   ],
   handler: async (args, ctx): Promise<BrainPinned> => {
     const { vault } = ctx.requireSession();

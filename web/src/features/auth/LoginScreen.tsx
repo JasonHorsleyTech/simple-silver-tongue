@@ -182,7 +182,7 @@ export function LoginScreen({ notice, pick }: { notice: LoginNotice | null; pick
           <p className="mt-5 text-center text-xs leading-5 text-faint">
             New user? Create one in the terminal:
             <br />
-            <code className="font-mono text-[11.5px] text-muted">./ss user.create --username &lt;name&gt;</code>
+            <code className="font-mono text-[11.5px] text-muted">./sst user.create --username &lt;name&gt;</code>
           </p>
         )}
         {health && (
@@ -236,7 +236,7 @@ function UserPicker({ list, chosen, onChoose }: { list: Listing; chosen: string 
         <Users aria-hidden className="mx-auto size-5 text-faint" />
         <p className="mt-2 text-[14px] text-fg">No users yet</p>
         <p className="mt-1 text-[12.5px] leading-5 text-muted">Create one in the terminal, then come back here:</p>
-        <code className="mt-2 inline-block rounded-md bg-raised px-2 py-1 font-mono text-[12px] text-silver">./ss user.create --username &lt;name&gt;</code>
+        <code className="mt-2 inline-block rounded-md bg-raised px-2 py-1 font-mono text-[12px] text-silver">./sst user.create --username &lt;name&gt;</code>
         <p className="mt-2 text-[11.5px] leading-4 text-faint">With a password, everything it saves is encrypted on disk.</p>
       </div>
     );

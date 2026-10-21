@@ -60,10 +60,10 @@ def roll(dice: int, sides: int, bonus: int = 0) -> int:
 print(roll(2, 6, 1))
 \`\`\`
 
-And from a shell, with a line that is far too long to fit: \`./ss turn --conversation c_k3j9x0q2ma --content "I walk over to the hooded figure and say hello"\`
+And from a shell, with a line that is far too long to fit: \`./sst turn --conversation c_k3j9x0q2ma --content "I walk over to the hooded figure and say hello"\`
 
 \`\`\`bash
-./ss turn --conversation c_k3j9x0q2ma --content "I approach the hooded figure, sit down across from them without asking, and slide a silver coin over the table."
+./sst turn --conversation c_k3j9x0q2ma --content "I approach the hooded figure, sit down across from them without asking, and slide a silver coin over the table."
 \`\`\`
 
 <!-- from: the GM, a note to self: the figure is the missing heir -->

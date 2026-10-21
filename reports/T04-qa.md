@@ -94,12 +94,12 @@ No design concern. Some notes on the design for Jason's table are at the end.
 
 Repro (mock):
 ```bash
-C=$(./ss conversation.create --title qa1 --system-prompt "You are the GM." --json | jq -r .id)
-./ss brain.add --conversation $C --name "Dice Master" --system-prompt "You roll." --final-reminder.content "MOCK_MIDSTREAM_ERROR"
-./ss turn --conversation $C --brain "Dice Master" --content "I try to read her intentions."
+C=$(./sst conversation.create --title qa1 --system-prompt "You are the GM." --json | jq -r .id)
+./sst brain.add --conversation $C --name "Dice Master" --system-prompt "You roll." --final-reminder.content "MOCK_MIDSTREAM_ERROR"
+./sst turn --conversation $C --brain "Dice Master" --content "I try to read her intentions."
 # error: The Venice stream broke off (UND_ERR_SOCKET). Your message is saved; the reply isn't.
 #        To retry, send again with no new message: turn without --content, or Retry in the browser.
-./ss prompt.preview --conversation $C --json | jq -r .brainName     # → Assistant: what that retry would reach
+./sst prompt.preview --conversation $C --json | jq -r .brainName     # → Assistant: what that retry would reach
 ```
 - **Expected:** the hint names the brain that failed, e.g. `turn --brain "Dice Master" without --content`. With several brains, "turn without --content" is a different request.
 - **Actual:** following the hint literally sends a **billed** request to the default brain, which then answers the player line meant for the Dice Master. The browser's future Retry button has the same trap if it reuses `turn` without the brain.
@@ -108,7 +108,7 @@ C=$(./ss conversation.create --title qa1 --system-prompt "You are the GM." --jso
 ### QA-2 · nit · A whitespace-only `--as` silently writes in the default brain's voice
 
 ```bash
-./ss message.add --conversation $C2 --as "   " --content "Who said this?"
+./sst message.add --conversation $C2 --as "   " --content "Who said this?"
 # Added m_... (in Assistant's mouth).
 ```
 - **Expected:** 400. `--as` has no documented default, and a blank author is almost surely a mistake.
@@ -118,9 +118,9 @@ C=$(./ss conversation.create --title qa1 --system-prompt "You are the GM." --jso
 ### QA-3 · nit · Brain names can contain newlines and control characters, be invisible, or impersonate the player's framing
 
 ```bash
-./ss brain.add --conversation $C --name $'Line\nBreak' --system-prompt x     # accepted; breaks brain.list / conversation.get lines
-./ss brain.add --conversation $C --name $'​' --system-prompt x         # accepted: a zero-width-space name, invisible in every view
-./ss brain.add --conversation $C --name "the user" --system-prompt x        # accepted
+./sst brain.add --conversation $C --name $'Line\nBreak' --system-prompt x     # accepted; breaks brain.list / conversation.get lines
+./sst brain.add --conversation $C --name $'​' --system-prompt x         # accepted: a zero-width-space name, invisible in every view
+./sst brain.add --conversation $C --name "the user" --system-prompt x        # accepted
 ```
 - **Expected:**
   - A name is one line of visible text.
@@ -131,7 +131,7 @@ C=$(./ss conversation.create --title qa1 --system-prompt "You are the GM." --jso
 ### QA-4 · nit (pre-existing, CLI) · Closing stdout early crashes the CLI with a Node stack trace
 
 ```bash
-./ss conversation.get --id <c_...> --json | head -c 10    # also: ./ss prompt.preview ... --json | jq <typo>
+./sst conversation.get --id <c_...> --json | head -c 10    # also: ./sst prompt.preview ... --json | jq <typo>
 # node:events:505 throw er; // Unhandled 'error' event ... Error: write EPIPE at ... src/cli/main.ts:114
 ```
 - **Expected:** a quiet exit, as `cat` does.

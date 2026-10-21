@@ -70,7 +70,7 @@ describe("T06 triage: damaged files say what is wrong, never 'Internal server er
 
     // The browser's <img> can't read an error; the client asks the same GET why it failed (T06 frontend).
     const token = JSON.parse(await readFile(join(t.config.runDir, "cli-session.json"), "utf8")).token as string;
-    const web = createClient({ baseUrl: t.url, fetch: ((input: string, init: RequestInit = {}) => fetch(input, { ...init, headers: { cookie: `ss_session=${token}` } })) as typeof fetch });
+    const web = createClient({ baseUrl: t.url, fetch: ((input: string, init: RequestInit = {}) => fetch(input, { ...init, headers: { cookie: `sst_session=${token}` } })) as typeof fetch });
     const why = await web.binaryError("image.get", { id: "img_dmg0000001" });
     assert.equal(why?.code, "unreadable_file");
     assert.match(why!.message, /^images\/img_dmg0000001\.bin: can't be decrypted/);

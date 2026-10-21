@@ -339,7 +339,7 @@
 }
 
 /* A soft sweep over "Thinking…" while a brain reasons. */
-@keyframes ss-shimmer {
+@keyframes sst-shimmer {
   from {
     background-position: 100% 0;
   }
@@ -352,22 +352,22 @@
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: ss-shimmer 1.8s linear infinite;
+  animation: sst-shimmer 1.8s linear infinite;
 }
 
 /* The caret at the end of a reply that is still streaming in (features/chat/LiveReply.tsx). */
-@keyframes ss-blink {
+@keyframes sst-blink {
   50% {
     opacity: 0;
   }
 }
 /* A reply is Markdown parts and hidden notes (MessageText, `.md-flow`): the caret goes only at the end of the last
    part, and not at all while the last part is a note being written (its fold counts up instead). */
-.ss-caret > .md-flow > .md:last-child > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
-.ss-caret > .md-flow > .md:last-child > :is(ul, ol):last-child > li:last-child:not(:has(> :is(ul, ol, p)))::after,
-.ss-caret > .md-flow > .md:last-child > :is(ul, ol):last-child > li:last-child > p:last-child::after,
-.ss-caret > .md-flow > .md:last-child > :is(ul, ol):last-child > li:last-child > :is(ul, ol):last-child > li:last-child:not(:has(> :is(ul, ol, p)))::after,
-.ss-caret > .md-flow > .md:last-child > blockquote:last-child > p:last-child::after {
+.sst-caret > .md-flow > .md:last-child > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
+.sst-caret > .md-flow > .md:last-child > :is(ul, ol):last-child > li:last-child:not(:has(> :is(ul, ol, p)))::after,
+.sst-caret > .md-flow > .md:last-child > :is(ul, ol):last-child > li:last-child > p:last-child::after,
+.sst-caret > .md-flow > .md:last-child > :is(ul, ol):last-child > li:last-child > :is(ul, ol):last-child > li:last-child:not(:has(> :is(ul, ol, p)))::after,
+.sst-caret > .md-flow > .md:last-child > blockquote:last-child > p:last-child::after {
   content: "";
   display: inline-block;
   width: 0.5em;
@@ -376,19 +376,19 @@
   vertical-align: -0.15em;
   border-radius: 2px;
   background: var(--color-silver);
-  animation: ss-blink 1s steps(1) infinite;
+  animation: sst-blink 1s steps(1) infinite;
 }
 
 /*
  * A hidden note's fold (components/HiddenNote.tsx): faint diagonal hatching, the look of something set aside,
  * that says nothing about what is under it.
  */
-.ss-hatch {
+.sst-hatch {
   background-image: repeating-linear-gradient(-45deg, rgb(255 255 255 / 0.028) 0 1px, transparent 1px 7px);
 }
 
 /* An image prompt still streaming in (features/chat/ImageCard.tsx): the same caret, inline in plain text. */
-.ss-caret-inline {
+.sst-caret-inline {
   display: inline-block;
   width: 0.45em;
   height: 1em;
@@ -396,14 +396,14 @@
   vertical-align: -0.12em;
   border-radius: 2px;
   background: var(--color-silver);
-  animation: ss-blink 1s steps(1) infinite;
+  animation: sst-blink 1s steps(1) infinite;
 }
 
 /*
  * The frame an image is painted into, while it waits: a slow sheen in the painter's color (--paint), so the
  * space the picture will take is visible from the first word of its prompt.
  */
-@keyframes ss-paint {
+@keyframes sst-paint {
   from {
     background-position: 100% 0;
   }
@@ -411,7 +411,7 @@
     background-position: -100% 0;
   }
 }
-.ss-paint {
+.sst-paint {
   background:
     radial-gradient(120% 90% at 30% 20%, color-mix(in oklab, var(--paint, var(--color-focus)) 9%, transparent), transparent 70%),
     linear-gradient(
@@ -424,10 +424,10 @@
       )
       0 0 / 200% 100%,
     var(--color-panel);
-  animation: ss-paint 2.6s ease-in-out infinite;
+  animation: sst-paint 2.6s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
-  .ss-paint {
+  .sst-paint {
     animation: none;
   }
 }
@@ -436,7 +436,7 @@
  * T09: the d20 (components/D20.tsx). It tumbles while the server's roll is on its way (no numbers flash on it: a
  * number shown is the one rolled), and a roll that just arrived settles in once. Both are motion-safe only.
  */
-@keyframes ss-tumble {
+@keyframes sst-tumble {
   0% {
     transform: rotate(0deg) scale(0.92);
   }
@@ -447,7 +447,7 @@
     transform: rotate(360deg) scale(0.92);
   }
 }
-@keyframes ss-land {
+@keyframes sst-land {
   0% {
     transform: rotate(-120deg) scale(0.55);
     opacity: 0;
@@ -466,7 +466,7 @@
  * can measure whether whole names fit; shown over the neighbouring buttons on hover or keyboard focus, growing out of
  * the button (leftwards near the composer's edge: `data-flip`). It lets the pointer through, so the row never moves.
  */
-.ss-flag {
+.sst-flag {
   position: absolute;
   top: -1px;
   left: -1px;
@@ -478,7 +478,7 @@
     clip-path 140ms ease-out,
     opacity 90ms ease-out;
 }
-[data-flip] > .ss-flag {
+[data-flip] > .sst-flag {
   left: auto;
   right: -1px;
   clip-path: inset(0 0 0 100% round 6px);
@@ -486,21 +486,21 @@
 [data-compact]:is(:hover, :focus-visible) {
   z-index: 10;
 }
-[data-compact]:is(:hover, :focus-visible) > .ss-flag {
+[data-compact]:is(:hover, :focus-visible) > .sst-flag {
   opacity: 1;
   clip-path: inset(0 round 6px);
 }
 @media (prefers-reduced-motion: reduce) {
-  .ss-flag {
+  .sst-flag {
     transition: none;
   }
 }
 
 /* T16: a brain made while you watch: its button (and "+N" when it is in there) glows a few times in its color. */
 [data-fresh] {
-  animation: ss-fresh 1.5s ease-out 4;
+  animation: sst-fresh 1.5s ease-out 4;
 }
-@keyframes ss-fresh {
+@keyframes sst-fresh {
   0% {
     box-shadow: 0 0 0 0 color-mix(in oklab, var(--glow, var(--color-silver)) 75%, transparent);
   }
@@ -516,11 +516,11 @@
 }
 
 /* T16: a message you jumped to (a pin in a brain's card): it lights up for a moment so you find it. */
-.ss-flash {
-  animation: ss-flash 1.8s ease-out 1;
+.sst-flash {
+  animation: sst-flash 1.8s ease-out 1;
   border-radius: 12px;
 }
-@keyframes ss-flash {
+@keyframes sst-flash {
   0%,
   35% {
     background-color: rgb(142 174 230 / 0.12);

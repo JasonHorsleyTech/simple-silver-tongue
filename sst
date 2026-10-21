@@ -1,0 +1,3 @@
+#!/bin/sh
+# Simple Silver Tongue CLI (sst): a thin HTTP client over the server's command registry.
+exec node "$(dirname "$0")/src/cli/main.ts" "$@"

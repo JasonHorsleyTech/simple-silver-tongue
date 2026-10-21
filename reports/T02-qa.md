@@ -20,8 +20,8 @@ With reasoning on, which is the default for every brain, `deepseek-v4-1-flash` g
 
 - **Interrupted stream.** With `MOCK_MIDSTREAM_ERROR`, the partial text streams, then `error: The Venice stream broke off (UND_ERR_SOCKET).` and exit 1. Only the player message is saved, and the next preview ends with it. `MOCK_ERROR` up front gives exit 1 with nothing saved. The raw HTTP stream ends with exactly one `{"type":"error",…}` line, with no stack.
 - **`max_tokens` cut-off.** `--settings.max-tokens 3` saves `finishReason: "length"`, and both the CLI note and `conversation.get` say "cut off by max_tokens". `--settings '{"maxTokens": null}'` removes it from the body. `0` is refused. `temperature 0` is sent as `0`.
-- **Client disconnect mid-reply.** I killed `./ss turn … MOCK_SLOW` 1.2 s in. While it ran, a second `turn` and `conversation.delete` both got 409. The reply then finished and was saved. (Disconnecting *before the first event* is a different story: see QA-2.)
-- **Two turns at once.** Six `./ss turn` processes at once on one conversation: exactly one exit 0, five got `busy` (a real HTTP 409 by curl), and the ledger holds 1 player message and 1 reply. Two turns on two *different* conversations both succeed.
+- **Client disconnect mid-reply.** I killed `./sst turn … MOCK_SLOW` 1.2 s in. While it ran, a second `turn` and `conversation.delete` both got 409. The reply then finished and was saved. (Disconnecting *before the first event* is a different story: see QA-2.)
+- **Two turns at once.** Six `./sst turn` processes at once on one conversation: exactly one exit 0, five got `busy` (a real HTTP 409 by curl), and the ledger holds 1 player message and 1 reply. Two turns on two *different* conversations both succeed.
 - **Server restart mid-flow.** I ran `npm run up:mock` during a `MOCK_SLOW` turn. The CLI says `error: terminated` (QA-8). The file stays valid JSON with the player message only, and no `.tmp` files are left. The CLI tells you the session is gone. After logging in, `turn` with no content retries and saves the reply.
 - **Encrypted user** (`qa-t02-enc`): 3 turns (one mid-stream failure, one up-front failure), a template edit and a reminder edit. Every distinctive phrase I used (title, system prompt, player text, template, reminder, mock reply text) is absent from `data/users/qa-t02-enc`, `.run/` and the CLI run dir. The file starts with `SSENC1`, and `user.json` holds only metadata. **Logout mid-turn, then logging straight back in:** the second login's `turn` gets 409 (the lock is per user, not per session). The running reply finishes and saves, and it decrypts with the real password (the T01 QA-2 fix holds).
 - **Logs.** `.run/server.log*` and `mock.log*` contain no message content. Internal errors for corrupt files log `conversations/c_x.json: not valid JSON`, never the text.
@@ -56,22 +56,22 @@ The document shape works for what comes next: `activeVersion`, per-version `stee
 
 Repro (live, $0.00002 each). These are fresh conversations, identical except for the reasoning setting:
 ```bash
-npm run up && ./ss auth.login --username qa-t02-live --password ''
-A=$(./ss conversation.create --title off --system-prompt "You are terse." --json | jq -r .id)
-./ss brain.update --conversation $A --no-reasoning.enabled
-./ss turn --conversation $A --content "Hi"                          # [Assistant · 17 in / 6 out]
-C=$(./ss conversation.create --title low --system-prompt "You are terse." --json | jq -r .id)
-./ss conversation.update --id $C --settings.max-tokens 5
-./ss turn --conversation $C --content "Hi"                          # [Assistant · 42 in / 5 out]  (default: reasoning low)
-D=$(./ss conversation.create --title high --system-prompt "You are terse." --json | jq -r .id)
-./ss conversation.update --id $D --settings.max-tokens 5; ./ss brain.update --conversation $D --reasoning.effort high
-./ss turn --conversation $D --content "Hi"                          # [Assistant · 42 in / 5 out]
+npm run up && ./sst auth.login --username qa-t02-live --password ''
+A=$(./sst conversation.create --title off --system-prompt "You are terse." --json | jq -r .id)
+./sst brain.update --conversation $A --no-reasoning.enabled
+./sst turn --conversation $A --content "Hi"                          # [Assistant · 17 in / 6 out]
+C=$(./sst conversation.create --title low --system-prompt "You are terse." --json | jq -r .id)
+./sst conversation.update --id $C --settings.max-tokens 5
+./sst turn --conversation $C --content "Hi"                          # [Assistant · 42 in / 5 out]  (default: reasoning low)
+D=$(./sst conversation.create --title high --system-prompt "You are terse." --json | jq -r .id)
+./sst conversation.update --id $D --settings.max-tokens 5; ./sst brain.update --conversation $D --reasoning.effort high
+./sst turn --conversation $D --content "Hi"                          # [Assistant · 42 in / 5 out]
 ```
 - **Measured.** Reasoning `none`: 17. `low`: 42. `high`: 42.
   - A second pair with a 28-token system prompt gave 43 (off) and 68 (low).
   - The engineer's own 52/68/86 fit the same pattern: our text plus about 4, plus about 25.
   - T01 QA saw the same thing on a bare "Hi" (5 at `none`, 31 at `medium`) and filed it under the chat-template exception.
-- **What the model says it sees.** These are only hints, but they are consistent. I asked it, with reasoning on, to quote everything in its context other than our two messages (conversations "L7 hidden probe" and "L8 hidden probe 2" of the kept user `qa-t02-live`; `./ss conversation.get --json` for the reasoning). Both times its reasoning named a system message "You are an AI assistant accessed via an API.", which we never sent. `L8` even says "the system message is 'You are an AI assistant accessed via an API.' and there is no developer", which treats *our* system prompt as something else. The same probe with reasoning off (`L9`, 43 tokens) mentioned no such line.
+- **What the model says it sees.** These are only hints, but they are consistent. I asked it, with reasoning on, to quote everything in its context other than our two messages (conversations "L7 hidden probe" and "L8 hidden probe 2" of the kept user `qa-t02-live`; `./sst conversation.get --json` for the reasoning). Both times its reasoning named a system message "You are an AI assistant accessed via an API.", which we never sent. `L8` even says "the system message is 'You are an AI assistant accessed via an API.' and there is no developer", which treats *our* system prompt as something else. The same probe with reasoning off (`L9`, 43 tokens) mentioned no such line.
 - **Expected:** `prompt_tokens` equals our text plus a few tokens of role markup, as it does with reasoning off and on `venice-uncensored-1-2` (16).
 - **Actual:** every request with reasoning on (the app's default, per brain) carries about 25 tokens of text the user can't see or edit, apparently including a system line that competes with the user's own system prompt. `prompt.preview` can't show it, and the mock can't model it.
 - **Cause:** downstream of us, either Venice's reasoning path or the model's thinking-mode chat template. `buildRequest` sends exactly what the preview shows (verified byte for byte on the mock). Nothing in the body we send asks for it: the only difference between 17 and 42 is `"reasoning_effort": "none"` vs `"low"`.
@@ -84,13 +84,13 @@ D=$(./ss conversation.create --title high --system-prompt "You are terse." --jso
 
 Repro (`npm run up:mock`). Pausing the mock stands in for a slow Venice (a cold `/models` cache, a long prefill or queueing before Venice sends its response headers):
 ```bash
-C=$(./ss conversation.create --title early --system-prompt "Sys." --json | jq -r .id)
+C=$(./sst conversation.create --title early --system-prompt "Sys." --json | jq -r .id)
 MP=$(cat .run/mock.pid); kill -STOP $MP
-./ss turn --conversation $C --content "early bye" & sleep 1; kill %1     # or: curl --max-time 1 … /api/turn
+./sst turn --conversation $C --content "early bye" & sleep 1; kill %1     # or: curl --max-time 1 … /api/turn
 kill -CONT $MP; sleep 3
-./ss conversation.get --id $C          # the player message is saved, no reply
-./ss turn --conversation $C --content again   # error: Conversation … is busy   (still true 3.5 minutes later, past the 180 s idle timeout)
-./ss conversation.delete --id $C       # error: … is busy
+./sst conversation.get --id $C          # the player message is saved, no reply
+./sst turn --conversation $C --content again   # error: Conversation … is busy   (still true 3.5 minutes later, past the 180 s idle timeout)
+./sst conversation.delete --id $C       # error: … is busy
 ```
 Reproduced 2 out of 2 times, with both the CLI and curl. A disconnect *after* the first event works (see "What held up").
 - **Expected:** design.md:203 says "a client disconnect doesn't stop anything: the reply finishes and is saved". At the very least, the lock is released.
@@ -109,9 +109,9 @@ Reproduced 2 out of 2 times, with both the CLI and curl. A disconnect *after* th
 
 Repro (live, `$0.00002`):
 ```bash
-I=$(./ss conversation.create --title sysonly --system-prompt "Open a tavern scene in one sentence." --json | jq -r .id)
-./ss conversation.update --id $I --settings.max-tokens 40; ./ss brain.update --conversation $I --no-reasoning.enabled
-./ss turn --conversation $I                 # reply: " Include two characters, a menu item, and aDELETE."
+I=$(./sst conversation.create --title sysonly --system-prompt "Open a tavern scene in one sentence." --json | jq -r .id)
+./sst conversation.update --id $I --settings.max-tokens 40; ./sst brain.update --conversation $I --no-reasoning.enabled
+./sst turn --conversation $I                 # reply: " Include two characters, a menu item, and aDELETE."
 ```
 - **Expected:** a new conversation with no setup and no content is either refused with `nothing_to_answer`, like the own-reply case, or behaves like a normal reply.
 - **Actual:** it sends `[system]` only. Live, the model treats the system prompt as a prefix: it continues it, with a leading space, and ends in garbage. This is the same failure class the T02 refusal exists to stop. It's easy to hit: press Send on an empty composer in a fresh conversation, or try to have the GM open the scene without a World Bible.
@@ -122,7 +122,7 @@ I=$(./ss conversation.create --title sysonly --system-prompt "Open a tavern scen
 Repro (`up:mock`):
 ```bash
 printf '{"oops": truncated' > data/users/qa-t02-plain/conversations/c_corrupt01.json
-./ss conversation.list        # error: Internal server error (see .run/server.log)
+./sst conversation.list        # error: Internal server error (see .run/server.log)
 # also: a plaintext conversation copied into an encrypted user's conversations/ folder, or a partial doc ({"id","title"} only → TypeError reading textModel)
 ```
 - **Expected:** the list shows every readable conversation and flags or skips the bad one. That conversation's own `get` can fail.
@@ -155,16 +155,16 @@ Repro: the QA-1 `low`/`high` conversations (`--settings.max-tokens 5`, reasoning
 ### QA-8 · nit · Broken-stream errors don't say what happened or what to do next
 
 - A server restart mid-turn prints `error: terminated` (undici's text) from the CLI.
-- A Venice drop prints `The Venice stream broke off (UND_ERR_SOCKET).`, but doesn't say the player message was kept or that `./ss turn --conversation <id>` with no content retries. The help text says so, but the error message is where the user looks.
+- A Venice drop prints `The Venice stream broke off (UND_ERR_SOCKET).`, but doesn't say the player message was kept or that `./sst turn --conversation <id>` with no content retries. The help text says so, but the error message is where the user looks.
 
 ## Live spend
 
 - Balance **$8.01171997** before, **$8.00957627** after: **$0.00214** spent. 12 live text calls (the limit is 15), no images:
-  - 10 `./ss turn` calls on `qa-t02-live`: the token pairs, reasoning low and high, an empty-reply follow-up, `venice-uncensored-1-2`, three hidden-text probes and the system-only body.
+  - 10 `./sst turn` calls on `qa-t02-live`: the token pairs, reasoning low and high, an empty-reply follow-up, `venice-uncensored-1-2`, three hidden-text probes and the system-only body.
   - 2 steer-probe requests, built with `buildRequest` and sent with `openChatStream` from a scratch script that never printed the key.
 
 ## Notes for later passes
 
 - **Stalling the mock is the easy way to test "before the first event".** `kill -STOP $(cat .run/mock.pid)` holds Venice's response headers. `kill -CONT` releases them.
 - **`zsh` doesn't word-split `${3:+--flag $3}`.** Pass flags explicitly in scripts.
-- Cleanup: `qa-t02-plain` (1.4 MB) and `qa-t02-enc` are deleted. **`qa-t02-live` (44 KB, plain) is kept** as QA-1 evidence: `./ss auth.login --username qa-t02-live --password ''`, then `./ss conversation.list`. The "L7"/"L8" conversations hold the probes' full reasoning (`--json`), and this works in mock mode too. Wipe it freely afterwards. The server is stopped. The `dev-*` users are untouched.
+- Cleanup: `qa-t02-plain` (1.4 MB) and `qa-t02-enc` are deleted. **`qa-t02-live` (44 KB, plain) is kept** as QA-1 evidence: `./sst auth.login --username qa-t02-live --password ''`, then `./sst conversation.list`. The "L7"/"L8" conversations hold the probes' full reasoning (`--json`), and this works in mock mode too. Wipe it freely afterwards. The server is stopped. The `dev-*` users are untouched.

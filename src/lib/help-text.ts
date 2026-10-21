@@ -39,11 +39,11 @@ export function renderCommandList(commands: CommandInfo[], header?: string): str
     out.push("");
   }
   out.push(
-    "Run ./ss help <command> (or ./ss <command> --help) for its arguments.",
+    "Run ./sst help <command> (or ./sst <command> --help) for its arguments.",
     "Global flags: --json prints the raw JSON (or NDJSON events); --out <file> saves binary output; --open shows it (image.get);",
     "  --reveal shows hidden notes (```hidden blocks), which messages and streamed replies otherwise fold to one line.",
     "Text values: --x @file.md reads a file, --x - reads stdin, @@ escapes a leading @.",
-    "Playing from the terminal: export SS_CONVERSATION=c_... and --conversation can be left out of every command that takes it (and --id of conversation.get, .update and .clone).",
+    "Playing from the terminal: export SST_CONVERSATION=c_... and --conversation can be left out of every command that takes it (and --id of conversation.get, .update and .clone).",
   );
   return out.join("\n");
 }

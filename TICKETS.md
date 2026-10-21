@@ -17,7 +17,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 **Engineer scope**
 - `package.json` (ESM), `tsconfig.json` (`noEmit`, `allowImportingTsExtensions`, `erasableSyntaxOnly`, strict), and the scripts `up`, `up:mock`, `down`, `logs`, `test`, `typecheck`. `up` stops any running server, builds the web app if there is one, starts the server detached (pid and log in `.run/`), waits for `/api/health` and prints the URL. `up` is idempotent: it always ends with a fresh server on current code.
-- An `./ss` executable at the repo root (the CLI). `npm run ss -- ...` works too.
+- An `./sst` executable at the repo root (the CLI). `npm run sst -- ...` works too.
 - The command registry with zod schemas. HTTP adapter (`POST /api/<cmd>`, JSON or NDJSON, plus GET for binary commands). CLI adapter: flag parsing, `@file` and `-` stdin for text args, `--json`, live printing of streamed events, help generated from the schemas.
 - Storage: atomic file writes, per-user dirs, an encryption layer (plaintext when the user has no password), scrypt + AES-256-GCM per design.md.
 - Users and sessions: `user.create` (hidden password prompt when `--password` is not given; empty = unencrypted), `user.list`, `auth.login`, `auth.logout`, `auth.whoami`. Browser sessions via httpOnly cookie, CLI via `.run/cli-session.json`.
@@ -26,8 +26,8 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 - Tests: crypto round trip (a wrong password fails), CLI arg parsing, one end-to-end test (create user, log in, whoami against an in-process server).
 
 **Acceptance**
-- `npm run up:mock && ./ss user.create --username dev-a --password ''` then `./ss auth.login --username dev-a --password ''` and `./ss auth.whoami` all work. So does the same for an encrypted user `dev-b`.
-- `./ss models.list --type image` lists real models against the live API (`npm run up`).
+- `npm run up:mock && ./sst user.create --username dev-a --password ''` then `./sst auth.login --username dev-a --password ''` and `./sst auth.whoami` all work. So does the same for an encrypted user `dev-b`.
+- `./sst models.list --type image` lists real models against the live API (`npm run up`).
 - `npm run down` stops everything. `npm test` and `npm run typecheck` pass.
 
 **Frontend scope:** Scaffold `web/` (Vite + React + TS + Tailwind v4, dark), with an API client that wraps `POST /api/<cmd>` and NDJSON streaming, a login screen (username + password, which may be empty), and an app shell with a sidebar placeholder and logout. `npm run up` builds and serves it.
@@ -193,15 +193,15 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 **Frontend scope:** Login polish (user picker from `user.list`, a lock icon for encrypted users, error on a wrong password), logout and switching users, and a session-expired redirect to login.
 
 - **From T06 engineer:**
-  - **No new commands for the browser.** `user.delete` and `user.change-password` are terminal commands, like `user.create`; don't add them to `web/src/api/types.ts` or the UI. What the browser must handle is their effect: either one logs that user out everywhere, so an open tab's next call gets `x-ss-session: invalid` / 401 `unauthenticated`, which `api/client.ts` already treats as "session gone" (`SESSION_GONE`). A request whose key was closed by a delete says `session_ended` ("This user was deleted…"), also in `SESSION_GONE`. The session-expired redirect should cover both, and say "Log in again" without blaming the user.
+  - **No new commands for the browser.** `user.delete` and `user.change-password` are terminal commands, like `user.create`; don't add them to `web/src/api/types.ts` or the UI. What the browser must handle is their effect: either one logs that user out everywhere, so an open tab's next call gets `x-sst-session: invalid` / 401 `unauthenticated`, which `api/client.ts` already treats as "session gone" (`SESSION_GONE`). A request whose key was closed by a delete says `session_ended` ("This user was deleted…"), also in `SESSION_GONE`. The session-expired redirect should cover both, and say "Log in again" without blaming the user.
   - `user.list` → `{users: [{username, encrypted, createdAt}]}` is the picker's source (unchanged; `auth: false`). A deleted user drops out of it at once; a re-created name is a new user (its old tab must not keep showing the old user's conversation: the redirect to `/` on a dead session already handles that).
   - **I added `autoComplete="off"`** to the four raw textareas (`Composer`, `SteerBox`, `MessageEditor`, the shared `TextArea`) and the title input in `ChatHeader`, like the inputs that had it, so Chrome keeps no Autofill history of content. Please check in Chrome that nothing changed for the user (spellcheck, typing, the composer's autosize).
   - **One check only Chrome can answer:** does a draft typed in the composer (not sent) reach Chrome's profile on disk? Chrome keeps a tab's form state for session restore in its `Sessions/` files; the HTML spec says `autocomplete="off"` values aren't kept for history restore, but I couldn't confirm Chrome honours that for a `<textarea>`. Type a unique phrase into the composer, wait ~30 s (and/or open a second tab and close the first), then `grep -rl "<phrase>"` the Chrome profile folder the DevTools MCP uses. Report what you find; if it is there, say which file (design.md, "Where plaintext can still appear").
-  - Two users side by side from the CLI: `SS_SESSION_FILE=<path> ./ss ...` gives a terminal its own login (the browser has its own cookie, as before).
+  - Two users side by side from the CLI: `SST_SESSION_FILE=<path> ./sst ...` gives a terminal its own login (the browser has its own cookie, as before).
 - **From T06 triage:**
-  - **Sessions now end after 60 idle minutes** (design.md, "Sessions"), and the browser part of that is built, so the session-expired redirect exists: `api.onSessionLost(why)` passes `"expired"` (header `x-ss-session: expired`, or 401 `session_expired`) or `"ended"`, and the login screen says "You were logged out after 60 minutes without activity, and the server wiped your key from its memory. Log in again to carry on." `session.tsx` also looks again (`auth.whoami`, which doesn't count as activity) when `idle.secondsLeft` runs out, so an idle tab drops to login on its own (checked in Chrome with `SS_SESSION_IDLE_MINUTES=0.1`). Polish the wording and look as you like; keep the timer.
+  - **Sessions now end after 60 idle minutes** (design.md, "Sessions"), and the browser part of that is built, so the session-expired redirect exists: `api.onSessionLost(why)` passes `"expired"` (header `x-sst-session: expired`, or 401 `session_expired`) or `"ended"`, and the login screen says "You were logged out after 60 minutes without activity, and the server wiped your key from its memory. Log in again to carry on." `session.tsx` also looks again (`auth.whoami`, which doesn't count as activity) when `idle.secondsLeft` runs out, so an idle tab drops to login on its own (checked in Chrome with `SST_SESSION_IDLE_MINUTES=0.1`). Polish the wording and look as you like; keep the timer.
   - **An unsent composer draft is lost when the session expires** (the shell unmounts). Don't save drafts to `localStorage` (that's plaintext on disk). If you keep one, keep it in memory only and only for the same user, and drop it on logout. Probably not worth it: an hour without sending anything is rare.
-  - `auth.logout` takes `{all: true}` (`./ss auth.logout --all`): this user out of every tab and terminal. A "Log out everywhere" choice beside Log out would suit "I'm stepping away".
+  - `auth.logout` takes `{all: true}` (`./sst auth.logout --all`): this user out of every tab and terminal. A "Log out everywhere" choice beside Log out would suit "I'm stepping away".
   - `user.list` → `{users, unreadable}`: a user whose `user.json` is damaged is in `unreadable` (`{username, error}`), not in `users`. The picker can ignore it, or show it greyed with its error.
   - The "session ended" wording after a `user.delete` still says "The server restarted, or you logged out in another tab" (QA's note); word it without blaming the user, as the engineer asked.
 
@@ -237,7 +237,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
   - Polish candidates seen in Chrome, none blocking: a visible tab asks `auth.whoami` + `health` every 30 s, which is 2 lines a minute in `.run/server.log` per open window (the server logs every request; leaving those two out of the log would quiet it). A damaged conversation can't be removed from the app (by design: every write loads first, and a damaged file may still be rescued); the page says to move it aside. With a notice, four users and a damaged one, the login card's footer ("New user? …") falls below a laptop's fold.
 
 - **From T07 engineer** (report: `reports/T07-engineer.md`):
-  - Built: `examples/dnd-tavern.json`, `examples.list`, `conversation.import --example|--campaign [--without-messages]`, `conversation.clone [--without-messages]`, the accurate image wording, `hideWatermark: true`, `SS_CONVERSATION` in the CLI, and `README.md` for Jason. The terminal playthrough ran live as an encrypted `dev-` user.
+  - Built: `examples/dnd-tavern.json`, `examples.list`, `conversation.import --example|--campaign [--without-messages]`, `conversation.clone [--without-messages]`, the accurate image wording, `hideWatermark: true`, `SST_CONVERSATION` in the CLI, and `README.md` for Jason. The terminal playthrough ran live as an encrypted `dev-` user.
   - **For Frontend:** the browser can't start the example or clone yet. Add the three commands to `web/src/api/types.ts`; a "Start from an example" entry on the home page (`examples.list` gives title, `about`, brain names; `conversation.import --example <name>` returns the whole conversation, then navigate to it); "Clone this campaign" in the Conversation tab (title, with or without the story). Then update README.md's "Start the example campaign" and "A new campaign from this one's setup", which say to use the terminal today.
   - **For QA:** a campaign file is any `conversation.get --json`; try odd ones (missing ids, a player message with two versions, an image brain message, a `defaultBrainId` that matches nothing, huge or deeply nested JSON). The example's prompts were tuned live; judge only that each brain does its job, not style.
   - Image size is per conversation, so the Character Portraitist paints at the Scene Painter's 1024×768. A per-brain size would need a field and UI; not built.
@@ -250,7 +250,7 @@ AGENTS.md, docs/design.md, TICKETS.md, role skills, `.gitignore`, `git init`. St
 
 **Deferred in:**
 - T07 QA-7 → handover (orchestrator): the 28 `dev-*`/`qa-*` users in `data/users/` stay for the frontend pass, which needs `dev-` users; clear them before Jason's first login (the `find ... -exec rm -rf {} +` above). T07 triage added and removed only `dev-t07-triage`.
-  - **Done in the T07 frontend handover:** every `dev-*`/`qa-*` user deleted with `./ss user.delete`; the frontend pass played in a scratch data dir (report: `reports/T07-frontend.md`).
+  - **Done in the T07 frontend handover:** every `dev-*`/`qa-*` user deleted with `./sst user.delete`; the frontend pass played in a scratch data dir (report: `reports/T07-frontend.md`).
 
 ---
 

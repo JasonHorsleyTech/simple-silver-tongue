@@ -6,15 +6,15 @@
 
 ## How I ran it
 
-- **As Jason, from README.md only.** I ran `npm run up` (live), created an encrypted user `qa-t07-enc` with `printf … | ./ss user.create`, then `auth.login` and `conversation.import --example dnd-tavern`, then `export SS_CONVERSATION=…`. I played 21 live turns and regenerates, painted 3 images, and made 1 direct Venice probe (the stop sequence).
-- **Then adversarial, on `npm run up:mock`.** This covered odd campaign files, round trips, clones made while an image was painting, `SS_CONVERSATION` edge cases, restarts, cross-user access and log checks. `npm test` gave 139/139 and `npm run typecheck` was clean.
+- **As Jason, from README.md only.** I ran `npm run up` (live), created an encrypted user `qa-t07-enc` with `printf … | ./sst user.create`, then `auth.login` and `conversation.import --example dnd-tavern`, then `export SST_CONVERSATION=…`. I played 21 live turns and regenerates, painted 3 images, and made 1 direct Venice probe (the stop sequence).
+- **Then adversarial, on `npm run up:mock`.** This covered odd campaign files, round trips, clones made while an image was painting, `SST_CONVERSATION` edge cases, restarts, cross-user access and log checks. `npm test` gave 139/139 and `npm run typecheck` was clean.
 - **Spend.** The balance went from $7.84644391 to $7.80706577, so **$0.0394** in all: 22 text calls (cap ~25) and **3 images** (cap 4). The conversation recorded $0.04.
 
 ## Acceptance checklist: Jason's paragraph, clause by clause
 
 | Clause | Result | Evidence |
 |---|---|---|
-| README alone gets him running | **pass** (with QA-5 and QA-6) | `npm run up` → `user.create` (hidden prompt twice) → `auth.login` → `examples.list` → `conversation.import --example dnd-tavern` → `export SS_CONVERSATION` → `turn`. Every command in the README ran as written, and the output of `import` says what to do next. The README's terminal section has no recipe for tweaking a prompt (QA-5), and `SS_CONVERSATION` doesn't cover `conversation.get` (QA-6). |
+| README alone gets him running | **pass** (with QA-5 and QA-6) | `npm run up` → `user.create` (hidden prompt twice) → `auth.login` → `examples.list` → `conversation.import --example dnd-tavern` → `export SST_CONVERSATION` → `turn`. Every command in the README ran as written, and the output of `import` says what to do next. The README's terminal section has no recipe for tweaking a prompt (QA-5), and `SST_CONVERSATION` doesn't cover `conversation.get` (QA-6). |
 | A boring game in the tavern; walk up to the hooded figure | **pass** | GM: *"The hooded figure startles, and the letter vanishes under the table fast — then resurfaces, because there is nowhere else to put it. 'I — yes. Fine. Sit.'"* That is 160 tokens, second person, and stops on an open moment. |
 | Regenerate what the AI said, with a slight steer | **pass** | I ran `message.regenerate --steer "Make her a little braver: she speaks first and asks me if I'm headed east."`, which gave v2/2 *"Are you headed east? Tomorrow, I mean. Past Hollowmere?"* `prompt.preview --regenerate --steer` showed the steer last, after the old reply and the reminder. A later `prompt.preview` contained no trace of the steer. |
 | A second agent with specific instructions ("tell me what dice to roll") | **pass** | Dice Master: `**Insight check:** roll 1d20 + 3, DC 12.` → "I rolled a 14" → `**14 + 3 = 17 vs DC 12: success.**` Then a plain `turn` made the GM narrate the success (*"This isn't trouble… She's a young woman working up the nerve to ask a favour"*). A failure path also flowed back: `4 + 4 = 8 vs DC 13: failure.` → the GM narrated an awkward, non-disastrous failure. QA-1 covers the GM rarely *asking* for these rolls. |
@@ -57,8 +57,8 @@ This breaks the loop Jason's paragraph shows off: the GM names a check, the Dice
 
 **Repro** (live, fresh import):
 ```
-./ss turn --content 'I walk over to the hooded figure.'
-./ss turn --content 'I beam at Tobin. "This is my cousin, from out of town."'   # expect: "That's a Deception check." and a stop
+./sst turn --content 'I walk over to the hooded figure.'
+./sst turn --content 'I beam at Tobin. "This is my cousin, from out of town."'   # expect: "That's a Deception check." and a stop
 ```
 
 ### QA-2 · minor (DESIGN CONCERN) · A brain can impersonate other speakers' framing; only prompts guard it
@@ -71,7 +71,7 @@ Damage is visible, because the fake lines sit in that brain's own bubble, and Ja
 
 ### QA-3 · minor · The CLI's own image hint puts a decrypted picture in the project folder, which is not gitignored
 
-After every image the CLI prints `(image ready: ./ss image.get --id img_… --out img_….webp)` (`src/cli/main.ts:252`). From the README's working directory (the repo root), that writes a **plaintext** WebP into `~/code/simple-silver/`. `.gitignore` doesn't cover it, so `git status` shows it, and any `git add -A` by a later pass would put Jason's picture in git history. When he plays from the terminal, this command is the only way to see an image, so the paragraph's "unreadable by anyone without the password" quietly stops being true for every picture he looks at. The README's privacy section doesn't mention it either. design.md files it under "What you export: your choice", but here the app is the one suggesting it.
+After every image the CLI prints `(image ready: ./sst image.get --id img_… --out img_….webp)` (`src/cli/main.ts:252`). From the README's working directory (the repo root), that writes a **plaintext** WebP into `~/code/simple-silver/`. `.gitignore` doesn't cover it, so `git status` shows it, and any `git add -A` by a later pass would put Jason's picture in git history. When he plays from the terminal, this command is the only way to see an image, so the paragraph's "unreadable by anyone without the password" quietly stops being true for every picture he looks at. The README's privacy section doesn't mention it either. design.md files it under "What you export: your choice", but here the app is the one suggesting it.
 
 **Suggest:**
 - Make the hint `--out "$TMPDIR/img_….webp"`, or add an `image.open` that writes to a temp file, runs `open`, and deletes the file afterwards.
@@ -87,25 +87,25 @@ After every image the CLI prints `(image ready: ./ss image.get --id img_… --ou
 **Repro:**
 ```
 echo '{"brains":[{"id":"g","name":"GM","systemPrompt":"S"}],"messages":[{"author":{"type":"brain","brainId":"g"},"versions":[{"content":"  "}]}]}' > blank.json
-./ss conversation.import --campaign @blank.json            # expected: messages.0.versions.0.content: A message can't be blank
-./ss prompt.preview --conversation c_… --content hi --json  # actual: an assistant message of two spaces
+./sst conversation.import --campaign @blank.json            # expected: messages.0.versions.0.content: A message can't be blank
+./sst prompt.preview --conversation c_… --content hi --json  # actual: an assistant message of two spaces
 ```
 **Fix:** `(s) => s.trim() !== ""` with the message as `refine`'s second argument.
 
 ### QA-5 · minor · No terminal recipe for "slightly tweak a system prompt" or "add a brain"
 
-The README's "Change the table mid-game" points only to the browser's settings panel, and "From the terminal" shows only `turn` and `regenerate`. To tweak one line from the terminal, Jason first has to get the current prompt into a file. `brain.list` prints it with headers and indentation around it, so in practice that means `./ss brain.list --json | jq -r '.brains[] | select(.name=="Game Master") | .systemPrompt' > gm.md`, which he would have to work out himself from `./ss help`. The command surface is complete (parity holds). The README just isn't sufficient on its own for clause 5 from the terminal.
+The README's "Change the table mid-game" points only to the browser's settings panel, and "From the terminal" shows only `turn` and `regenerate`. To tweak one line from the terminal, Jason first has to get the current prompt into a file. `brain.list` prints it with headers and indentation around it, so in practice that means `./sst brain.list --json | jq -r '.brains[] | select(.name=="Game Master") | .systemPrompt' > gm.md`, which he would have to work out himself from `./sst help`. The command surface is complete (parity holds). The README just isn't sufficient on its own for clause 5 from the terminal.
 
 **Suggest:** three README lines (the `jq` export, edit, `brain.update --brain "Game Master" --system-prompt @gm.md`, plus `brain.add`). A raw output mode would also do it, e.g. `brain.list --brain X --field system-prompt`.
 
-### QA-6 · minor · `SS_CONVERSATION` stops short of `conversation.*`, and a stale one routes turns silently
+### QA-6 · minor · `SST_CONVERSATION` stops short of `conversation.*`, and a stale one routes turns silently
 
-With `SS_CONVERSATION` exported:
-- `./ss conversation.get` gives `Invalid arguments for conversation.get: id: required`. The same happens for `conversation.update`, `.delete` and `.clone`, which take `--id`, not `--conversation` (`src/cli/main.ts:90` fills only `conversation`). Reading the story so far, or changing the image size, is exactly what you do mid-game.
-- After cloning "Pathfinder", if Jason forgets to re-export, `./ss turn` plays in the **old** campaign. Nothing in the reply's output names the conversation.
-- A bad value says `No conversation c_… ` without mentioning that it came from `SS_CONVERSATION`.
+With `SST_CONVERSATION` exported:
+- `./sst conversation.get` gives `Invalid arguments for conversation.get: id: required`. The same happens for `conversation.update`, `.delete` and `.clone`, which take `--id`, not `--conversation` (`src/cli/main.ts:90` fills only `conversation`). Reading the story so far, or changing the image size, is exactly what you do mid-game.
+- After cloning "Pathfinder", if Jason forgets to re-export, `./sst turn` plays in the **old** campaign. Nothing in the reply's output names the conversation.
+- A bad value says `No conversation c_… ` without mentioning that it came from `SST_CONVERSATION`.
 
-**Suggest:** let `SS_CONVERSATION` fill `conversation.*`'s `--id` too, and print a dim `(campaign: <title>)` line on stderr when the env var supplied the id.
+**Suggest:** let `SST_CONVERSATION` fill `conversation.*`'s `--id` too, and print a dim `(campaign: <title>)` line on stderr when the env var supplied the id.
 
 ### QA-7 · minor · 28 `dev-*`/`qa-*` users are still in `data/users/`, and Jason's login picker lists them all
 
@@ -114,7 +114,7 @@ The engineer flagged this, and it is still open. Jason's first browser login "th
 ### QA-8 · nit · Three wording slips in import and clone output
 
 - **Clone hint.** `conversation.clone` prints "(2 image prompts: image.retry paints one)" even though a clone *copies* the finished images (`campaigns.ts:347`, shared with import). For a clone, the hint should only appear for images that came out as errors.
-- **Unknown model in import.** The error says "set it with `./ss conversation.update --id <conversation>`" (`turn.ts:125`), but nothing was created. "Fix `settings.textModel` in the file" fits better.
+- **Unknown model in import.** The error says "set it with `./sst conversation.update --id <conversation>`" (`turn.ts:125`), but nothing was created. "Fix `settings.textModel` in the file" fits better.
 - **Template error.** It ends with a double period: "where the text should go..".
 
 ### QA-9 · nit · Small text issues in the example campaign

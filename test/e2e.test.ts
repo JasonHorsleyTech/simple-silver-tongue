@@ -134,9 +134,9 @@ describe("CLI end to end against an in-process server and mock Venice", () => {
     }
   });
 
-  test("the ./ss executable works as a subprocess", async () => {
-    const { stdout } = await promisify(execFile)(join(ROOT, "ss"), ["health"], {
-      env: { ...process.env, SS_URL: t.url, SS_RUN_DIR: t.config.runDir },
+  test("the ./sst executable works as a subprocess", async () => {
+    const { stdout } = await promisify(execFile)(join(ROOT, "sst"), ["health"], {
+      env: { ...process.env, SST_URL: t.url, SST_RUN_DIR: t.config.runDir },
     });
     assert.match(stdout, /^ok · MOCK Venice/);
   });
@@ -241,7 +241,7 @@ describe("HTTP adapter: streams, binary, sessions and the local-only guard", () 
     });
     assert.equal(res.status, 200);
     const cookie = res.headers.getSetCookie()[0] ?? "";
-    assert.match(cookie, /^ss_session=[\w-]+;/);
+    assert.match(cookie, /^sst_session=[\w-]+;/);
     assert.match(cookie, /HttpOnly/);
     assert.match(cookie, /SameSite=Strict/);
     assert.ok(!JSON.stringify(await res.json()).includes(cookie.split(";")[0]!.split("=")[1]!), "token must not be in the body");

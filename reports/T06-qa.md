@@ -10,7 +10,7 @@ Run on mock (`npm run up:mock`) with fresh users `qa-t06-enc` (encrypted), `qa-t
 
 | Bullet | Result | Evidence |
 |---|---|---|
-| For an encrypted user, every file except `user.json` is ciphertext, conversations and images alike. No plaintext in logs, temp files, `.run/` or errors | **pass** | Three users ran one script at the same time from three session files (`SS_SESSION_FILE`). Each kind of text carried its own marker: title, system prompt, setup label and text, brain name and prompt, reminder, painter prompt, tool description, negative prompt, player template, message, steer, image prompt, words in a brain's mouth, second message, edit. Every marker turned up in the plaintext control's file (`ZQPLN*`: 17/17). The encrypted users' markers (`ZQENC*`, `ZQTWO*`) turned up in 0 files under `data/` and `.run/`, and the passwords did too. Files start with `SSENC1`; `file` says `data`. A decrypted image is 34 bytes shorter than its `.bin` (magic + IV + tag), and none of its 16-byte windows appears in the ciphertext. Later grep of `.run/*` (both server logs, mock logs, session file) for every phrase and password I used: 0. Also clean: `$TMPDIR`, `/tmp`, `/private/var/tmp`, `~/.npm/_logs` (empty), `~/.zsh_history`. Tests leave no `ss-test-*` dirs behind. |
+| For an encrypted user, every file except `user.json` is ciphertext, conversations and images alike. No plaintext in logs, temp files, `.run/` or errors | **pass** | Three users ran one script at the same time from three session files (`SST_SESSION_FILE`). Each kind of text carried its own marker: title, system prompt, setup label and text, brain name and prompt, reminder, painter prompt, tool description, negative prompt, player template, message, steer, image prompt, words in a brain's mouth, second message, edit. Every marker turned up in the plaintext control's file (`ZQPLN*`: 17/17). The encrypted users' markers (`ZQENC*`, `ZQTWO*`) turned up in 0 files under `data/` and `.run/`, and the passwords did too. Files start with `SSENC1`; `file` says `data`. A decrypted image is 34 bytes shorter than its `.bin` (magic + IV + tag), and none of its 16-byte windows appears in the ciphertext. Later grep of `.run/*` (both server logs, mock logs, session file) for every phrase and password I used: 0. Also clean: `$TMPDIR`, `/tmp`, `/private/var/tmp`, `~/.npm/_logs` (empty), `~/.zsh_history`. Tests leave no `ss-test-*` dirs behind. |
 | Wrong passwords rejected cleanly; sessions in memory only, a restart means logging in again (the CLI says so); a plaintext user is plain JSON | **pass** | An empty, a trailing-space and a wrong password all give `Wrong password for qa-t06-enc.` (exit 1, log `401 wrong_password`, never the password). A password for the plain user gets a clear refusal. An unknown user gets a clear 404. A failed login leaves the caller's existing session alone. The browser shows "Wrong password for qa-t06-enc." inline. After `npm run up:mock`, all three session files print `(Saved CLI session … is no longer valid …)` / `Not logged in.`. An image painting at restart time (`MOCK_IMAGE_SLOW`) was finished and saved as `.bin` before exit. |
 | `user.delete` with confirmation; `user.list` flags | **pass** | Deletes need `--confirm <name>`. Refused with 409 `user_busy`, nothing touched, while a reply streams, while an image is painting, and while a stopped reply drains. The CLI and browser sessions are logged out (`Logged out 2 sessions`), and no `.deleted-*` folder is left. The name is free at once. Re-created users, plain and encrypted, see nothing of the old one. The old ciphertext copied back under the reused name is refused (`encrypted file in a plaintext user's folder`). `user.list` shows `ENCRYPTED yes/no`. |
 | A test proves no known plaintext in an encrypted user's conversation file or image file | **pass** | `test/encryption.test.ts` (17 kinds of text with a plaintext control, image windows, run dir, log). 118/118 pass. |
@@ -27,7 +27,7 @@ Run on mock (`npm run up:mock`) with fresh users `qa-t06-enc` (encrypted), `qa-t
   - Control 1, a formless `<textarea>` without `autocomplete="off"` on the same page: **found** in `Sessions/Session_*` and `Tabs_*` (UTF-16).
   - Control 2, the same textarea with `autocomplete="off"`: **not found.**
   - So the engineer's `autocomplete="off"` is what keeps drafts out of Chrome 155's session files. Every content `<input>`/`<textarea>` in `web/src` has it now. Only the numeric width and height fields lack it.
-  - Otherwise the disk cache holds only the shell (`/`, `/c/<id>`, JS, CSS, favicon), never `/api`. History has `/c/<id>` with title "simple silver". `ss_session` is in `Cookies` as an encrypted (`v10`) session cookie, which dies with the server.
+  - Otherwise the disk cache holds only the shell (`/`, `/c/<id>`, JS, CSS, favicon), never `/api`. History has `/c/<id>` with title "simple silver". `sst_session` is in `Cookies` as an encrypted (`v10`) session cookie, which dies with the server.
   - The frontend pass doesn't need to repeat this check.
 
 ## Findings
@@ -36,13 +36,13 @@ Run on mock (`npm run up:mock`) with fresh users `qa-t06-enc` (encrypted), `qa-t
 
 **Repro** (server up, Jason logged in once from the CLI):
 ```
-printf 'qa-enc-pw-7731\n' | ./ss auth.login --username qa-t06-enc --password -
+printf 'qa-enc-pw-7731\n' | ./sst auth.login --username qa-t06-enc --password -
 # later, someone else at the Mac, no password, fresh environment:
-env -i PATH="$PATH" HOME="$HOME" ./ss conversation.get --id c_3x7vzng2h3     # the whole campaign, decrypted
-curl -s -H 'content-type: application/json' -H "cookie: ss_session=$(jq -r .token .run/cli-session.json)" -d '{}' \
+env -i PATH="$PATH" HOME="$HOME" ./sst conversation.get --id c_3x7vzng2h3     # the whole campaign, decrypted
+curl -s -H 'content-type: application/json' -H "cookie: sst_session=$(jq -r .token .run/cli-session.json)" -d '{}' \
   http://127.0.0.1:4747/api/conversation.list                                # same, from anywhere on the Mac
 ```
-- Logging out in the browser (`auth.logout` from the tab) leaves the CLI session alive (`./ss auth.whoami` → `qa-t06-enc (encrypted)`), and the reverse is true too. There is no "log out everywhere" short of a password change or a restart.
+- Logging out in the browser (`auth.logout` from the tab) leaves the CLI session alive (`./sst auth.whoami` → `qa-t06-enc (encrypted)`), and the reverse is true too. There is no "log out everywhere" short of a password change or a restart.
 - Even with no token, `kill -USR1 $(cat .run/server.pid)` opens the Node inspector on `127.0.0.1:9229`. I evaluated an expression inside the running server with it (`process.pid`, the env var count). That is every logged-in session's key, and the Venice key, for anyone at the keyboard.
 
 **Expected:** under Jason's threat model, a person who sits down at the Mac shouldn't get the campaign just because the server was left up, which is its normal state. **Actual:** sessions live until logout or restart (`src/server/sessions.ts:33`, no expiry), and `npm run up` keeps the server running indefinitely.
@@ -50,8 +50,8 @@ curl -s -H 'content-type: application/json' -H "cookie: ss_session=$(jq -r .toke
 **Is it a real gap?** Yes, but a bounded one. It needs the Mac unlocked and a user logged in. Nothing can protect a tab that is open on screen, and a skilled intruder at an unlocked Mac has other ways in. Still, it is the path that takes no skill at all: open Chrome or a terminal and look. It is also the case Jason described: someone at his Mac while he's away.
 
 **Cheapest sensible answer (about 20 lines):**
-- An idle timeout in `sessions.ts`. Each session gets a `lastUsed`. `get()` destroys a session that has been idle past the limit and returns null, so the client already gets `x-ss-session: invalid` / 401, which the CLI handles and the frontend's planned session-expired redirect will handle. A `setInterval(sweep, 60_000).unref()` wipes idle keys from memory even when no request comes.
-- Default 30 minutes, with an env override (`SS_SESSION_IDLE_MINUTES`, 0 = never).
+- An idle timeout in `sessions.ts`. Each session gets a `lastUsed`. `get()` destroys a session that has been idle past the limit and returns null, so the client already gets `x-sst-session: invalid` / 401, which the CLI handles and the frontend's planned session-expired redirect will handle. A `setInterval(sweep, 60_000).unref()` wipes idle keys from memory even when no request comes.
+- Default 30 minutes, with an env override (`SST_SESSION_IDLE_MINUTES`, 0 = never).
 - Running work holds its own `forkVault`, so expiry mid-reply is already safe.
 - The web app doesn't poll; it re-checks only on focus. So the timeout really fires, and the tab drops to login at the next focus.
 - Add `--disable-sigusr1` to the server spawn in `scripts/up.ts:57`. Node 26 has the flag.
@@ -63,9 +63,9 @@ curl -s -H 'content-type: application/json' -H "cookie: ss_session=$(jq -r .toke
 ```
 cp data/users/qa-t06-enc/conversations/c_3x7vzng2h3.json /tmp/x
 python3 -c "import sys;p=sys.argv[1];b=bytearray(open(p,'rb').read());b[len(b)//2]^=1;open(p,'wb').write(b)" data/users/qa-t06-enc/conversations/c_3x7vzng2h3.json
-./ss conversation.get --id c_3x7vzng2h3     # error: Internal server error (see .run/server.log)   (+ an ERROR stack in the log)
-./ss conversation.list                      # Unreadable conversation files (1): c_3x7vzng2h3: decryption failed (wrong key or corrupted file)
-head -c 20 /tmp/x > data/users/qa-t06-enc/conversations/c_3x7vzng2h3.json; ./ss conversation.list   # "...: expected an encrypted file, found plaintext"
+./sst conversation.get --id c_3x7vzng2h3     # error: Internal server error (see .run/server.log)   (+ an ERROR stack in the log)
+./sst conversation.list                      # Unreadable conversation files (1): c_3x7vzng2h3: decryption failed (wrong key or corrupted file)
+head -c 20 /tmp/x > data/users/qa-t06-enc/conversations/c_3x7vzng2h3.json; ./sst conversation.list   # "...: expected an encrypted file, found plaintext"
 ```
 The same 500 comes from `image.get` on a flipped, truncated or foreign image, and from a foreign conversation copied in.
 
@@ -90,10 +90,10 @@ For `dev-`/`qa-` users this is harmless. It matters for T07's encrypted playthro
 
 **Repro:**
 ```
-./ss conversation.create --title second --system-prompt x                # c_zmdlvf652d
+./sst conversation.create --title second --system-prompt x                # c_zmdlvf652d
 cp data/users/qa-t06-enc/conversations/c_3x7vzng2h3.json data/users/qa-t06-enc/conversations/c_zmdlvf652d.json
-./ss conversation.list                                                    # c_3x7vzng2h3 listed twice
-./ss conversation.update --id c_zmdlvf652d --title Renamed                # says "Updated c_3x7vzng2h3", writes into c_zmdlvf652d.json
+./sst conversation.list                                                    # c_3x7vzng2h3 listed twice
+./sst conversation.update --id c_zmdlvf652d --title Renamed                # says "Updated c_3x7vzng2h3", writes into c_zmdlvf652d.json
 ```
 Images can be swapped the same way.
 

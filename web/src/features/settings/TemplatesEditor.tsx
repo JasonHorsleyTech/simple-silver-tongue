@@ -43,7 +43,7 @@ const SPECS: Spec[] = [
     key: "thought",
     label: "Fresh take: the Muse's note",
     description:
-      "What Regenerate's Fresh take box starts with: the Muse's note, which goes into the ledger right before the reply for every brain to read, and which the brain then answers. {{brain}} is the brain it is for, {{thought}} where the caret goes (and where ./ss --wrap puts your words). Whatever the box holds when you send is sent word for word, so you can change it there each time. Inside a ```hidden block it stays folded for the player.",
+      "What Regenerate's Fresh take box starts with: the Muse's note, which goes into the ledger right before the reply for every brain to read, and which the brain then answers. {{brain}} is the brain it is for, {{thought}} where the caret goes (and where ./sst --wrap puts your words). Whatever the box holds when you send is sent word for word, so you can change it there each time. Inside a ```hidden block it stays folded for the player.",
     needs: ["{{thought}}"],
     required: true,
   },
@@ -72,7 +72,7 @@ export function TemplatesEditor({ conv, onSaved }: { conv: Conversation; onSaved
             const missing = s.needs.filter((n) => !v.includes(n));
             if (!missing.length) return null;
             return s.key === "thought"
-              ? `Needs ${missing.join(" and ")}: that is where the caret goes, and where ./ss puts your idea (--wrap).`
+              ? `Needs ${missing.join(" and ")}: that is where the caret goes, and where ./sst puts your idea (--wrap).`
               : s.required
                 ? `Needs ${missing.join(" and ")}: that is where the number goes, so a roll's line can't be made without it.`
                 : `Without ${missing.join(" and ")}, the message itself isn't sent, only this text.`;

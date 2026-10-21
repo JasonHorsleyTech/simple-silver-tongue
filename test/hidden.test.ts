@@ -258,14 +258,14 @@ describe("hidden notes end to end, against the mock (T08)", () => {
     const saved = (await json(["conversation.get", "--id", conv.id])) as Conversation;
     const reply = saved.messages[1]!;
     assert.match(reply.versions[0]!.content, /```hidden character sheet\n[^]*MOCK_SECRET[^]*\n```/, "the ledger has the raw text");
-    assert.match(turn.stderr, new RegExp(`1 hidden note folded: \\./ss message\\.get --conversation ${conv.id} --message ${reply.id} --reveal shows it`));
+    assert.match(turn.stderr, new RegExp(`1 hidden note folded: \\./sst message\\.get --conversation ${conv.id} --message ${reply.id} --reveal shows it`));
     assert.match((await ok(["turn", ...c, "--content", "MOCK_HIDDEN", "--reveal"])).stdout, SECRET, "turn --reveal streams it as it comes");
 
     // conversation.get: folded, with how to see it. --reveal shows it, --json is the raw text.
     const get = await ok(["conversation.get", "--id", conv.id]);
     assert.doesNotMatch(get.stdout, SECRET);
     assert.match(get.stdout, /\[Hidden · 5 lines\]/);
-    assert.match(get.stdout, /2 hidden notes folded: \.\/ss conversation\.get --id c_\w+ --reveal shows them/);
+    assert.match(get.stdout, /2 hidden notes folded: \.\/sst conversation\.get --id c_\w+ --reveal shows them/);
     const revealed = await ok(["conversation.get", "--id", conv.id, "--reveal"]);
     assert.match(revealed.stdout, /```hidden character sheet\n[^]*MOCK_SECRET/);
     assert.doesNotMatch(revealed.stdout, /hidden notes? folded/);
@@ -322,7 +322,7 @@ describe("hidden notes end to end, against the mock (T08)", () => {
     assert.match(sel.stdout, /1 hidden note folded/);
 
     // A follower that joins mid-note gets the merged text so far (fences and all) in one delta: still folded.
-    const cookie = `ss_session=${JSON.parse(await (await import("node:fs/promises")).readFile(`${t.config.runDir}/cli-session.json`, "utf8")).token}`;
+    const cookie = `sst_session=${JSON.parse(await (await import("node:fs/promises")).readFile(`${t.config.runDir}/cli-session.json`, "utf8")).token}`;
     const res = await t.app.fetch(
       new Request("http://localhost/api/turn", {
         method: "POST",
@@ -347,7 +347,7 @@ describe("hidden notes end to end, against the mock (T08)", () => {
     let stdout = "";
     let stderr = "";
     const code = await run(["turn", "--conversation", conv.id, "--content", "MOCK_HIDDEN_ONLY"], {
-      env: { SS_URL: t.url, SS_RUN_DIR: t.config.runDir },
+      env: { SST_URL: t.url, SST_RUN_DIR: t.config.runDir },
       cwd: t.tmp,
       stdout: { write: (s) => void (stdout += String(s)), isTTY: true },
       stderr: { write: (s) => void (stderr += s), isTTY: false },

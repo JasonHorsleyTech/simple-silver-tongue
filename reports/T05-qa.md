@@ -125,10 +125,10 @@ Measured live: painter → GM at once, `z-image-turbo` at 768×512, `deepseek-v4
 
 Repro (live, $0.01):
 ```
-./ss turn --conversation $C --brain "Scene Painter" --content "Now paint the coin up close." &   # via curl
+./sst turn --conversation $C --brain "Scene Painter" --content "Now paint the coin up close." &   # via curl
 # at image_pending:
-kill -9 $(cat .run/server.pid); sleep 15; npm run up; ./ss auth.login ...
-./ss venice.balance; ./ss conversation.get --id $C --json | jq .spentUsd
+kill -9 $(cat .run/server.pid); sleep 15; npm run up; ./sst auth.login ...
+./sst venice.balance; ./sst conversation.get --id $C --json | jq .spentUsd
 ```
 - **Expected:** "Jason never loses a paid image".
 - **Actual:**
@@ -163,11 +163,11 @@ This is the browser's version of "stuck pending", so it should be closed before 
 
 Repro (mock):
 ```
-./ss turn --conversation $C --brain "$P" --content "MOCK_IMAGE_SLOW paint the slow cellar" &
+./sst turn --conversation $C --brain "$P" --content "MOCK_IMAGE_SLOW paint the slow cellar" &
 sleep 0.8; kill -STOP $(cat .run/mock.pid)
-time ./ss generation.stop --conversation $C
+time ./sst generation.stop --conversation $C
 #   → "Too late to stop the image: Venice was already making it (and billing it), so it was finished and kept in m_8lhv468ow1."  (10.15 s)
-./ss conversation.get --id $C --json | jq '.messages[-1].versions[-1].image.status'   # "pending"
+./sst conversation.get --id $C --json | jq '.messages[-1].versions[-1].image.status'   # "pending"
 ```
 - **Expected:** words that match the state: "it is still being made and will be kept when Venice sends it".
 - **Actual, part one:** the stop returned "finished and kept" with a `pending` message.
@@ -184,8 +184,8 @@ Repro (plain user, a hand-made "bytes written, status not" state, which a crash 
 ```
 # with the server down: copy an image file to images/img_handmade01.png; set a version's image to
 # {id: "img_handmade01", status: "pending", previous: <its old done image>}
-npm run up:mock; ./ss conversation.get ...    # → status done, mime image/png, previous still set, no costUsd
-./ss image.retry --conversation $C --message $M
+npm run up:mock; ./sst conversation.get ...    # → status done, mime image/png, previous still set, no costUsd
+./sst image.retry --conversation $C --message $M
 # img_as3gz3devj (the old previous) is still on disk, referenced by nothing
 ```
 - **Cause:** `settleStaleImages` (`src/conversations/images.ts:30-48`) marks the image done but doesn't do `paint()`'s swap-in (`paint.ts:78-81`: drop `previous`, delete its file). `newImageRecord` then drops `prev.previous` (`images.ts:53-56`). The leftover file survives `message.delete` and `conversation.delete`. The recovered image also gets no `costUsd` and adds nothing to `spentUsd`, although the comment says Venice billed it.

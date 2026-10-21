@@ -13,7 +13,7 @@ import { parseFlags, splitArgv, UsageError } from "./args.ts";
 import { promptHidden, readAllStdin } from "./prompt.ts";
 
 /**
- * ./ss: a thin HTTP client over the server's command registry. It asks the server for the command
+ * ./sst: a thin HTTP client over the server's command registry. It asks the server for the command
  * catalog (help), parses flags against each command's JSON schema, and POSTs to /api/<name>, the same
  * endpoints the browser uses. It never touches data/ itself.
  */
@@ -38,11 +38,11 @@ type SavedSession = { token: string; username?: string; url: string; savedAt: st
 const EXIT = { ok: 0, failed: 1, usage: 2, noServer: 3 } as const;
 
 export async function run(argv: string[], io: Io): Promise<number> {
-  const base = (io.env.SS_URL || `http://127.0.0.1:${io.env.SS_PORT || DEFAULT_PORT}`).replace(/\/+$/, "");
-  // SS_SESSION_FILE gives a terminal its own login, so two terminals can be two users side by side (T06).
-  const sessionFile = io.env.SS_SESSION_FILE
-    ? resolve(io.cwd, io.env.SS_SESSION_FILE)
-    : join(resolve(io.env.SS_RUN_DIR || join(ROOT, ".run")), "cli-session.json");
+  const base = (io.env.SST_URL || `http://127.0.0.1:${io.env.SST_PORT || DEFAULT_PORT}`).replace(/\/+$/, "");
+  // SST_SESSION_FILE gives a terminal its own login, so two terminals can be two users side by side (T06).
+  const sessionFile = io.env.SST_SESSION_FILE
+    ? resolve(io.cwd, io.env.SST_SESSION_FILE)
+    : join(resolve(io.env.SST_RUN_DIR || join(ROOT, ".run")), "cli-session.json");
   const err = (s: string) => io.stderr.write(`${s}\n`);
   const dim = (s: string) => (io.stderr.isTTY ? `\x1b[2m${s}\x1b[0m` : s);
 
@@ -60,16 +60,16 @@ export async function run(argv: string[], io: Io): Promise<number> {
     rest = ["--command", name];
     name = "help";
   } else if (name === "help" && rest.length === 1 && !rest[0]!.startsWith("-")) {
-    rest = ["--command", rest[0]!]; // ./ss help user.create
+    rest = ["--command", rest[0]!]; // ./sst help user.create
   }
 
   const saved = await loadSession(sessionFile);
 
   async function call(cmd: string, args: unknown, opts: { text: boolean }): Promise<Response> {
     const headers: Record<string, string> = { "content-type": "application/json" };
-    if (opts.text) headers["x-ss-cli"] = "1";
-    if (opts.text && global.reveal) headers["x-ss-reveal"] = "1"; // T08: the text view shows hidden notes
-    if (saved) headers.cookie = `ss_session=${saved.token}`;
+    if (opts.text) headers["x-sst-cli"] = "1";
+    if (opts.text && global.reveal) headers["x-sst-reveal"] = "1"; // T08: the text view shows hidden notes
+    if (saved) headers.cookie = `sst_session=${saved.token}`;
     return fetch(`${base}/api/${cmd}`, { method: "POST", headers, body: JSON.stringify(args) });
   }
 
@@ -85,7 +85,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       info = catalog.find((c) => c.name === name);
       if (!info) {
         const near = catalog.filter((c) => c.name.startsWith(name.split(".")[0]!) || c.name.includes(name)).map((c) => c.name);
-        err(`error: unknown command ${name}.${near.length ? ` Did you mean: ${near.join(", ")}?` : ""} Run ./ss help.`);
+        err(`error: unknown command ${name}.${near.length ? ` Did you mean: ${near.join(", ")}?` : ""} Run ./sst help.`);
         return EXIT.usage;
       }
     }
@@ -96,22 +96,22 @@ export async function run(argv: string[], io: Io): Promise<number> {
       readStdin: io.readStdin,
     });
     if (positionals.length) throw new UsageError(`unexpected argument ${JSON.stringify(positionals[0])} (flags look like --name value)`);
-    // T07: SS_CONVERSATION=c_... stands in for --conversation wherever a command takes one and it was left out,
+    // T07: SST_CONVERSATION=c_... stands in for --conversation wherever a command takes one and it was left out,
     // so a campaign played from the terminal doesn't need its id pasted into every line. T07 QA-6: and for the
     // --id of conversation.get, .update and .clone (not .delete, which asks for nothing more before it deletes).
-    const fromEnv = io.env.SS_CONVERSATION || undefined;
+    const fromEnv = io.env.SST_CONVERSATION || undefined;
     const envKey = !fromEnv ? null : info.args.properties?.conversation ? "conversation" : ENV_ID_COMMANDS.has(name) ? "id" : null;
     const usedEnv = envKey !== null && args[envKey] === undefined;
     if (usedEnv && envKey) args[envKey] = fromEnv;
     for (const flag of inlineSecrets) {
       // The data on disk is ciphertext, but a password typed here sits in ~/.zsh_history in plain text (T06).
-      err(`warning: ${flag} on the command line is saved in your shell history (and shows in ps while ./ss runs). Leave it out to be asked for it, or pass ${flag} - and pipe it in.`);
+      err(`warning: ${flag} on the command line is saved in your shell history (and shows in ps while ./sst runs). Leave it out to be asked for it, or pass ${flag} - and pipe it in.`);
     }
     await promptForSecrets(info.args, args, io, stdinUsed);
 
     // 3. Call the server.
     const res = await call(name, args, { text: !global.json && info.kind === "json" });
-    const stale = res.headers.get("x-ss-session");
+    const stale = res.headers.get("x-sst-session");
     if (stale && saved) {
       await rm(sessionFile, { force: true });
       const yours = `Saved CLI session${saved.username ? ` for ${saved.username}` : ""}`;
@@ -121,7 +121,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     }
     if (!res.ok) {
       const code = await printError(res, saved, err, stale, { json: global.json, stdout: io.stdout, dim });
-      if (usedEnv && res.status === 404) err(dim(`(The conversation id came from SS_CONVERSATION=${fromEnv}: export another one, or pass --${envKey === "id" ? "id" : "conversation"}.)`));
+      if (usedEnv && res.status === 404) err(dim(`(The conversation id came from SST_CONVERSATION=${fromEnv}: export another one, or pass --${envKey === "id" ? "id" : "conversation"}.)`));
       return code;
     }
 
@@ -158,7 +158,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     return EXIT.ok;
   } catch (e) {
     if (e instanceof UsageError) {
-      err(`error: ${e.message}. Run ./ss help ${name}.`);
+      err(`error: ${e.message}. Run ./sst help ${name}.`);
       return EXIT.usage;
     }
     if (isConnectionError(e)) {
@@ -171,7 +171,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   }
 }
 
-/** Commands whose --id SS_CONVERSATION fills in (T07 QA-6). conversation.delete is left out on purpose. */
+/** Commands whose --id SST_CONVERSATION fills in (T07 QA-6). conversation.delete is left out on purpose. */
 const ENV_ID_COMMANDS = new Set(["conversation.get", "conversation.update", "conversation.clone"]);
 
 const extensionOf = (type: string) => ({ "image/webp": "webp", "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif" })[type.split(";")[0]!.trim()] ?? "bin";
@@ -191,7 +191,7 @@ async function openWithSystem(file: string): Promise<void> {
   await promisify(execFile)(process.platform === "darwin" ? "open" : "xdg-open", [file]);
 }
 
-/** Static schema for `help`, so `./ss help` needs one request and works offline. */
+/** Static schema for `help`, so `./sst help` needs one request and works offline. */
 const HELP_INFO: CommandInfo = {
   name: "help",
   summary: "",
@@ -229,7 +229,7 @@ async function promptForSecrets(schema: JsonSchema, args: Record<string, unknown
   }
 }
 
-/** What the server's x-ss-session header says about a saved token it no longer accepts (sessions.ts, EndReason). */
+/** What the server's x-sst-session header says about a saved token it no longer accepts (sessions.ts, EndReason). */
 const STALE_SESSION: Record<string, string> = {
   invalid: "is no longer valid: the server restarted since it logged in (a restart logs everyone out).",
   expired: "expired: nothing used it for the idle limit, so the server logged it out and wiped its key from memory.",
@@ -260,7 +260,7 @@ async function printError(
   err(`error: ${message}`);
   if (diagnostics && !out.json) err(out.dim(`\n${diagnostics}`));
   const loggedOut = code === "unauthenticated" || code === "session_expired" || (code === "session_ended" && stale !== null);
-  if (loggedOut && stale !== "deleted" && saved?.username) err(`Log in again: ./ss auth.login --username ${saved.username}`);
+  if (loggedOut && stale !== "deleted" && saved?.username) err(`Log in again: ./sst auth.login --username ${saved.username}`);
   return EXIT.failed;
 }
 
@@ -334,7 +334,7 @@ async function printStream(res: Response, opts: StreamOpts, io: Io, dim: (s: str
   let made: { id?: string; name?: string } | undefined;
   const sayMade = () => {
     if (!made) return;
-    errOut(`Made a new brain, ${made.name} (${made.id}), with this reply pinned to it. Rename it once you know who it is: ./ss brain.update --conversation ${opts.conversation ?? "<conversation>"} --brain ${made.id} --name "..."\n`);
+    errOut(`Made a new brain, ${made.name} (${made.id}), with this reply pinned to it. Rename it once you know who it is: ./sst brain.update --conversation ${opts.conversation ?? "<conversation>"} --brain ${made.id} --name "..."\n`);
     made = undefined;
   };
   const handle = (line: string) => {
@@ -400,7 +400,7 @@ ${foldHidden(text).text}
         break;
       }
       case "start": {
-        // With SS_CONVERSATION, name the campaign, so a stale export after a clone shows at once (T07 QA-6).
+        // With SST_CONVERSATION, name the campaign, so a stale export after a clone shows at once (T07 QA-6).
         const where = fromEnv && typeof ev.conversationTitle === "string" ? ` · in "${ev.conversationTitle}"` : "";
         if (typeof ev.messageId === "string") messageId = ev.messageId;
         // T18: a brain on a model of its own says so (the others use the conversation's, as conversation.get shows).
@@ -420,11 +420,11 @@ ${foldHidden(text).text}
       case "image_done": {
         const flags = [ev.image?.blurred ? "blurred by safe mode" : "", ev.image?.contentViolation ? "flagged by Venice's content policy" : ""].filter(Boolean);
         // --open, not --out <file>: a file saved here would be a decrypted copy in the project folder (T07 QA-3).
-        errOut(dim(`(image ready${flags.length ? `, ${flags.join(", ")}` : ""}: ./ss image.get --id ${ev.imageId} --open)\n`));
+        errOut(dim(`(image ready${flags.length ? `, ${flags.join(", ")}` : ""}: ./sst image.get --id ${ev.imageId} --open)\n`));
         break;
       }
       case "image_error":
-        errOut(`\nimage error: ${ev.error?.message ?? ev.error}\nRetry it: ./ss image.retry --conversation ${ev.retry?.args?.conversation ?? "<conversation>"} --message ${ev.messageId}\n`);
+        errOut(`\nimage error: ${ev.error?.message ?? ev.error}\nRetry it: ./sst image.retry --conversation ${ev.retry?.args?.conversation ?? "<conversation>"} --message ${ev.messageId}\n`);
         break;
       case "done": {
         endText();
@@ -432,7 +432,7 @@ ${foldHidden(text).text}
         if (typeof ev.note === "string") errOut(dim(`[${ev.note}]\n`));
         const id = typeof ev.message?.id === "string" ? ev.message.id : messageId;
         const conv = opts.conversation ?? "<conversation>";
-        if (folder?.folded && id) errOut(dim(`${revealHint(folder.folded, `./ss message.get --conversation ${conv} --message ${id} --reveal`)}\n`));
+        if (folder?.folded && id) errOut(dim(`${revealHint(folder.folded, `./sst message.get --conversation ${conv} --message ${id} --reveal`)}\n`));
         sayMade();
         break;
       }
@@ -457,7 +457,7 @@ ${foldHidden(text).text}
   } catch {
     // undici just says "terminated" (T02 QA-8). The server keeps working after a disconnect, so say so.
     endText();
-    errOut("\nerror: lost the connection to the server mid-stream (did it restart?). Check what was saved with ./ss conversation.get.\n");
+    errOut("\nerror: lost the connection to the server mid-stream (did it restart?). Check what was saved with ./sst conversation.get.\n");
     return EXIT.failed;
   }
   handle(buf);
@@ -477,11 +477,11 @@ async function loadSession(file: string): Promise<SavedSession | null> {
   }
 }
 
-/** The server sets or clears the ss_session cookie; mirror that into .run/cli-session.json. */
+/** The server sets or clears the sst_session cookie; mirror that into .run/cli-session.json. */
 async function syncSession(res: Response, result: unknown, file: string, url: string) {
-  const cookie = res.headers.getSetCookie().find((c) => c.startsWith("ss_session="));
+  const cookie = res.headers.getSetCookie().find((c) => c.startsWith("sst_session="));
   if (cookie === undefined) return;
-  const token = cookie.slice("ss_session=".length).split(";")[0] ?? "";
+  const token = cookie.slice("sst_session=".length).split(";")[0] ?? "";
   if (!token || /max-age=0/i.test(cookie)) {
     await rm(file, { force: true });
     return;
@@ -516,9 +516,9 @@ async function offlineHelp(rest: string[], io: Io): Promise<number> {
 
 if (import.meta.main) {
   // ps shows a process's arguments, and they may hold a password or private text (--content "..."). On macOS
-  // and Linux, setting the title overwrites them, so after the first few milliseconds ps shows just "ss" (T06).
-  process.title = "ss";
-  // `./ss ... | head` closes stdout early: exit quietly, as cat does, instead of a stack trace (T04 QA-4).
+  // and Linux, setting the title overwrites them, so after the first few milliseconds ps shows just "sst" (T06).
+  process.title = "sst";
+  // `./sst ... | head` closes stdout early: exit quietly, as cat does, instead of a stack trace (T04 QA-4).
   // The server never waits on us, so a reply still being streamed finishes and is saved.
   process.stdout.on("error", (e: NodeJS.ErrnoException) => {
     if (e.code !== "EPIPE") throw e;

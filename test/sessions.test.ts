@@ -63,7 +63,7 @@ describe("T06 triage: an idle session ends and its key is wiped (QA-1)", () => {
     later(1);
     const gone = await t.cli(["conversation.list"]);
     assert.equal(gone.code, 1);
-    assert.match(gone.stderr, /error: Your session expired: nothing used it for 60 minutes, so the server logged it out and wiped its key from memory\.\nLog in again: \.\/ss auth\.login --username dev-idle/);
+    assert.match(gone.stderr, /error: Your session expired: nothing used it for 60 minutes, so the server logged it out and wiped its key from memory\.\nLog in again: \.\/sst auth\.login --username dev-idle/);
     assert.ok(vault.closed && vault.key!.every((b) => b === 0), "the key is zeroed");
     assert.ok(!existsSync(sessionFile()), "the CLI dropped its dead token");
   });
@@ -86,7 +86,7 @@ describe("T06 triage: an idle session ends and its key is wiped (QA-1)", () => {
     const res = await t.app.fetch(
       new Request("http://localhost/api/test.slow-save", {
         method: "POST",
-        headers: { host: "localhost", "content-type": "application/json", cookie: `ss_session=${token}` },
+        headers: { host: "localhost", "content-type": "application/json", cookie: `sst_session=${token}` },
         body: JSON.stringify({ file: "c_expiry01.json" }),
       }),
     );
@@ -104,7 +104,7 @@ describe("T06 triage: an idle session ends and its key is wiped (QA-1)", () => {
       const headers = new Headers(init.headers);
       if (cookie) headers.set("cookie", cookie);
       const res = await fetch(input, { ...init, headers });
-      const set = res.headers.getSetCookie().find((c) => c.startsWith("ss_session="));
+      const set = res.headers.getSetCookie().find((c) => c.startsWith("sst_session="));
       if (set) cookie = set.split(";")[0]!;
       return res;
     }) as typeof fetch;
@@ -127,7 +127,7 @@ describe("T06 triage: an idle session ends and its key is wiped (QA-1)", () => {
 
   test("auth.logout --all ends this user's other sessions too (another terminal, a browser tab)", async () => {
     await login();
-    const other = { SS_SESSION_FILE: join(t.tmp, "terminal-2.json") };
+    const other = { SST_SESSION_FILE: join(t.tmp, "terminal-2.json") };
     assert.equal((await t.cli(["auth.login", "--username", "dev-idle", "--password", "-"], { stdin: "idle-pw\n", env: other })).code, 0);
     const r = await t.cli(["auth.logout", "--all"]);
     assert.equal(r.stdout.trim(), "Logged out dev-idle everywhere (2 sessions).");
@@ -141,7 +141,7 @@ describe("T06 triage: an idle session ends and its key is wiped (QA-1)", () => {
         const headers = new Headers(init.headers);
         if (cookie) headers.set("cookie", cookie);
         const res = await fetch(input, { ...init, headers });
-        const set = res.headers.getSetCookie().find((c) => c.startsWith("ss_session="));
+        const set = res.headers.getSetCookie().find((c) => c.startsWith("sst_session="));
         if (set) cookie = set.split(";")[0]!;
         return res;
       }) as typeof fetch;
@@ -150,8 +150,8 @@ describe("T06 triage: an idle session ends and its key is wiped (QA-1)", () => {
       api.onSessionLost((why) => lost.push(why));
       return { api, lost };
     };
-    const termB = { SS_SESSION_FILE: join(t.tmp, "terminal-b.json") };
-    const termC = { SS_SESSION_FILE: join(t.tmp, "terminal-c.json") };
+    const termB = { SST_SESSION_FILE: join(t.tmp, "terminal-b.json") };
+    const termC = { SST_SESSION_FILE: join(t.tmp, "terminal-c.json") };
     const loginAs = (env: Record<string, string>, user = "dev-idle", pw = "idle-pw") => t.cli(["auth.login", "--username", user, "--password", "-"], { stdin: `${pw}\n`, env });
 
     // Log out everywhere, from the terminal: the tab's next look and the other terminals say so.
@@ -165,10 +165,10 @@ describe("T06 triage: an idle session ends and its key is wiped (QA-1)", () => {
     assert.deepEqual(tab.lost, ["logged-out"]);
     const listB = await t.cli(["conversation.list"], { env: termB });
     assert.equal(listB.code, 1);
-    assert.match(listB.stderr, /error: dev-idle was logged out everywhere \(Log out everywhere in the browser, or auth\.logout --all\)\.\nLog in again: \.\/ss auth\.login --username dev-idle/);
+    assert.match(listB.stderr, /error: dev-idle was logged out everywhere \(Log out everywhere in the browser, or auth\.logout --all\)\.\nLog in again: \.\/sst auth\.login --username dev-idle/);
     const whoC = await t.cli(["auth.whoami"], { env: termC });
     assert.match(whoC.stderr, /\(Saved CLI session for dev-idle ended: this user was logged out everywhere/);
-    assert.equal(existsSync(termC.SS_SESSION_FILE), false, "the stale token is dropped");
+    assert.equal(existsSync(termC.SST_SESSION_FILE), false, "the stale token is dropped");
 
     // A password change (from the browser this time) ends the other sessions with its own reason.
     await tab.api.call("auth.login", { username: "dev-idle", password: "idle-pw" });
@@ -197,7 +197,7 @@ describe("T06 triage: an idle session ends and its key is wiped (QA-1)", () => {
   });
 });
 
-describe("T06 triage: SS_SESSION_IDLE_MINUTES", () => {
+describe("T06 triage: SST_SESSION_IDLE_MINUTES", () => {
   test("parses minutes; 0 means never; anything else is the 60-minute default", () => {
     assert.equal(idleMinutes(undefined), 60);
     assert.equal(idleMinutes(""), 60);

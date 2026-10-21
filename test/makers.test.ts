@@ -36,7 +36,7 @@ describe("brains that make brains, pinned messages, and who said what (T16): CLI
   const lastSent = () => t.mock.state.requests.find((r) => r.path === "/chat/completions")?.body as ChatRequest;
   const preview = async (c: string, ...extra: string[]) => await json(["prompt.preview", "--conversation", c, ...extra]);
   const firstLines = (body: ChatRequest) => body.messages.map((m) => [m.role, m.content.split("\n")[0]]);
-  const cookie = () => `ss_session=${JSON.parse(readFileSync(join(t.config.runDir, "cli-session.json"), "utf8")).token}`;
+  const cookie = () => `sst_session=${JSON.parse(readFileSync(join(t.config.runDir, "cli-session.json"), "utf8")).token}`;
   const post = (cmd: string, body: unknown) =>
     t.app.fetch(new Request(`http://localhost/api/${cmd}`, { method: "POST", headers: { host: "localhost", "content-type": "application/json", cookie: cookie() }, body: JSON.stringify(body) }));
   const lines = async (res: Response) => (await res.text()).trim().split("\n").map((l) => JSON.parse(l));

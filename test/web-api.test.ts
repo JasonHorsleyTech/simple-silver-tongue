@@ -88,10 +88,10 @@ function cookieJar() {
     const headers = new Headers(init.headers);
     if (cookie) headers.set("cookie", cookie);
     const res = await fetch(input, { ...init, headers });
-    const set = res.headers.getSetCookie().find((c) => c.startsWith("ss_session="));
+    const set = res.headers.getSetCookie().find((c) => c.startsWith("sst_session="));
     if (set) {
       const pair = set.split(";")[0]!;
-      cookie = pair === "ss_session=" ? null : pair;
+      cookie = pair === "sst_session=" ? null : pair;
     }
     return res;
   }) as typeof fetch;
@@ -170,7 +170,7 @@ describe("web API client against the real server", () => {
     // Kill the session behind the client's back, as a server restart does: its cookie is now unknown.
     await fetch(`${t.url}/api/auth.logout`, { method: "POST", headers: { "content-type": "application/json", cookie: jar.cookie()! } });
     assert.deepEqual(await api.call("auth.whoami"), { username: null });
-    assert.equal(lost, 1, "x-ss-session: invalid");
+    assert.equal(lost, 1, "x-sst-session: invalid");
 
     const anon = client();
     let lostAnon = 0;

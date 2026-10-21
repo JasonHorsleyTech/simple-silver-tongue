@@ -130,7 +130,7 @@ describe("image brains' parts (T05)", () => {
   });
 
   test("a pending image no job owns is settled on read: done if its file made it to disk, an error otherwise", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ss-img-"));
+    const dir = await mkdtemp(join(tmpdir(), "sst-img-"));
     try {
       const vault = { dir, key: null };
       const conv = newConversation({ title: "x", systemPrompt: "y" });

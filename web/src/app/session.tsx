@@ -45,7 +45,7 @@ type SessionValue = {
   retry(): void;
 };
 
-export const LAST_USERNAME_KEY = "ss.lastUsername";
+export const LAST_USERNAME_KEY = "sst.lastUsername";
 
 /** setTimeout's longest delay (about 24.8 days); a longer idle limit is checked again then. */
 const MAX_DELAY_MS = 2 ** 31 - 1;
@@ -87,7 +87,7 @@ function noticeFor(kind: NoticeKind, user: User | null, extra: { minutes?: numbe
         body: `${name} was logged out everywhere${extra.sessions && extra.sessions > 1 ? ` (${plural(extra.sessions, "session")})` : ""}, as a password change does. Log in with your new password.`,
       };
     case "deleted":
-      return { kind, title: user ? `${user.username} was deleted` : "This user was deleted", body: "Its conversations and images were removed from this computer (./ss user.delete)." };
+      return { kind, title: user ? `${user.username} was deleted` : "This user was deleted", body: "Its conversations and images were removed from this computer (./sst user.delete)." };
   }
 }
 
@@ -96,7 +96,7 @@ const KEEPS_DRAFTS: ReadonlySet<NoticeKind> = new Set(["expired", "ended"]);
 
 /** What one tab tells the others of this browser when it logs out (they share the cookie). */
 type TabSignal = { out: "other-tab" | "logged-out" | "password-changed"; username: string };
-const tabs: BroadcastChannel | null = typeof BroadcastChannel === "function" ? new BroadcastChannel("ss-session") : null;
+const tabs: BroadcastChannel | null = typeof BroadcastChannel === "function" ? new BroadcastChannel("sst-session") : null;
 
 const SessionContext = createContext<SessionValue | null>(null);
 
@@ -122,7 +122,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setDueAt(null);
   }, []);
 
-  // Any command can learn that our cookie is dead, and why (x-ss-session, or the 401's code).
+  // Any command can learn that our cookie is dead, and why (x-sst-session, or the 401's code).
   // No cookie at all, while we thought we were in: another tab of this browser logged out (they share it).
   useEffect(() => api.onSessionLost((why) => dropTo(why === "no-cookie" ? "other-tab" : why)), [dropTo]);
 

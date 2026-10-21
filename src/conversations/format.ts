@@ -46,7 +46,7 @@ export function formatList(list: ConversationSummary[], unreadable: UnreadableCo
       ),
     );
   } else if (!unreadable.length) {
-    out.push('No conversations yet. Start one: ./ss conversation.create --title "..." --system-prompt "..."');
+    out.push('No conversations yet. Start one: ./sst conversation.create --title "..." --system-prompt "..."');
   }
   if (unreadable.length) {
     out.push(`${list.length ? "\n" : ""}Unreadable conversation files (${unreadable.length}):`);
@@ -84,7 +84,7 @@ export function formatConversation(c: Conversation, opts?: FormatOpts): string {
       .join(", ")}`,
   ];
   if (c.setup.length) out.push(`Setup messages: ${c.setup.map((s) => `${s.label} (${s.id}${s.role === "user" ? "" : `, ${s.role}`})`).join(", ")} (setup.list shows them)`);
-  if (!c.messages.length) out.push("", `(no messages yet: ./ss turn --conversation ${c.id} --content "...")`);
+  if (!c.messages.length) out.push("", `(no messages yet: ./sst turn --conversation ${c.id} --content "...")`);
   for (const m of c.messages) {
     const v = activeVersion(m);
     const who = m.author.type === "player" ? "you" : (brainName.get(m.author.brainId) ?? m.author.brainId);
@@ -93,7 +93,7 @@ export function formatConversation(c: Conversation, opts?: FormatOpts): string {
     if (m.author.type === "brain" && v.source === "authored") bits.push("written by you");
     out.push("", `── ${[...bits, ...versionBits(v, m.kind)].join(" · ")} ──`, shown(v.content, m.kind, opts, count));
   }
-  if (count.folded) out.push("", revealHint(count.folded, `./ss conversation.get --id ${c.id} --reveal`));
+  if (count.folded) out.push("", revealHint(count.folded, `./sst conversation.get --id ${c.id} --reveal`));
   return out.join("\n");
 }
 
@@ -150,7 +150,7 @@ function thoughtBlock(v: MessageVersion, kind: LedgerMessage["kind"], opts: Form
 
 /** The command that shows one message's hidden notes. */
 export const revealMessage = (conversationId: string, messageId: string) =>
-  `./ss message.get --conversation ${conversationId} --message ${messageId} --reveal`;
+  `./sst message.get --conversation ${conversationId} --message ${messageId} --reveal`;
 
 export type Preview = {
   conversationId: string;

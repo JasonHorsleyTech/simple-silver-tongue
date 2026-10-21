@@ -77,7 +77,7 @@ POST message.edit        → {"painting":{"imageId":"img_qo48099zc9",…},"st":"
 POST image.follow        → {"type":"done","st":"error","err":"Venice 400 on /image/generate: mock: forced image error (MOCK_IMAGE_ERROR)"}
 
 # QA-3: MOCK_IMAGE_SLOW turn, kill -STOP the mock, stop
-$ time ./ss generation.stop --conversation $C
+$ time ./sst generation.stop --conversation $C
 Nothing is being generated for this conversation.
 Still being made: img_pxnv8k8261 (m_6zvz92ezmi). An image can't be stopped once its prompt is saved: Venice is already making it, and billing it, so it is kept when it arrives.
 … 0.117 total                                     (was 10.15 s and "finished and kept")
@@ -96,23 +96,23 @@ img_vjdyrguz9f.png still on disk
 
 **Acceptance, mock, encrypted `dev-t05-tri`:**
 ```
-$ ./ss turn --conversation $C --brain "Scene Painter" --content "Paint the hooded figure."
+$ ./sst turn --conversation $C --brain "Scene Painter" --content "Paint the hooded figure."
 MOCK image prompt after 2 messages; last: "<!-- from: the user --> Paint the hooded figure."
 (making image img_d9bsqrke4c with z-image-turbo... the conversation is free meanwhile)
 [Scene Painter · 16 in / 27 out · $0.000037 · image img_d9bsqrke4c done (z-image-turbo, png, $0.01)]
-$ ./ss image.get --id img_d9bsqrke4c --out acc.png     → PNG image data, 64 x 64; on disk: SSENC1
-$ ./ss prompt.preview --conversation $C --json | jq -r ".body.messages[-1].content"
+$ ./sst image.get --id img_d9bsqrke4c --out acc.png     → PNG image data, 64 x 64; on disk: SSENC1
+$ ./sst prompt.preview --conversation $C --json | jq -r ".body.messages[-1].content"
 <!-- from: Scene Painter. It called generate_image with this exact prompt, and that image is now on the player's screen: -->
 MOCK image prompt after 2 messages; last: "<!-- from: the user --> Paint the hooded figure."
-$ ./ss message.regenerate --conversation $C --steer "Make it brighter."
+$ ./sst message.regenerate --conversation $C --steer "Make it brighter."
 [Scene Painter · version 2/2 · steered · … · image img_21nna4ti6w done (z-image-turbo, png, $0.01)]
-$ ./ss message.edit … --content "MOCK_IMAGE_SLOW A hooded figure in a red coat."
-… Making its image img_21b4e0vnlm with z-image-turbo. img_21nna4ti6w stays until it is ready. Other brains can go on meanwhile. Watch it: ./ss image.follow --conversation c_cj712arguk --message m_u6j6kmlf55
-$ ./ss turn --conversation $C --content "I wave."            # while the edit paints
+$ ./sst message.edit … --content "MOCK_IMAGE_SLOW A hooded figure in a red coat."
+… Making its image img_21b4e0vnlm with z-image-turbo. img_21nna4ti6w stays until it is ready. Other brains can go on meanwhile. Watch it: ./sst image.follow --conversation c_cj712arguk --message m_u6j6kmlf55
+$ ./sst turn --conversation $C --content "I wave."            # while the edit paints
 [Game Master · 68 in / 24 out · $0.000049]
-$ ./ss message.delete --conversation $C --message $M         # while it paints
+$ ./sst message.delete --conversation $C --message $M         # while it paints
 error: Can't delete m_u6j6kmlf55 yet: its image img_21b4e0vnlm is still being made. Venice is already making it (and billing it), so it will be kept. Wait for it to arrive (image.follow watches it), then try again.
-$ ./ss image.follow --conversation $C --message $M
+$ ./sst image.follow --conversation $C --message $M
 (making image img_21b4e0vnlm with z-image-turbo... the conversation is free meanwhile)
 [image img_21b4e0vnlm done (z-image-turbo, png, $0.01)]
 images/: img_21b4e0vnlm.png img_d9bsqrke4c.png          (the steered version's replaced image is gone)

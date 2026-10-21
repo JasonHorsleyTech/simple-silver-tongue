@@ -21,7 +21,7 @@ export class CommandError extends Error {
 
 export const badRequest = (message: string, details?: unknown) =>
   new CommandError(400, "bad_request", message, details);
-export const unauthenticated = (message = "Not logged in. Run ./ss auth.login --username <name>.") =>
+export const unauthenticated = (message = "Not logged in. Run ./sst auth.login --username <name>.") =>
   new CommandError(401, "unauthenticated", message);
 export const wrongPassword = (message: string) => new CommandError(401, "wrong_password", message);
 /** Thrown by a closed vault: the session that owned this work logged out or logged in again. */

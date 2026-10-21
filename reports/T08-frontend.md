@@ -38,7 +38,7 @@ No DESIGN CONCERN. The engineer's and triage's recipe worked as written. I added
   - The settings panel: setup messages and system prompts are configuration, as with `setup.list` and `brain.list`.
   - Reasoning, which was already collapsed by default, mid-stream too.
 
-## Verified in Chrome (`SS_DATA_DIR=<scratchpad>/data npm run up:mock`, user `dev-t08-fe`, plaintext)
+## Verified in Chrome (`SST_DATA_DIR=<scratchpad>/data npm run up:mock`, user `dev-t08-fe`, plaintext)
 
 **Setup.** I imported the example campaign into a scratch data dir. On this throwaway copy I added a Character Creator (reminder off) and turned the GM's reminder off. Then I hand-wrote, with `message.add`:
 - a GM reply with a ```` ```hidden GM plans ```` note before its narration;

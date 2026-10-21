@@ -12,7 +12,7 @@
 |---|---|---|
 | `up:mock`, then `user.create` / `auth.login` / `auth.whoami` for a plain user | pass | `qa-t01-a`: `Created qa-t01-a (unencrypted)`, `Logged in as qa-t01-a (unencrypted).`, `qa-t01-a (unencrypted)`, all exit 0 |
 | Same for an encrypted user | pass | `qa-t01-b` via piped stdin; `qa-t01-c` via a real pty. The hidden prompt doesn't echo, the confirmation prompt works and backspace works. Wrong password and empty password both give `error: Wrong password for qa-t01-b.` (exit 1). `user.json` holds only metadata, kdf (N = 131072) and `wrappedKey`. |
-| `./ss models.list --type image` lists real models live (`npm run up`) | pass | 45 live image models, each with a price and privacy label (no `?` prices). `venice.balance` is live. |
+| `./sst models.list --type image` lists real models live (`npm run up`) | pass | 45 live image models, each with a price and privacy label (no `?` prices). `venice.balance` is live. |
 | `npm run down` stops everything | pass | `stopped the server` / `stopped the mock Venice`, nothing listening on 4747 or 4748. Running it a second time reports "was not running" for both. |
 | `npm test` and `npm run typecheck` | pass | 25/25 tests, tsc clean |
 
@@ -22,10 +22,10 @@
 - **No leaks.** Neither of my test passwords nor the Venice key (searched for by value, never printed) appears in `.run/`, `data/`, `src/`, `docs/`, `reports/` or git history. The logs carry only method, path, status and error code. In mock mode, the server and mock process environments (`ps -E`) carry `mock-key` and never the real key.
 - **Sessions.**
   - A browser-style cookie session (curl jar) and a CLI session for different users run side by side.
-  - Logging in again from the CLI kills the old token (`x-ss-session: invalid`).
+  - Logging in again from the CLI kills the old token (`x-sst-session: invalid`).
   - Logout in the CLI leaves the browser session alone.
   - A restart invalidates both, and the CLI says why.
-  - Two CLI users at once work with separate `SS_RUN_DIR`s.
+  - Two CLI users at once work with separate `SST_RUN_DIR`s.
   - NFC and NFD forms of a unicode password both open the account, and a trailing space fails.
 - **CLI ↔ HTTP parity.** Every CLI run is `POST /api/help` plus `POST /api/<cmd>` with the same cookie the browser uses (see `.run/server.log`). The only local path is the offline `help` fallback. `--json` prints exactly the browser's response body.
 - **HTTP guard.**
@@ -35,7 +35,7 @@
   - Path traversal against a fake `web/dist` (`%2e%2e`, `..%2f`, `%00`, backslashes) → 404. The SPA fallback and immutable `assets/` caching work.
 - **Process control.**
   - `up:mock` run twice, or `up:mock` then `up`, always leaves one fresh server. `up` stops the mock in live mode.
-  - After a `kill -9` of the server, `down` and `up` both recover. After a `kill -9` of the mock, `./ss models.list` gives a clean `Could not reach Venice` (exit 1) and the next `up:mock` recovers.
+  - After a `kill -9` of the server, `down` and `up` both recover. After a `kill -9` of the mock, `./sst models.list` gives a clean `Could not reach Venice` (exit 1) and the next `up:mock` recovers.
   - A server frozen with `kill -STOP` is SIGKILLed by `up` within about 2 s.
   - A stale pid file pointing at a foreign live process doesn't kill it.
   - With a foreign program on 4747, `up` stops and names it.
@@ -90,7 +90,7 @@ const fakeTurn = streamCommand({ name: "fake.turn", description: "x", args: auth
     await writeJson(vault, "conversations/c_1.json", { title: "SECRET-TAVERN" });
     yield { type: "done" };
   } });
-const app = createApp({ config: { ...loadConfig({ SS_MODE: "mock" }), dataDir }, sessions: createSessionStore(), venice: {} as any, startedAt: "" }, [authLogin, authLogout, fakeTurn], () => {});
+const app = createApp({ config: { ...loadConfig({ SST_MODE: "mock" }), dataDir }, sessions: createSessionStore(), venice: {} as any, startedAt: "" }, [authLogin, authLogout, fakeTurn], () => {});
 const post = (cmd: string, body: unknown, cookie = "") => app.fetch(new Request(`http://localhost/api/${cmd}`, { method: "POST", headers: { host: "localhost", "content-type": "application/json", cookie }, body: JSON.stringify(body) }));
 const cookie = (await post("auth.login", { username: "qa-enc", password: "pw" })).headers.getSetCookie()[0]!.split(";")[0]!;
 const turn = await post("fake.turn", {}, cookie);
@@ -110,7 +110,7 @@ all-zero key reads: {"title":"SECRET-TAVERN"}
 ```
 Logging in again as the *same* user with the *right* password mid-turn does the same damage, because `auth.login` destroys the caller's previous session.
 - **Expected:** the in-flight work either finishes under the real key or is refused. Either way, nothing is written under a wiped key.
-- **Actual:** the stream reports `done`. The conversation can no longer be read with the user's password (data loss), yet anyone can read it with the all-zero key (confidentiality loss). In T01 this is latent, because no command writes user data yet. But T02's `turn` and T05's image path will hit it by design, since the adapter keeps draining after a disconnect (app.ts:134). Realistic triggers: clicking Logout while a reply streams, running `./ss auth.login` again in a second terminal during a `turn`, or `user.delete` in T06.
+- **Actual:** the stream reports `done`. The conversation can no longer be read with the user's password (data loss), yet anyone can read it with the all-zero key (confidentiality loss). In T01 this is latent, because no command writes user data yet. But T02's `turn` and T05's image path will hit it by design, since the adapter keeps draining after a disconnect (app.ts:134). Realistic triggers: clicking Logout while a reply streams, running `./sst auth.login` again in a second terminal during a `turn`, or `user.delete` in T06.
 - **Cause:** sessions.ts:22 `wipe = s.vault.key?.fill(0)` zeroes the very Buffer that handlers hold through `ctx.session.vault`, and vault.ts:34 encrypts with whatever key it's given. Called from auth.ts:24 (re-login) and auth.ts:38 (logout).
 - **Suggested fix:**
   - Give each job its own copy of the key (`{dir, key: Buffer.from(key)}`) and wipe the copy when the job ends.
@@ -163,9 +163,9 @@ Repro: `python3 -m http.server 4748 --bind 127.0.0.1 &` then `npm run up`, which
 
 ### QA-6 · minor · `user.create` with no TTY and empty stdin silently makes an unencrypted user
 
-Repro: `./ss user.create --username qa-t01-d < /dev/null` prints `Created qa-t01-d (unencrypted)` and exits 0.
+Repro: `./sst user.create --username qa-t01-d < /dev/null` prints `Created qa-t01-d (unencrypted)` and exits 0.
 - **Expected:** without a terminal to prompt on, the CLI should demand an explicit choice: `--password ''` for no encryption, or a password piped on stdin.
-- **Actual:** EOF is read as the empty password (cli/main.ts:147-150). Agents, IDE task runners and scripts all run without a TTY, so `./ss user.create --username jason` from one of them gives a plaintext user. The output does say "unencrypted", which is why this is minor. (For `auth.login` the same path just fails safely with "Wrong password".)
+- **Actual:** EOF is read as the empty password (cli/main.ts:147-150). Agents, IDE task runners and scripts all run without a TTY, so `./sst user.create --username jason` from one of them gives a plaintext user. The output does say "unencrypted", which is why this is minor. (For `auth.login` the same path just fails safely with "Wrong password".)
 
 ### QA-7 · minor · Mock fidelity gaps that T02 and T05 could trip on
 
@@ -179,7 +179,7 @@ Fix: honor `max_tokens` (truncate, `finish_reason: "length"`, last content in th
 
 ### QA-8 · nit · Secret args go through `@file` expansion, and the error echoes the password
 
-Repro: `./ss auth.login --username qa-t01-b --password '@Horse-qa1'` prints `error: --password: cannot read Horse-qa1 (ENOENT)` and exits 2.
+Repro: `./sst auth.login --username qa-t01-b --password '@Horse-qa1'` prints `error: --password: cannot read Horse-qa1 (ENOENT)` and exits 2.
 - A password that starts with `@` can't be passed as a flag, and the error message prints most of it to the terminal. The hidden prompt is unaffected.
 - **Fix:** skip `@`/`-` expansion for `secret` args (args.ts:97-111), and don't print the value in the error.
 
@@ -192,6 +192,6 @@ Repro: `./ss auth.login --username qa-t01-b --password '@Horse-qa1'` prints `err
 
 ## Notes for later passes
 
-- **In-process concurrency tests:** Node's `fetch` can queue a second request to the same server behind a still-open stream. My first QA-2 attempt only "passed" because logout didn't reach the server until the stream ended. For 409 or mid-stream tests in T02, call `app.fetch(new Request(...))` directly or use `http.request` with `agent: false`. Separate `./ss` processes aren't affected.
-- **Two CLI users at once:** give each terminal its own `SS_RUN_DIR` (verified working).
+- **In-process concurrency tests:** Node's `fetch` can queue a second request to the same server behind a still-open stream. My first QA-2 attempt only "passed" because logout didn't reach the server until the stream ended. For 409 or mid-stream tests in T02, call `app.fetch(new Request(...))` directly or use `http.request` with `agent: false`. Separate `./sst` processes aren't affected.
+- **Two CLI users at once:** give each terminal its own `SST_RUN_DIR` (verified working).
 - **Cleanup:** I deleted all `qa-t01-*` users. `dev-a` and `dev-b` (the engineer's) are untouched. The server is stopped.

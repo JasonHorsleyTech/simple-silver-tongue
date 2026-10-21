@@ -69,7 +69,7 @@
 
 ## Verified in Chrome
 
-I used the DevTools MCP in an isolated context. The scratch server ran on 4777 with mock 4778, scratch data and run dirs and a scratch web build (`SS_WEB_DIST`), as `dev-t17-fe`. Jason's 4747 was untouched until the end, and no `data/users` listing was made.
+I used the DevTools MCP in an isolated context. The scratch server ran on 4777 with mock 4778, scratch data and run dirs and a scratch web build (`SST_WEB_DIST`), as `dev-t17-fe`. Jason's 4747 was untouched until the end, and no `data/users` listing was made.
 
 1. **The Goat example: first fresh take from the CLI, then the browser.**
    - The note showed as "Muse's note for Game Master", folded. The GM's header said "fresh take", and the Muse chip had its sparkle.

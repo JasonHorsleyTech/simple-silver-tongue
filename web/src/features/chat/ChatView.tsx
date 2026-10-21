@@ -23,8 +23,8 @@ import { Scrollback } from "./Scrollback.tsx";
 import { FailureDetails } from "./FailureDetails.tsx";
 import { useChat, type RegenerateAsk } from "./useChat.ts";
 
-const SETTINGS_OPEN_KEY = "ss.settingsOpen";
-const SETTINGS_TAB_KEY = "ss.settingsTab";
+const SETTINGS_OPEN_KEY = "sst.settingsOpen";
+const SETTINGS_TAB_KEY = "sst.settingsTab";
 
 function savedTab(): SettingsTab {
   const t = readLocal(SETTINGS_TAB_KEY);
@@ -137,10 +137,10 @@ export function ChatView({ id }: { id: string }) {
         const b = box.getBoundingClientRect();
         const r = el.getBoundingClientRect();
         box.scrollTo({ top: box.scrollTop + r.top - b.top - Math.max(24, Math.min(120, (box.clientHeight - r.height) / 2)), behavior: "smooth" });
-        el.classList.remove("ss-flash");
+        el.classList.remove("sst-flash");
         void el.offsetWidth; // restart the animation
-        el.classList.add("ss-flash");
-        setTimeout(() => el.classList.remove("ss-flash"), 2000);
+        el.classList.add("sst-flash");
+        setTimeout(() => el.classList.remove("sst-flash"), 2000);
       }, docked ? 0 : 60);
     },
     [docked, toggleSettings],

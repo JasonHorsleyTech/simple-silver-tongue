@@ -133,7 +133,7 @@ export function ImageBody({
         <Painting image={img} overlay label="Painting the new prompt" />
       </Shot>
     ) : (
-      <Frame aspect={aspect} color={color} className="ss-paint">
+      <Frame aspect={aspect} color={color} className="sst-paint">
         <Painting image={img} label="Painting" />
       </Frame>
     );
@@ -221,7 +221,7 @@ export function LiveImage({ prompt, aspect, color, failed }: { prompt: string; a
   if (failed) return prompt ? <PromptCaption text={prompt} dim /> : null;
   return (
     <div>
-      <Frame aspect={aspect} color={color} className="ss-paint">
+      <Frame aspect={aspect} color={color} className="sst-paint">
         <div className="absolute inset-0 grid place-items-center">
           <span className="shimmer text-[12.5px] font-medium">{prompt ? "Writing the prompt…" : "Thinking of a picture…"}</span>
         </div>
@@ -446,7 +446,7 @@ export function PromptCaption({ text, live, dim }: { text: string; live?: boolea
       >
         <span className="mr-1.5 align-[1px] text-[10.5px] font-semibold tracking-[0.08em] text-faint uppercase select-none">Prompt</span>
         {text}
-        {live && <span aria-hidden className="ss-caret-inline" />}
+        {live && <span aria-hidden className="sst-caret-inline" />}
       </p>
       {(clamped || open) && (
         <button type="button" onClick={() => setOpen((o) => !o)} className="mt-0.5 text-[12px] text-faint underline-offset-4 transition-colors hover:text-muted hover:underline">

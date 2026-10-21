@@ -43,13 +43,13 @@ Each case is a single sample. That's enough to show the fixes don't overshoot, n
 ## Re-verification (mock, current code)
 
 ```
-$ ./ss presets.list | head -1
+$ ./sst presets.list | head -1
 tabletop-rpg: Tabletop RPG
-$ ./ss conversation.import --preset tabletop-rpg --title Chinatown
+$ ./sst conversation.import --preset tabletop-rpg --title Chinatown
 Imported c_dulrs3zfey "Chinatown" · deepseek-v4-1-flash · images z-image-turbo
 Brains: Game Master (default), Co-GM, Show Me the Odds, Character Creator, Character Actor (reasoning low), Scene Painter (image), Character Portraitist (image)
 Setup: none · 0 messages
-$ ./ss brain.import --conversation <Goat clone> --preset tabletop-rpg --brain "Character Actor"
+$ ./sst brain.import --conversation <Goat clone> --preset tabletop-rpg --brain "Character Actor"
 Added brain Character Actor (b_hp9wxvx0w9) · text · reasoning low · final reminder on · stops at "<!-- from:" from the preset "Tabletop RPG".
 Only the brain came over: this conversation keeps its own templates, which differ from "Tabletop RPG"'s (player, otherBrainImage, steer), …
 Character Actor learns what the player hasn't seen from hidden notes (```hidden blocks, such as character sheets). It can't read the other brains' system prompts, so a secret only one of them holds is news to it. To share one, put it in a hidden note in a setup message (setup.add): every brain reads those.
@@ -58,11 +58,11 @@ error: Another brain is already called "Character Actor". Add this one under ano
 exit 1
 $ (again) --name "Second Actor"
 Added brain Second Actor (b_yw3myoytd7) · text · reasoning low · …
-$ ./ss brain.import --conversation <preset conversation> --preset tabletop-rpg --brain Co-GM --name "Spare Co-GM"
+$ ./sst brain.import --conversation <preset conversation> --preset tabletop-rpg --brain Co-GM --name "Spare Co-GM"
 Added brain Spare Co-GM (…) · text · reasoning off · …          (no notes)
 
 # QA-7's repro, with temporary files in presets/ (removed afterwards; `git status presets/` shows only tabletop-rpg.json)
-$ ./ss presets.list
+$ ./sst presets.list
 qa-about: can't be used (presets/qa-about.json isn't a campaign this app can import. brains.0.about: one line, with no line breaks.)
 qa-dupe: can't be used (presets/qa-dupe.json: brains.1.name: two brains are called "Game Master" (names are unique, ignoring case).)
 ```

@@ -13,7 +13,7 @@ export type Mode = "live" | "mock";
 
 /**
  * A login nobody has used for this long ends, and its key is wiped from memory (T06 triage, QA-1): the server runs
- * for days, so a session that never ended was the easy way in for anyone at the Mac. SS_SESSION_IDLE_MINUTES
+ * for days, so a session that never ended was the easy way in for anyone at the Mac. SST_SESSION_IDLE_MINUTES
  * changes it (in the environment, or in .env for npm run up); 0 means sessions never time out.
  */
 export const DEFAULT_SESSION_IDLE_MINUTES = 60;
@@ -32,16 +32,16 @@ export type Config = {
 
 /** Everything except the API key, which stays out of this object so it can't leak into output. */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const mode: Mode = env.SS_MODE === "mock" ? "mock" : "live";
+  const mode: Mode = env.SST_MODE === "mock" ? "mock" : "live";
   return {
     host: "127.0.0.1",
-    port: Number(env.SS_PORT || DEFAULT_PORT),
+    port: Number(env.SST_PORT || DEFAULT_PORT),
     mode,
-    dataDir: resolve(env.SS_DATA_DIR || join(ROOT, "data")),
-    runDir: resolve(env.SS_RUN_DIR || join(ROOT, ".run")),
-    webDist: resolve(env.SS_WEB_DIST || join(ROOT, "web", "dist")),
+    dataDir: resolve(env.SST_DATA_DIR || join(ROOT, "data")),
+    runDir: resolve(env.SST_RUN_DIR || join(ROOT, ".run")),
+    webDist: resolve(env.SST_WEB_DIST || join(ROOT, "web", "dist")),
     veniceBaseUrl: (env.VENICE_BASE_URL || LIVE_VENICE_BASE_URL).replace(/\/+$/, ""),
-    sessionIdleMinutes: idleMinutes(env.SS_SESSION_IDLE_MINUTES),
+    sessionIdleMinutes: idleMinutes(env.SST_SESSION_IDLE_MINUTES),
   };
 }
 

@@ -13,7 +13,7 @@ No DESIGN CONCERN. I made three of the ticket's open calls, listed below. One of
   - **Unclosed:** it runs to the end of the message, or to the end of the quote or list item it opened in, as Markdown does. A reply still streaming into a note looks exactly like this.
   - **The extra:** a fence with a language after it (```` ```js ````) *inside* a note nests, so the note's own closing fence counts only after that inner block has closed. Plain Markdown would end the note at the inner block's bare closing fence and show the rest, which would spill the note.
   - **API:** `splitHidden`, `findHidden`, `foldHidden`, `isAllHidden`, `isHiddenInfo`, `hiddenSummary` (the fold's words, shared by both clients), `createHiddenFolder` (for streams) and `couldOpenHidden`.
-- **Folding in the CLI's text views.** A JSON command's `format` now gets `(result, {reveal})`. `./ss --reveal` sends the header `x-ss-reveal: 1`, and the HTTP adapter passes it on to `format`. `shown()` in `format.ts` folds one text message; image prompts are plain captions, so they are never folded. Each view ends with a line saying how to see what it folded: `(2 hidden notes folded: ./ss conversation.get --id c_… --reveal shows them; --json has the raw text.)`.
+- **Folding in the CLI's text views.** A JSON command's `format` now gets `(result, {reveal})`. `./sst --reveal` sends the header `x-sst-reveal: 1`, and the HTTP adapter passes it on to `format`. `shown()` in `format.ts` folds one text message; image prompts are plain captions, so they are never folded. Each view ends with a line saying how to see what it folded: `(2 hidden notes folded: ./sst conversation.get --id c_… --reveal shows them; --json has the raw text.)`.
 - **Folding in streams.** `printStream` (`src/cli/main.ts`) runs every `delta` through `createHiddenFolder`:
   - Text prints as it arrives.
   - An unfinished line that could still become an opening fence is held back until its next character or its newline. Examples are `"``"`, `"> ```hid"` and a bare `"- "`.
@@ -31,7 +31,7 @@ No DESIGN CONCERN. I made three of the ticket's open calls, listed below. One of
 ## Commands added or changed
 
 No new commands.
-- **Global CLI flag `--reveal`:** shows hidden notes. It applies to the text views and to streams, and `./ss help` lists it.
+- **Global CLI flag `--reveal`:** shows hidden notes. It applies to the text views and to streams, and `./sst help` lists it.
 - **`conversation.get`, `message.get` and `message.select-version`:** their text views fold notes.
 - **`turn`, `message.regenerate` and `generation.follow`:** fold notes as they stream.
 - **Registry:** `format(result, opts: FormatOpts)`.
@@ -79,10 +79,10 @@ No new commands.
 ### Mock (`npm run up:mock`, user `dev-t08-mock`, plaintext, now deleted)
 
 ```
-$ ./ss brain.add --conversation $C --name "Character Creator" --system-prompt "You write character sheets as hidden notes." --no-final-reminder.enabled
+$ ./sst brain.add --conversation $C --name "Character Creator" --system-prompt "You write character sheets as hidden notes." --no-final-reminder.enabled
 Added brain Character Creator (b_1k7l6rgzw8) · text · reasoning off · final reminder off · stops at "<!-- from:"
 
-$ ./ss turn --conversation $C --content "Who is the hooded figure? MOCK_HIDDEN"        # streams in 3-char pieces
+$ ./sst turn --conversation $C --content "Who is the hooded figure? MOCK_HIDDEN"        # streams in 3-char pieces
 [Assistant]
 MOCK reply to brain "You are the Game Master."; saw 2 messages; last: "<!-- from: the user --> Who is…he hooded figure? MOCK_HIDDEN"
 
@@ -90,15 +90,15 @@ MOCK reply to brain "You are the Game Master."; saw 2 messages; last: "<!-- from
 
 The hooded figure slides a folded map across the table.
 [Assistant · 23 in / 126 out · $0.00016]
-(1 hidden note folded: ./ss message.get --conversation c_7vs6xx88fz --message m_evi9mz5b35 --reveal shows it; --json has the raw text.)
+(1 hidden note folded: ./sst message.get --conversation c_7vs6xx88fz --message m_evi9mz5b35 --reveal shows it; --json has the raw text.)
 
-$ ./ss turn --conversation $C --brain "Character Creator" --content "MOCK_HIDDEN_ONLY"
+$ ./sst turn --conversation $C --brain "Character Creator" --content "MOCK_HIDDEN_ONLY"
 [Character Creator]
 [Hidden · character sheet · 6 lines]
 [Character Creator · 170 in / 108 out · $0.00018]
-(1 hidden note folded: ./ss message.get --conversation c_7vs6xx88fz --message m_tb4cb3rd5v --reveal shows it; --json has the raw text.)
+(1 hidden note folded: ./sst message.get --conversation c_7vs6xx88fz --message m_tb4cb3rd5v --reveal shows it; --json has the raw text.)
 
-$ ./ss conversation.get --id $C
+$ ./sst conversation.get --id $C
 ── Assistant · m_evi9mz5b35 · $0.00016 ──
 MOCK reply to brain "You are the Game Master."; ...
 
@@ -109,19 +109,19 @@ The hooded figure slides a folded map across the table.
 ── Character Creator · m_tb4cb3rd5v · $0.00018 ──
 [Hidden · character sheet · 6 lines]
 
-(2 hidden notes folded: ./ss conversation.get --id c_7vs6xx88fz --reveal shows them; --json has the raw text.)
+(2 hidden notes folded: ./sst conversation.get --id c_7vs6xx88fz --reveal shows them; --json has the raw text.)
 
-$ ./ss conversation.get --id $C --reveal
+$ ./sst conversation.get --id $C --reveal
 ...
 ```hidden character sheet
 Name: Mara Vell, a mapmaker
 ...
 Secret: MOCK_SECRET the map is a forgery, and she drew it herself
 ...
-$ ./ss conversation.get --id $C --json | grep -c MOCK_SECRET
+$ ./sst conversation.get --id $C --json | grep -c MOCK_SECRET
 2
 
-$ ./ss prompt.preview --conversation $C --brain Assistant --content "What does she want?"
+$ ./sst prompt.preview --conversation $C --brain Assistant --content "What does she want?"
 ── [4] user ──
 <!-- from: Character Creator -->
 ```hidden character sheet
@@ -131,7 +131,7 @@ Name: Mara Vell, a mapmaker
 Secret: MOCK_SECRET the map is a forgery, and she drew it herself
 ...
 
-$ (./ss turn --conversation $C --content "MOCK_SLOW MOCK_HIDDEN" > /dev/null &); sleep 14; ./ss generation.follow --conversation $C
+$ (./sst turn --conversation $C --content "MOCK_SLOW MOCK_HIDDEN" > /dev/null &); sleep 14; ./sst generation.follow --conversation $C
 (following a reply in progress: what has streamed so far, then the rest live)
 [Assistant]
 MOCK reply to brain "You are the Game Master."; saw 8 messages; last: "<!-- from: the user --> MOCK_SLOW MOCK_HIDDEN"
@@ -140,7 +140,7 @@ MOCK reply to brain "You are the Game Master."; saw 8 messages; last: "<!-- from
 
 The hooded figure slides a folded map across the table.
 [Assistant · 420 in / 123 out · $0.00027]
-(1 hidden note folded: ./ss message.get --conversation c_7vs6xx88fz --message m_nmurybq4ur --reveal shows it; --json has the raw text.)
+(1 hidden note folded: ./sst message.get --conversation c_7vs6xx88fz --message m_nmurybq4ur --reveal shows it; --json has the raw text.)
 ```
 
 ### Live (`npm run up`, user `dev-t08-live`, plaintext, made-up content, now deleted)
@@ -148,17 +148,17 @@ The hooded figure slides a folded map across the table.
 The GM's system prompt (made up) asked for its private plans "in a hidden note, a fenced code block whose info string is the word hidden and a short label", and said the player's screen folds notes and every brain reads them. The Character Creator was told to "answer with nothing but one hidden note… with a short label naming who the sheet is about… The label is shown to the player, so never put a secret in it."
 
 ```
-$ ./ss turn --conversation $C --content "I walk up to the hooded figure in the corner booth."
+$ ./sst turn --conversation $C --content "I walk up to the hooded figure in the corner booth."
 [Assistant]
 [Hidden · GM plans · 1 line]
 The hooded figure doesn't look up when you slide into the booth, but the hand beneath the cloak has already found
 something with an edge. "You're not him," she says, low enough that the lute by the hearth drowns it out. ...
 [Assistant · 157 in / 203 out · $0.00029]
-(1 hidden note folded: ./ss message.get --conversation c_hibwiiu6k8 --message m_912jiuv1ax --reveal shows it; ...)
+(1 hidden note folded: ./sst message.get --conversation c_hibwiiu6k8 --message m_912jiuv1ax --reveal shows it; ...)
 
 # raw: "```hidden GM plans\nThe hooded figure is Sera Vane, a courier for the Ashgrove smugglers; ...\n```\n\nThe hooded figure doesn't look up..."
 
-$ ./ss turn --conversation $C --brain "Character Creator"
+$ ./sst turn --conversation $C --brain "Character Creator"
 [Character Creator]
 [Hidden · Sheet: Sera Vane · 11 lines]          ← the label spoils a name the player hasn't heard: hence no labels on the fold
 [Character Creator · 356 in / 370 out · $0.00055]
@@ -167,7 +167,7 @@ $ ./ss turn --conversation $C --brain "Character Creator"
 #       \n\nKnows: ...\n\nSecret: ...\n\nFears: ...\n```"
 
 # After the change (server restarted on current code, no API call):
-$ ./ss conversation.get --id $C
+$ ./sst conversation.get --id $C
 ── Assistant · m_912jiuv1ax · $0.00029 ──
 [Hidden · 1 line]
 
@@ -176,9 +176,9 @@ The hooded figure doesn't look up when you slide into the booth, ...
 ── Character Creator · m_hdpl9o31kh · $0.00055 ──
 [Hidden · 11 lines]
 
-(2 hidden notes folded: ./ss conversation.get --id c_hibwiiu6k8 --reveal shows them; --json has the raw text.)
+(2 hidden notes folded: ./sst conversation.get --id c_hibwiiu6k8 --reveal shows them; --json has the raw text.)
 
-$ ./ss prompt.preview --conversation $C --content "What does she say next?" --json | jq -c '[.body.messages[]|[.role,(.content|split("\n")[0:2]|join(" ⏎ ")|.[0:90])]]'
+$ ./sst prompt.preview --conversation $C --content "What does she say next?" --json | jq -c '[.body.messages[]|[.role,(.content|split("\n")[0:2]|join(" ⏎ ")|.[0:90])]]'
 [["system","You are the Game Master of a short fantasy scene in a village tavern. Narrate in the secon"],
  ["user","<!-- from: the user --> ⏎ I walk up to the hooded figure in the corner booth."],
  ["assistant","```hidden GM plans ⏎ The hooded figure is Sera Vane, a courier for the Ashgrove smugglers;"],
@@ -207,5 +207,5 @@ $ ./ss prompt.preview --conversation $C --content "What does she say next?" --js
 
 - New section **"Hidden notes (T08)"**: the convention, folded vs hidden, every brain sees it, the rule (with the label and nested-code calls and why), the API, the terminal, the browser recipe, and the live check.
 - **"Writing a command":** `format(result, {reveal})`, and `open`/`reveal` added to the reserved arg names.
-- **HTTP contract:** `x-ss-reveal: 1`.
+- **HTTP contract:** `x-sst-reveal: 1`.
 - **"Mock Venice":** `MOCK_HIDDEN` and `MOCK_HIDDEN_ONLY`.

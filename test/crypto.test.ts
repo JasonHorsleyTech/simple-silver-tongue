@@ -9,7 +9,7 @@ import { closeVault, forkVault, listFiles, readJson, writeJson } from "../src/st
 import { randomBytes } from "node:crypto";
 
 const FAST_KDF = { N: 2 ** 10, r: 8, p: 1 }; // tests only; real users get KDF_DEFAULTS
-const tmp = await mkdtemp(join(tmpdir(), "ss-crypto-"));
+const tmp = await mkdtemp(join(tmpdir(), "sst-crypto-"));
 after(() => rm(tmp, { recursive: true, force: true }));
 
 test("encrypt/decrypt round trip, with a fresh IV every time", () => {
