@@ -1,8 +1,8 @@
-# simple-silver
+# Simple Silver Tongue (simple-silver)
 
 ## What this is
 
-A personal, local-only chat interface for the [Venice AI](https://venice.ai) API. The aim is to be a slightly better scratch pad than Venice's classic chat (`venice.ai/chat/classic/<uuid>`). It is not a product: no deployment, no monetization, no cloud, no users but Jason. Git is for checkpoints. Since 2026-10-21 the repo is on GitHub (`JasonHorsleyTech/simple-silver-tongue`, private; the name is Simple Silver Tongue, hence the `./sst` CLI and the `SST_*` variables), pushed by the orchestrator when Jason asks. **Pass agents never push.** Nothing under `data/`, `.run/` or `.env` is ever committed: they are gitignored and hold Jason's keys and campaigns.
+A personal, local-only chat interface for the [Venice AI](https://venice.ai) API. The aim is to be a slightly better scratch pad than Venice's classic chat (`venice.ai/chat/classic/<uuid>`). It is not a product: no deployment, no monetization, no cloud. It is Jason's own tool, shared with colleagues as an experimental side project (and a record of how agents built it). Git is for checkpoints. Since 2026-10-21 the repo is on GitHub (`JasonHorsleyTech/simple-silver-tongue`, private; the name is Simple Silver Tongue, hence the `./sst` CLI and the `SST_*` variables), pushed by the orchestrator when Jason asks. **Pass agents never push.** Nothing under `data/`, `.run/`, `.env` or `models.ini` is ever committed: they are gitignored and hold Jason's keys, campaigns and model list.
 
 On top of a normal streaming chat, it adds:
 
@@ -56,7 +56,7 @@ The full data model and prompt-assembly rules are in **[docs/design.md](docs/des
 
 ## Running it
 
-Jason's own short guide is **[README.md](README.md)** (start, stop, his account, the example campaign, play). Keep it true when you change any of those.
+**[README.md](README.md)** is the repo's front page for colleagues: what the app is, how it was built, setup, models, privacy, then how to play (start, stop, an account, the example campaign, a preset, play). Keep it true when you change any of those, and keep it generic: no personal account details.
 
 ```bash
 npm run up         # build the web app, (re)start the server in the background → http://localhost:4747
