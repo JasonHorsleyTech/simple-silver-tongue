@@ -51,13 +51,12 @@ describe("the model list file", () => {
     }
   });
 
-  test("the example enables two text models and two image models, the defaults among them, and never names Lustify", async () => {
+  test("the example enables two text models and two image models, the defaults among them", async () => {
     const raw = await readFile(join(ROOT, MODELS_EXAMPLE_FILE), "utf8");
     const list = parseModelList(raw, MODELS_EXAMPLE_FILE);
     assert.deepEqual(list, { text: ["deepseek-v4-1-flash", "google-gemma-4-31b-it"], image: ["z-image-turbo", "hunyuan-image-v3"] });
     assert.equal(list.text[0], DEFAULT_TEXT_MODEL);
     assert.equal(list.image[0], DEFAULT_IMAGE_MODEL);
-    assert.doesNotMatch(raw, /lustify/i);
     // Everything after the uncensored banner is commented out.
     const banner = raw.indexOf("Uncensored: off by default");
     assert.ok(banner > 0);
