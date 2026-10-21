@@ -4,7 +4,7 @@ import { usd } from "../venice/models.ts";
 import { foldHidden, revealHint } from "./hidden.ts";
 import { PIN_AS_WORDS, rollLabel } from "./wording.ts";
 import { activeVersion, type PinnedAt } from "./prompt.ts";
-import { totalCost } from "./turn.ts";
+import { totalCost, type ModelUse } from "./turn.ts";
 import type { ChatRequest, Conversation, ImageRecord, ImageRequest, LedgerMessage, MessageVersion } from "./types.ts";
 
 /** Plain-text CLI renderings. Content is printed in full and verbatim: these are the user's own words. */
@@ -77,7 +77,9 @@ export function formatConversation(c: Conversation, opts?: FormatOpts): string {
         // T16: what brain.list shows in full, in a word: its pins, and the brains it makes.
         const pins = b.pins?.length ? `, ${b.pins.length} pinned` : "";
         const makes = b.makes?.enabled ? `, makes "${b.makes.name}"` : "";
-        return `${b.name}${b.id === c.defaultBrainId ? " (default)" : ""} [${b.id}, ${b.kind}, reasoning ${b.reasoning.enabled ? b.reasoning.effort : "off"}${reminder}${pins}${makes}]`;
+        // T18: a brain on a model of its own says so; the others use the one in the header.
+        const own = [b.textModel ? `own model ${b.textModel}` : "", b.kind === "image" && b.imageModel ? `own image model ${b.imageModel}` : ""].filter(Boolean).map((x) => `, ${x}`).join("");
+        return `${b.name}${b.id === c.defaultBrainId ? " (default)" : ""} [${b.id}, ${b.kind}, reasoning ${b.reasoning.enabled ? b.reasoning.effort : "off"}${reminder}${pins}${makes}${own}]`;
       })
       .join(", ")}`,
   ];
@@ -154,6 +156,12 @@ export type Preview = {
   conversationId: string;
   brainId: string;
   brainName: string;
+  /**
+   * T18: the models this brain's request uses, and whose they are: `own` (the brain's own model) or the conversation's
+   * (`conversation` is the conversation's either way). `text` is body.model; `image` (an image brain) is the
+   * /image/generate request's model.
+   */
+  models: { text: ModelUse; image?: ModelUse };
   body: ChatRequest;
   /** Plain-language notes on text the provider adds that we can't show (e.g. reasoning on). */
   notes: string[];
@@ -186,12 +194,20 @@ export type Preview = {
   image?: { path: "/image/generate"; params: Omit<ImageRequest, "prompt">; notes: string[] };
 };
 
+/** "Text model: GLM 5.3 (z-ai-glm-5-3), Co-GM's own; the conversation's is grok-4-7." */
+export function modelLine(what: string, u: ModelUse): string {
+  const named = u.name && u.name !== u.id ? `${u.name} (${u.id})` : u.id;
+  return `${what}: ${named}, ${u.own ? `the brain's own; the conversation's is ${u.conversation}` : "the conversation's"}.`;
+}
+
 /** The exact body: every non-message field as JSON, then each message's content verbatim. */
 export function formatPreview(p: Preview): string {
   const { messages, ...rest } = p.body;
   const r = p.regenerate;
   const out = [
     `Exact request for brain "${p.brainName}" (${p.brainId}): POST /chat/completions`,
+    // T18: which model, and whose: the brain's own, or the conversation's.
+    ...[p.models.text, p.models.image].flatMap((u, i) => (u ? [modelLine(i ? "Image model" : "Text model", u)] : [])),
     ...(r
       ? [
           r.thought !== undefined

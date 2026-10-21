@@ -1,6 +1,6 @@
 import { newId, nowIso } from "../lib/ids.ts";
 import { freeNumber } from "./makers.ts";
-import type { Brain, Conversation, ImageRecord, LedgerMessage, MessageVersion } from "./types.ts";
+import { imageModelOf, type Brain, type Conversation, type ImageRecord, type LedgerMessage, type MessageVersion } from "./types.ts";
 
 /**
  * A new conversation from another one's configuration (T07). conversation.clone copies one of yours ("we're
@@ -43,8 +43,8 @@ export function rebuild(
     finishedAt: now,
   });
 
-  const image = (img: ImageRecord | undefined, safeMode: boolean): ImageRecord => {
-    if (!img || opts.images === "none") return failed(img ?? { model: src.settings.imageModel, safeMode }, NOT_IMPORTED);
+  const image = (img: ImageRecord | undefined, brain: Brain | undefined): ImageRecord => {
+    if (!img || opts.images === "none") return failed(img ?? { model: brain ? imageModelOf(src, brain) : src.settings.imageModel, safeMode: brain?.safeMode ?? true }, NOT_IMPORTED);
     if (img.status === "pending") return failed(img, NOT_COPIED);
     const { previous, ...rest } = img;
     const copy: ImageRecord = { ...structuredClone(rest), id: newId("img") };
@@ -65,7 +65,7 @@ export function rebuild(
     const versions = m.versions.map((v): MessageVersion => {
       const { image: img, ...rest } = v;
       const copy: MessageVersion = structuredClone(rest);
-      if (m.kind === "image") copy.image = image(img, brain?.safeMode ?? true);
+      if (m.kind === "image") copy.image = image(img, brain);
       return copy;
     });
     const id = newId("m");

@@ -40,6 +40,9 @@ export { SETUP_ROLES } from "../../../src/conversations/types.ts";
  */
 export { DEFAULT_PIN_AS, PIN_ROLES } from "../../../src/conversations/types.ts";
 
+/** T18: the model a brain uses, the server's own rule: its own, or the conversation's. */
+export { imageModelOf, textModelOf } from "../../../src/conversations/types.ts";
+
 /**
  * T16: how a maker names the brains it makes, the server's own rule: the name the next one gets (`freeMadeName`, which
  * skips names already taken), and whether a made brain still has the name its pattern gave it (`isPatternName`).
@@ -148,10 +151,18 @@ export type ConversationSummary = {
 export type UnreadableConversation = { id: string; error: string };
 
 /** prompt.preview: the exact body turn would send, plus notes and the reason turn would refuse it. */
+/**
+ * T18: which model a request uses, and whose: `own` (the brain's own) or the conversation's (`conversation`, the
+ * conversation's model either way). `name` is Venice's display name, when it lists the model.
+ */
+export type ModelUse = { id: string; name?: string; own: boolean; conversation: string };
+
 export type Preview = {
   conversationId: string;
   brainId: string;
   brainName: string;
+  /** T18: the brain's text model (body.model) and, for an image brain, its image model (image.params.model), and whose each is. */
+  models: { text: ModelUse; image?: ModelUse };
   body: ChatRequest;
   notes: string[];
   refusal?: string;
@@ -240,14 +251,23 @@ export type BrainFields = {
    * {{n}}) and `blueprint.systemPrompt`. `enabled: false` keeps it and makes nothing; null removes it.
    */
   makes?: MakesUpdate | null;
+  /**
+   * T18: the brain's own text model (any Venice id; checked, 400 unknown_model), used instead of the conversation's.
+   * null: back to the conversation's. `imageModel`: an image brain's own image model (400 on a text brain).
+   */
+  textModel?: string | null;
+  imageModel?: string | null;
 };
 
 /** T16: what brain.add / brain.update take for the maker setting: any of its fields, the blueprint's merged. */
 export type MakesUpdate = Partial<Omit<BrainMaker, "blueprint">> & {
-  blueprint?: Partial<Omit<BrainBlueprint, "reasoning" | "finalReminder" | "tool">> & {
+  blueprint?: Partial<Omit<BrainBlueprint, "reasoning" | "finalReminder" | "tool" | "textModel" | "imageModel">> & {
     reasoning?: Partial<Brain["reasoning"]>;
     finalReminder?: Partial<Brain["finalReminder"]>;
     tool?: Partial<BrainTool>;
+    /** T18: the made brains' own models; null: they use the conversation's. */
+    textModel?: string | null;
+    imageModel?: string | null;
   };
 };
 
@@ -271,6 +291,9 @@ export type LibraryBrain = {
   reasoning?: string;
   /** T16: a brain that makes brains, its name pattern ("Character {{n}}"), when the setting is on. */
   makes?: string;
+  /** T18: the brain's own models, when the file gives it some (else it uses the conversation's). */
+  textModel?: string;
+  imageModel?: string;
 };
 
 /** examples.list (T07): a committed campaign in examples/, ready to import. `error`: the file can't be imported. */
@@ -460,6 +483,9 @@ export type StreamEvent =
       /** T05: "image" for an image brain. `imageOnly`: no text streams (image.retry, or an edit or add of a prompt). */
       kind?: "text" | "image";
       imageOnly?: true;
+      /** T18: the text model the reply is written with (turn, message.regenerate); `ownModel`: the brain's own, not the conversation's. */
+      model?: string;
+      ownModel?: true;
     }
   | { type: "reasoning"; delta: string }
   | { type: "delta"; delta: string }

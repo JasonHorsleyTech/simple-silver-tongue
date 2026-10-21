@@ -13,9 +13,11 @@ export const CURATED_TEXT: readonly string[] = [
   // reasoning low it worked 1 in 1. It may need reasoning on for that (a fresh take for a brain with no reminder).
   "google-gemma-4-31b-it",
   "gemma-4-uncensored",
-  // T15 (2026-10-15): it reported 2,419 prompt tokens for a request the other models counted at about 1,200. There
-  // may be a system prompt we aren't sending (xAI's own, or Venice's despite include_venice_system_prompt: false),
-  // which would break hard requirement 1. Look into it before relying on Grok.
+  // T15 (2026-10-15): it reported 2,419 prompt tokens for a request the other models counted at about 1,200. T18
+  // (2026-10-21) measured it: Grok adds ~1,240 prompt tokens of its own to every request, whatever the body (a two-line
+  // body: 21 on DeepSeek, 1,261 on Grok; the GM's: 1,185 and 2,406), 1,152 of them cached even on a first call. A
+  // provider-side prompt we can't see or edit, against hard requirement 1. It also reasons with reasoning off
+  // (disable_thinking: true still gave 50-221 reasoning tokens, billed, none of it streamed). docs/design.md, "Models".
   "grok-4-7",
   "kimi-k3",
   "kimi-k2-6",

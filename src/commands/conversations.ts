@@ -12,11 +12,12 @@ import {
 import { imageIdsOf } from "../conversations/images.ts";
 import { lookupModel } from "../conversations/turn.ts";
 import { templateProblem } from "../conversations/prompt.ts";
-import type { Conversation, ImageSettings, Templates } from "../conversations/types.ts";
+import type { Brain, Conversation, ImageSettings, Templates } from "../conversations/types.ts";
 import { removeImageFiles } from "../images/files.ts";
 import { imageSettingsProblem } from "../images/request.ts";
 import { badRequest } from "../lib/errors.ts";
 import { command } from "../registry.ts";
+import type { ModelInfo } from "../venice/models.ts";
 
 export const conversationId = z.string().regex(CONVERSATION_ID_RE, "Conversation ids look like c_k3j9x0q2ma").describe("Conversation id (c_...)");
 export const MESSAGE_ID_RE = /^m_[a-z0-9]{4,32}$/;
@@ -115,11 +116,14 @@ export const imageSettings = z
 export const conversationUpdate = command({
   name: "conversation.update",
   description: `Change a conversation's title, settings or framing templates. Only the fields you pass change.
-Unset maxTokens or temperature with null: --settings '{"maxTokens": null}'.
+Unset maxTokens or temperature with null: --settings.max-tokens null.
+The text and image models are the conversation's defaults (T18): every brain without a model of its own uses them,
+so changing one moves those brains. A brain with its own (brain.update --text-model / --image-model) keeps it; the
+answer names them.
 Image brains' images use the image model and --settings.image.* (resolution, format, watermark, negative prompt);
 each image brain has its own shape (brain.update --shape). Only what the model takes is sent: prompt.preview
---brain <image brain> shows the exact image request and says what was left out. A resolution the current model
-doesn't list is refused.
+--brain <image brain> shows the exact image request and says what was left out. A resolution that neither the
+image model nor any image brain's own model lists is refused.
 Templates are sent to the models, so they are yours to edit; prompt.preview shows the effect. Each one must keep
 its placeholder ({{content}}, {{prompt}}, {{instruction}}, {{roll}} or {{thought}}), where the text goes. The roll
 template (T09) makes a roll's message when you roll, so a change shows in later rolls; earlier ones keep their
@@ -157,8 +161,19 @@ text. The thought template is what a fresh take's note from the Muse starts as (
     const imageModel = s.imageModel ? await lookupModel(ctx.deps.venice, "image", s.imageModel) : null;
     const img = s.image ?? {};
     const sizing = img.resolution !== undefined && img.resolution !== null;
-    // A resolution is checked against the model it will be sent to (the new one, if this call changes it).
-    const sizeModel = sizing ? (imageModel ?? (await lookupModel(ctx.deps.venice, "image", (await loadConversation(vault, args.id)).settings.imageModel))) : null;
+    // A resolution is checked against the models it will be sent to: the conversation's image model (the new one, if
+    // this call changes it) and, T18, any image brain's own. One of them listing it is enough: the others leave it
+    // out, and their payload view says so (buildImageRequest's notes).
+    const sizeModels: ModelInfo[] = [];
+    if (sizing) {
+      const before = await loadConversation(vault, args.id);
+      sizeModels.push(imageModel ?? (await lookupModel(ctx.deps.venice, "image", before.settings.imageModel)));
+      const own = new Set(before.brains.flatMap((b: Brain) => (b.kind === "image" && b.imageModel ? [b.imageModel] : [])));
+      for (const id of own) {
+        const m = await lookupModel(ctx.deps.venice, "image", id).catch(() => null); // a model Venice dropped takes nothing
+        if (m && !sizeModels.some((x) => x.id === m.id)) sizeModels.push(m);
+      }
+    }
     const { conv } = await mutateConversation(vault, args.id, (c) => {
       if (args.title !== undefined) c.title = args.title;
       if (s.textModel) c.settings.textModel = s.textModel;
@@ -173,8 +188,11 @@ text. The thought template is what a fresh take's note from the Muse starts as (
         else if (v !== undefined) Object.assign(next, { [k]: v });
       }
       const changing = (Object.keys(img) as (keyof ImageSettings)[]).filter((k) => img[k] !== null && img[k] !== undefined);
-      const problem = sizeModel && imageSettingsProblem(next, sizeModel, changing);
-      if (problem) throw badRequest(problem);
+      const problems = sizeModels.map((m) => imageSettingsProblem(next, m, changing));
+      if (problems.length && problems.every(Boolean)) {
+        const others = sizeModels.slice(1).map((m) => m.id);
+        throw badRequest(`${problems[0]}${others.length ? ` Nor does ${others.join(" or ")}, an image brain's own model.` : ""}`);
+      }
       c.settings.image = next;
       Object.assign(c.templates, args.templates ?? {});
     });
@@ -184,7 +202,11 @@ text. The thought template is what a fresh take's note from the Muse starts as (
     const st = c.settings;
     const im = st.image;
     const size = im.resolution ?? "default resolution";
-    return `Updated ${c.id} "${c.title}" · ${st.textModel} · max_tokens ${st.maxTokens ?? "-"} · temperature ${st.temperature ?? "-"} · images ${st.imageModel}, ${size}, ${im.format}${im.hideWatermark ? ", no watermark" : ""}${im.negativePrompt?.trim() ? ", negative prompt" : ""}`;
+    const line = `Updated ${c.id} "${c.title}" · ${st.textModel} · max_tokens ${st.maxTokens ?? "-"} · temperature ${st.temperature ?? "-"} · images ${st.imageModel}, ${size}, ${im.format}${im.hideWatermark ? ", no watermark" : ""}${im.negativePrompt?.trim() ? ", negative prompt" : ""}`;
+    // T18: the conversation's models are the defaults; a brain with its own keeps it.
+    const own = c.brains.flatMap((b) => [b.textModel ? `${b.name} (${b.textModel})` : "", b.kind === "image" && b.imageModel ? `${b.name} (images: ${b.imageModel})` : ""].filter(Boolean));
+    return own.length ? `${line}
+Brains on a model of their own, which they keep: ${own.join(", ")}. The others use the conversation's.` : line;
   },
 });
 

@@ -19,11 +19,13 @@ import { promptOf } from "../conversations/tool-call.ts";
 import {
   addSpend,
   generatedVersion,
-  lookupModel,
+  imageModelUse,
   newMessage,
   planRegenerate,
   planTurn,
   relayReply,
+  textModels,
+  textModelUse,
   untilAborted,
   type MuseNotePlan,
   type Reply,
@@ -109,17 +111,27 @@ which is the one its generate_image call writes, word for word.`,
       throw badRequest("A regenerate preview takes no content, roll or brain: the message's own brain answers the messages as they are.");
     }
     const conv = await loadConversation(ctx.requireSession().vault, args.conversation);
-    const model = await lookupModel(ctx.deps.venice, "text", conv.settings.textModel);
+    // T18: the plan looks up the model of the brain that answers (its own, or the conversation's).
+    const models = await textModels(ctx.deps.venice);
     const plan = args.regenerate
-      ? planRegenerate(conv, { message: args.message, steer: args.steer, thought: args.thought, wrap: args.wrap }, model)
-      : planTurn(conv, { brain: args.brain, content: args.content, roll: args.roll ? "unrolled" : undefined }, model);
-    const preview: Preview = { conversationId: conv.id, brainId: plan.brain.id, brainName: plan.brain.name, body: plan.body, notes: plan.notes };
+      ? planRegenerate(conv, { message: args.message, steer: args.steer, thought: args.thought, wrap: args.wrap }, models)
+      : planTurn(conv, { brain: args.brain, content: args.content, roll: args.roll ? "unrolled" : undefined }, models);
+    const preview: Preview = {
+      conversationId: conv.id,
+      brainId: plan.brain.id,
+      brainName: plan.brain.name,
+      models: { text: textModelUse(conv, plan.brain, plan.model) },
+      body: plan.body,
+      notes: plan.notes,
+    };
     if (plan.pinned.length) preview.pinned = plan.pinned;
     if (plan.refusal) preview.refusal = plan.refusal;
     if (plan.brain.kind === "image") {
-      const { body, notes } = (await painterFor(ctx.deps.venice, conv, plan.brain)).plan("");
+      const painter = await painterFor(ctx.deps.venice, conv, plan.brain);
+      const { body, notes } = painter.plan("");
       const { prompt: _prompt, ...params } = body;
       preview.image = { path: "/image/generate", params, notes };
+      preview.models.image = imageModelUse(conv, plan.brain, painter.model);
     }
     if ("message" in plan) {
       preview.regenerate = { messageId: plan.message.id, newVersion: plan.message.versions.length + 1 };
@@ -179,15 +191,15 @@ take its turn) and this stream goes on until the image lands.`,
 async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: GenerationHandle): AsyncGenerator<StreamEvent, ImageStarted | void, undefined> {
   const { vault } = ctx.requireSession();
   const conv = await gen.load(); // through the write queue, so no edit lands between the lock and this read (T03 QA-1)
-  const model = await lookupModel(ctx.deps.venice, "text", conv.settings.textModel);
+  const models = await textModels(ctx.deps.venice); // T18: the plan picks the answering brain's model from these
   // The server rolls here, never a model (T09). Nothing is saved, and the roll is never shown, unless Venice takes the request.
-  const plan = planTurn(conv, { brain: args.brain, content: args.content, roll: args.roll ? rollD20() : undefined }, model);
+  const plan = planTurn(conv, { brain: args.brain, content: args.content, roll: args.roll ? rollD20() : undefined }, models);
   gen.forBrain(plan.brain.id); // from here on, only this brain is busy (brain.delete, kind changes)
   if (plan.refusal) throw new CommandError(400, "nothing_to_answer", plan.refusal);
   // An image brain's image model is checked now, before its prompt is asked for (and paid for).
   const painter = plan.brain.kind === "image" ? await painterFor(ctx.deps.venice, conv, plan.brain) : null;
   // Up-front refusals (no balance, bad model) throw here, before anything is saved.
-  const upstream = await openUpstream(ctx, { conv, body: plan.body, brain: plan.brain, model }, gen, "Stopped before the reply started. Nothing was saved.");
+  const upstream = await openUpstream(ctx, { conv, body: plan.body, brain: plan.brain, model: plan.model }, gen, "Stopped before the reply started. Nothing was saved.");
 
   // Your message, then your roll (T09), saved together; each is a `message` event, so a client shows the roll
   // before the reply starts streaming.
@@ -198,7 +210,7 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
   }
   const messageId = newId("m");
   // The title lets the CLI say which campaign SS_CONVERSATION sent this to (T07 QA-6).
-  yield { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId, kind: plan.brain.kind, conversationTitle: conv.title };
+  yield { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId, kind: plan.brain.kind, ...modelOf(plan), conversationTitle: conv.title };
 
   const kept = plan.player && plan.roll ? "Your message and your roll are" : plan.roll ? "Your roll is" : plan.player ? "Your message is" : null;
   // Name the brain: with several, a bare "turn" goes to the default brain, which may be another one (T04 QA-1).
@@ -230,6 +242,12 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
   if (made) yield brainMade(made, message.id);
   yield { type: "done", message, note: replyNote(plan.brain.name, reply, plan.body.stop), spentUsd };
 }
+
+/**
+ * T18: the text model a reply is written with, for the `start` event (the CLI's header names it when it is the brain's
+ * own, `ownModel`). The saved version records it too (`model`).
+ */
+const modelOf = (plan: { brain: Brain; body: ChatRequest }) => ({ model: plan.body.model, ...(plan.brain.textModel !== undefined ? { ownModel: true } : {}) });
 
 /**
  * T16: the event that tells a client a brain was just made (its whole document), so its button can appear at once.
@@ -281,14 +299,13 @@ answers it. Delete or edit it like any message.`,
 async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx, gen: GenerationHandle): AsyncGenerator<StreamEvent, ImageStarted | void, undefined> {
   const { vault } = ctx.requireSession();
   const conv = await gen.load(); // through the write queue (T03 QA-1): a delete that got in first is seen here
-  const model = await lookupModel(ctx.deps.venice, "text", conv.settings.textModel);
-  const plan = planRegenerate(conv, { message: args.message, steer: args.steer, thought: args.thought, wrap: args.wrap }, model);
+  const plan = planRegenerate(conv, { message: args.message, steer: args.steer, thought: args.thought, wrap: args.wrap }, await textModels(ctx.deps.venice));
   gen.forBrain(plan.brain.id);
   if (plan.refusal) throw new CommandError(400, "nothing_to_answer", plan.refusal);
   const painter = plan.brain.kind === "image" ? await painterFor(ctx.deps.venice, conv, plan.brain) : null;
   const id = plan.message.id;
   const keeps = `${id} keeps its current version.`;
-  const upstream = await openUpstream(ctx, { conv, body: plan.body, brain: plan.brain, model }, gen, `Stopped before the new version started. ${keeps}`);
+  const upstream = await openUpstream(ctx, { conv, body: plan.body, brain: plan.brain, model: plan.model }, gen, `Stopped before the new version started. ${keeps}`);
 
   // T17: a fresh take's note, saved now that Venice has the request (as a turn's message is), right before the message.
   let noteSaved: LedgerMessage | null = null;
@@ -298,7 +315,7 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
     yield { type: "muse_note", message: result.message, before: id, brain: result.muse, ...(result.museCreated ? { brainCreated: true } : {}) };
     if (result.made) yield brainMade(result.made, result.message.id);
   }
-  const start: StreamEvent = { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId: id, regenerate: true, kind: plan.brain.kind, conversationTitle: conv.title };
+  const start: StreamEvent = { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId: id, regenerate: true, kind: plan.brain.kind, ...modelOf(plan), conversationTitle: conv.title };
   if (plan.steer !== undefined) start.steer = plan.steer;
   if (plan.thought !== undefined) start.thought = plan.thought;
   yield start;

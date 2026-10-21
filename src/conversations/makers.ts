@@ -53,10 +53,13 @@ export function makeBrain(conv: Conversation, maker: Brain, message: LedgerMessa
     pins: [{ messageId: message.id, as: m.pinAs }],
     madeFrom: message.id,
   };
+  // T18: a blueprint may give the made brains models of their own; without, they use the conversation's.
+  if (bp.textModel !== undefined) brain.textModel = bp.textModel;
   if (bp.kind === "image") {
     if (bp.safeMode !== undefined) brain.safeMode = bp.safeMode;
     if (bp.shape !== undefined) brain.shape = bp.shape;
     if (bp.tool) brain.tool = bp.tool;
+    if (bp.imageModel !== undefined) brain.imageModel = bp.imageModel;
     makeImageBrain(brain); // fills what the blueprint left out
   }
   if (named) m.next = named.n + 1;

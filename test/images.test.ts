@@ -240,7 +240,7 @@ describe("image brains: CLI → server → mock Venice, encrypted user (T05)", (
     assert.equal(square.shape, "square");
     const r = await t.cli(["brain.update", "--conversation", c, "--brain", "Game Master", "--shape", "square"]);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /Safe mode, shape and tool text are for image brains, and Game Master is a text brain/);
+    assert.match(r.stderr, /Safe mode, shape, tool text and an image model are for image brains, and Game Master is a text brain/);
   });
 
   test("a prompt in the painter's mouth is painted; deleting a message or the conversation deletes its images", async () => {

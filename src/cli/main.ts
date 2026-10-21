@@ -403,7 +403,9 @@ ${foldHidden(text).text}
         // With SS_CONVERSATION, name the campaign, so a stale export after a clone shows at once (T07 QA-6).
         const where = fromEnv && typeof ev.conversationTitle === "string" ? ` · in "${ev.conversationTitle}"` : "";
         if (typeof ev.messageId === "string") messageId = ev.messageId;
-        errOut(dim(`[${ev.brainName ?? ev.brainId ?? "start"}${where}]\n`));
+        // T18: a brain on a model of its own says so (the others use the conversation's, as conversation.get shows).
+        const own = ev.ownModel && typeof ev.model === "string" ? ` · own model ${ev.model}` : "";
+        errOut(dim(`[${ev.brainName ?? ev.brainId ?? "start"}${own}${where}]\n`));
         break;
       }
       case "brain_made":

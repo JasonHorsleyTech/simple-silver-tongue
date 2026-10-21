@@ -4,20 +4,22 @@ import type { StreamEvent } from "../registry.ts";
 import type { ChatEvent } from "../venice/chat.ts";
 import type { VeniceClient } from "../venice/client.ts";
 import type { ModelInfo } from "../venice/models.ts";
-import { activeVersion, assembleRequest, nothingToAnswer, REASONING_NOTE, reasoningOn, render, resolveBrain, templateProblem, type ModelCaps, type PinnedAt } from "./prompt.ts";
+import { activeVersion, assembleRequest, capsFor, nothingToAnswer, REASONING_NOTE, reasoningOn, render, resolveBrain, templateProblem, type ModelBook, type ModelCaps, type PinnedAt } from "./prompt.ts";
 import { newMuse } from "./defaults.ts";
 import { nextMadeName } from "./makers.ts";
 import { partialPrompt, type ToolCallParts } from "./tool-call.ts";
 import { findHidden, isAllHidden } from "./hidden.ts";
 import { alwaysReasonsNote, freshTakeNote, isMuse, makesNote, MUSE_NAME, museMakesNote, PIN_AS_WORDS, pinnedNote, ROLL_PREVIEW_NOTE, STOP_REASONING_NOTE, stopNote } from "./wording.ts";
-import type { Brain, ChatRequest, Conversation, LedgerMessage, MessageVersion, Roll, Usage } from "./types.ts";
+import { imageModelOf, textModelOf, type Brain, type ChatRequest, type Conversation, type LedgerMessage, type MessageVersion, type Roll, type Usage } from "./types.ts";
 
 /**
  * What a turn will do, worked out without side effects. prompt.preview returns plan.body; turn sends exactly
  * plan.body. Both go through this one function, so the preview is the request.
  */
-export type TurnPlan = {
+export type TurnPlan<M extends ModelCaps = ModelCaps> = {
   brain: Brain;
+  /** T18: the caps of the text model the brain's request uses (its own, or the conversation's): body.model's. */
+  model: M;
   /** The player message the turn will append first, or null when content is empty (the brain just responds). */
   player: LedgerMessage | null;
   /** T09: a roll-and-send's roll, appended after the player message (if any). Null without a roll. */
@@ -44,8 +46,9 @@ export type BodyReview = {
  * the turn is sent, so the roll's line keeps {{roll}} where the number will go, and a note says so. That one
  * placeholder is the only difference from the body turn sends.
  */
-export function planTurn(conv: Conversation, opts: { brain?: string; content?: string; roll?: Roll | "unrolled" }, model: ModelCaps): TurnPlan {
+export function planTurn<M extends ModelCaps>(conv: Conversation, opts: { brain?: string; content?: string; roll?: Roll | "unrolled" }, models: ModelBook<M>): TurnPlan<M> {
   const brain = resolveBrain(conv, opts.brain);
+  const model = capsFor(models, conv, brain); // T18: the brain's own model, or the conversation's (an unknown one: 400 here)
   const content = opts.content ?? "";
   const createdAt = nowIso();
   const player = content.trim() ? newMessage({ type: "player" }, "text", { content, source: "authored", createdAt }) : null;
@@ -57,7 +60,7 @@ export function planTurn(conv: Conversation, opts: { brain?: string; content?: s
   if (opts.roll === "unrolled") review.notes.unshift(ROLL_PREVIEW_NOTE);
   // T16: sending to a brain that makes brains has a side effect, so the payload view says what it will make.
   if (brain.makes?.enabled) review.notes.push(makesNote(brain.name, nextMadeName(conv, brain.makes).name));
-  return { brain, player, roll, body, ...review };
+  return { brain, model, player, roll, body, ...review };
 }
 
 /**
@@ -78,8 +81,10 @@ export function rollMessage(conv: Conversation, roll: Roll | null, createdAt = n
  * What a regenerate will send (docs/design.md, "Turns, regeneration and edits"). message.regenerate sends
  * plan.body and prompt.preview --regenerate returns it, so the steered request can be previewed exactly.
  */
-export type RegeneratePlan = {
+export type RegeneratePlan<M extends ModelCaps = ModelCaps> = {
   brain: Brain;
+  /** T18: the caps of the text model the brain's request uses (its own, or the conversation's): body.model's. */
+  model: M;
   /** The message that gets a new version: always the last one in the ledger, written by a brain. */
   message: LedgerMessage;
   /** The steer as it is sent and stored (trimmed). Absent: a plain re-roll. */
@@ -128,7 +133,11 @@ export type MuseNotePlan = {
  * thought is sent exactly as given (never trimmed); `wrap` puts it into the conversation's thought template first,
  * as the browser's box starts. A blank thought, or one with a steer, is refused.
  */
-export function planRegenerate(conv: Conversation, opts: { message?: string; steer?: string; thought?: string; wrap?: boolean }, model: ModelCaps): RegeneratePlan {
+export function planRegenerate<M extends ModelCaps>(
+  conv: Conversation,
+  opts: { message?: string; steer?: string; thought?: string; wrap?: boolean },
+  models: ModelBook<M>,
+): RegeneratePlan<M> {
   if (opts.thought !== undefined && opts.steer !== undefined) {
     throw badRequest("A regenerate takes a steer (revise the reply on screen) or a thought (a fresh take: a note from the Muse), not both.");
   }
@@ -158,6 +167,7 @@ export function planRegenerate(conv: Conversation, opts: { message?: string; ste
   const brain = conv.brains.find((b) => b.id === brainId);
   if (!brain) throw new Error(`message ${message.id}: author brain ${brainId} is missing from conversation ${conv.id}`);
   const thought = opts.thought !== undefined && opts.wrap ? wrapThought(conv, opts.thought, brain.name) : opts.thought;
+  const model = capsFor(models, conv, brain); // T18: the message's brain's own model, or the conversation's
 
   const steer = opts.steer?.trim() || undefined;
   const fresh = thought !== undefined ? planMuseNote(conv, message, brain, thought) : null;
@@ -170,7 +180,7 @@ export function planRegenerate(conv: Conversation, opts: { message?: string; ste
     // it at all, nothingToAnswer's "only its system prompt" already says why (T03 QA-4).
     review.refusal = `Without ${message.id}, the request would end with ${brain.name}'s own earlier reply, so a plain re-roll has nothing to answer. Give it a steer, or edit the message instead.`;
   }
-  const plan: RegeneratePlan = { brain, message, body, ...review };
+  const plan: RegeneratePlan<M> = { brain, model, message, body, ...review };
   if (steer) {
     plan.steer = steer;
     plan.steeredFrom = message.activeVersion;
@@ -286,18 +296,47 @@ export function newMessage(author: LedgerMessage["author"], kind: LedgerMessage[
   return { id, author, kind, versions: [version], activeVersion: 0, createdAt: version.createdAt, updatedAt: version.createdAt };
 }
 
-/** The model's capabilities from the cached /models list. An unknown model is refused before anything is sent. */
-export async function lookupModel(venice: VeniceClient, type: "text" | "image", id: string): Promise<ModelInfo> {
+/**
+ * The model's capabilities from the cached /models list. An unknown model is refused before anything is sent. With
+ * `brain` (T18), the refusal says whose model it is: the brain's own (fix it with brain.update) or the conversation's.
+ */
+export async function lookupModel(venice: VeniceClient, type: "text" | "image", id: string, brain?: Pick<Brain, "name" | "textModel" | "imageModel">): Promise<ModelInfo> {
   const { models } = await venice.listModels(type);
-  const m = models.find((x) => x.id === id);
-  if (!m) {
-    throw new CommandError(
-      400,
-      "unknown_model",
-      `Venice has no ${type} model "${id}". See ./ss models.list --type ${type}, then set it with ./ss conversation.update --id <conversation> --settings.${type}-model <id>.`,
-    );
-  }
-  return m;
+  return models.find((x) => x.id === id) ?? unknownModel(type, id, brain);
+}
+
+/**
+ * T18: the planners' model book (prompt.ts, ModelBook): every text model Venice lists, by id, from the cached list.
+ * A plan looks up the model of the brain that answers (its own, or the conversation's); an unknown one is refused
+ * there, before anything is saved or sent.
+ */
+export async function textModels(venice: VeniceClient): Promise<(id: string, brain: Brain) => ModelInfo> {
+  const { models } = await venice.listModels("text");
+  return (id, brain) => models.find((x) => x.id === id) ?? unknownModel("text", id, brain);
+}
+
+/** Venice doesn't list this model: say how to pick another, where it was set (the brain's own model, or the conversation's). */
+function unknownModel(type: "text" | "image", id: string, brain?: Pick<Brain, "name" | "textModel" | "imageModel">): never {
+  const own = brain && (type === "text" ? brain.textModel : brain.imageModel) === id;
+  const fix = own
+    ? `then give ${brain.name} another with ./ss brain.update --conversation <conversation> --brain "${brain.name}" --${type}-model <id>, or --${type}-model null for the conversation's.`
+    : `then set it with ./ss conversation.update --id <conversation> --settings.${type}-model <id>.`;
+  throw new CommandError(400, "unknown_model", `Venice has no ${type} model "${id}"${own ? `, which is ${brain.name}'s own ${type} model` : ""}. See ./ss models.list --type ${type}, ${fix}`);
+}
+
+/** T18: which model a brain uses, and whose it is, for prompt.preview and the payload view. */
+export type ModelUse = { id: string; name?: string; own: boolean; conversation: string };
+
+export function textModelUse(conv: Conversation, brain: Brain, caps: ModelCaps): ModelUse {
+  const use: ModelUse = { id: textModelOf(conv, brain), own: brain.textModel !== undefined, conversation: conv.settings.textModel };
+  if (caps?.name) use.name = caps.name;
+  return use;
+}
+
+export function imageModelUse(conv: Conversation, brain: Brain, model?: ModelInfo): ModelUse {
+  const use: ModelUse = { id: imageModelOf(conv, brain), own: brain.imageModel !== undefined, conversation: conv.settings.imageModel };
+  if (model?.name) use.name = model.name;
+  return use;
 }
 
 export type Reply = {

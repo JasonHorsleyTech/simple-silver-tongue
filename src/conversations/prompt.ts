@@ -1,5 +1,5 @@
 import { badRequest, CommandError, notFound } from "../lib/errors.ts";
-import type { Brain, ChatMessage, ChatRequest, Conversation, LedgerMessage, PinRole, Templates } from "./types.ts";
+import { textModelOf, type Brain, type ChatMessage, type ChatRequest, type Conversation, type LedgerMessage, type PinRole, type Templates } from "./types.ts";
 
 /**
  * Prompt assembly (docs/design.md, "Prompt assembly"). buildRequest is a pure function from the conversation
@@ -7,14 +7,33 @@ import type { Brain, ChatMessage, ChatRequest, Conversation, LedgerMessage, PinR
  * two cannot drift. Every string in the result comes from a user-editable field: this file adds no prose.
  */
 
-/** What buildRequest needs to know about settings.textModel (from GET /models). null: unknown, so no reasoning params. */
+/**
+ * What buildRequest needs to know about the brain's text model (from GET /models). null: unknown, so no reasoning
+ * params. `id` (a ModelInfo has it) is checked against the model the request names, so caps for the wrong model can't
+ * shape another model's request (T18).
+ */
 export type ModelCaps = {
+  id?: string;
   name?: string;
   reasoning?: { supported: boolean; effortOptions: string[] | null; always?: "refused" | "ignored" };
 } | null;
 
+/**
+ * T18: where a request gets its model's caps. A brain may have a text model of its own, so the caps depend on which
+ * brain answers, which only the planner knows: give it a lookup by model id (the command layer's, from the cached
+ * /models list, which refuses an unknown model: textModels in turn.ts), or one model's caps for every brain (tests).
+ */
+export type ModelBook<M extends ModelCaps = ModelCaps> = M | ((id: string, brain: Brain) => M);
+
+/** The caps of the text model this brain's requests use (textModelOf: its own, or the conversation's). */
+export function capsFor<M extends ModelCaps>(book: ModelBook<M>, conv: Pick<Conversation, "settings">, brain: Brain): M {
+  // A function is structurally a ModelCaps too (it has a `name`), so TypeScript can't narrow this by itself.
+  return typeof book === "function" ? (book as (id: string, brain: Brain) => M)(textModelOf(conv, brain), brain) : (book as M);
+}
+
 export type BuildOptions = {
-  model: ModelCaps;
+  /** The caps of the brain's text model, or a lookup that gives them (T18: the brain's own model, or the conversation's). */
+  model: ModelBook;
   /** Regenerate: stop before this ledger message (it and everything after it are left out). */
   excludeFromMessageId?: string;
   /** Regenerate with a one-off direction: rendered with templates.steer and sent last. Never stored in the ledger. */
@@ -106,6 +125,10 @@ export function assembleRequest(conv: Conversation, brainId: string, opts: Build
   if (brain.kind === "image" && !brain.tool) {
     throw new CommandError(400, "bad_brain", `Image brain "${brain.name}" has no tool text (tool.name, description, ...).`);
   }
+  // T18: the brain's own text model, or the conversation's; the caps (reasoning) are that model's.
+  const modelId = textModelOf(conv, brain);
+  const caps = capsFor(opts.model, conv, brain);
+  if (caps?.id !== undefined && caps.id !== modelId) throw new Error(`caps for ${caps.id} were given for ${brain.name}, whose requests use ${modelId}`);
   const t = conv.templates;
   const frame = (name: keyof Templates, vars: Vars) => {
     const problem = templateProblem(name, t[name]);
@@ -185,7 +208,7 @@ export function assembleRequest(conv: Conversation, brainId: string, opts: Build
   if (opts.steer !== undefined) messages.push({ role: "user", content: frame("steer", { instruction: opts.steer }) });
 
   const body: ChatRequest = {
-    model: conv.settings.textModel,
+    model: modelId,
     messages,
     stream: true,
     stream_options: { include_usage: true },
@@ -193,7 +216,7 @@ export function assembleRequest(conv: Conversation, brainId: string, opts: Build
     venice_parameters: { include_venice_system_prompt: false, enable_web_search: "off", enable_web_scraping: false },
   };
 
-  const r = opts.model?.reasoning;
+  const r = caps?.reasoning;
   if (r?.supported) {
     if (!brain.reasoning.enabled) {
       if (r.effortOptions?.includes("none")) body.reasoning_effort = "none";

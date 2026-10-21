@@ -12,7 +12,27 @@ import { imageSettingsProblem } from "../images/request.ts";
 import { badRequest, CommandError, notFound } from "../lib/errors.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { command, type Ctx } from "../registry.ts";
-import { PLAYER, applyMakes, brainLine, brainName, checkName, color, finalReminder, kind, makes, pinAs, reasoning, reasoningNotes, safeMode, shape, stop, tool } from "./brains.ts";
+import {
+  PLAYER,
+  applyMakes,
+  brainLine,
+  brainName,
+  checkBrainModels,
+  checkName,
+  color,
+  finalReminder,
+  imageModel,
+  kind,
+  makes,
+  pinAs,
+  reasoning,
+  reasoningNotes,
+  safeMode,
+  shape,
+  stop,
+  textModel,
+  tool,
+} from "./brains.ts";
 import { conversationId, imageSettings, messageId, systemPrompt, templates, title } from "./conversations.ts";
 
 /**
@@ -103,6 +123,9 @@ const campaignSchema = z.object({
         makes: makes.optional(),
         /** T16: the message (its `id` in this file) the brain was made from. */
         madeFrom: z.string().min(1).optional(),
+        /** T18: the brain's own models (absent or null: the conversation's). Checked against Venice's list, as the settings' are. */
+        textModel: textModel.optional(),
+        imageModel: imageModel.optional(),
       }),
     )
     .min(1, "A campaign needs at least one brain"),
@@ -146,7 +169,9 @@ function toConversation(doc: Campaign, where: string): Conversation {
     const twin = shell.brains.findIndex((x) => x.name.toLowerCase() === b.name.toLowerCase());
     if (twin >= 0) throw bad(`brains.${i}.name: two brains are called "${shell.brains[twin]!.name}" (names are unique, ignoring case).`);
     const isDefault = doc.defaultBrainId ? b.id === doc.defaultBrainId : i === 0;
-    if (b.kind === "text" && (b.safeMode !== undefined || b.shape !== undefined || b.tool)) throw bad(`brains.${i}: safe mode, shape and tool text are for image brains, and ${b.name} is a text brain.`);
+    if (b.kind === "text" && (b.safeMode !== undefined || b.shape !== undefined || b.tool || typeof b.imageModel === "string")) {
+      throw bad(`brains.${i}: safe mode, shape, tool text and an image model are for image brains, and ${b.name} is a text brain.`);
+    }
     const brain = newBrain({ name: b.name, systemPrompt: b.systemPrompt, color: b.color ?? nextColor(shell), isDefault, kind: b.kind }); // an image brain gets DEFAULT_TOOL and safe mode
     Object.assign(brain.reasoning, b.reasoning ?? {});
     Object.assign(brain.finalReminder, b.finalReminder ?? {});
@@ -154,6 +179,8 @@ function toConversation(doc: Campaign, where: string): Conversation {
     if (b.shape !== undefined) brain.shape = b.shape;
     if (b.tool) Object.assign(brain.tool!, b.tool);
     if (b.stop) brain.stop = b.stop;
+    if (typeof b.textModel === "string") brain.textModel = b.textModel; // T18
+    if (typeof b.imageModel === "string") brain.imageModel = b.imageModel;
     if (b.makes) {
       try {
         applyMakes(brain, b.makes);
@@ -176,12 +203,14 @@ function toConversation(doc: Campaign, where: string): Conversation {
     let author: LedgerMessage["author"] = { type: "player" };
     let msgKind: LedgerMessage["kind"] = "text";
     let safe = true;
+    let paints = doc.settings?.imageModel ?? DEFAULT_IMAGE_MODEL;
     if (m.author.type === "brain") {
       const brain = byId.get(m.author.brainId);
       if (!brain) throw bad(`${at}.author.brainId: no brain has the id ${m.author.brainId}.`);
       author = { type: "brain", brainId: brain.id };
       msgKind = brain.kind;
       safe = brain.safeMode ?? true;
+      paints = brain.imageModel ?? paints; // T18: an image brain's own model
     } else if (m.versions.length !== 1) {
       throw bad(`${at}: a player message has exactly one version.`);
     }
@@ -195,7 +224,7 @@ function toConversation(doc: Campaign, where: string): Conversation {
       if (out.steeredFrom !== undefined && out.steeredFrom >= m.versions.length) delete out.steeredFrom;
       if (out.repaintOf !== undefined && out.repaintOf >= m.versions.length) delete out.repaintOf;
       if (author.type === "brain") delete out.roll; // only the player rolls
-      if (msgKind === "image") out.image = { id: "", status: "error", model: image?.model ?? doc.settings?.imageModel ?? DEFAULT_IMAGE_MODEL, safeMode: image?.safeMode ?? safe, createdAt: now };
+      if (msgKind === "image") out.image = { id: "", status: "error", model: image?.model ?? paints, safeMode: image?.safeMode ?? safe, createdAt: now };
       return out;
     });
     const id = newId("m");
@@ -287,7 +316,8 @@ async function readCampaign(lib: Library, name: string): Promise<{ doc: Campaign
  * `reasoning` is its effort when the file switches reasoning on (T10 frontend): a labeled opt-in, so the pickers say so.
  */
 /** `makes` (T16): the name pattern of a brain that makes brains ("Character {{n}}"), when its setting is on. */
-type BrainInfo = { name: string; kind: string; color?: string; about?: string; reasoning?: string; makes?: string };
+/** `textModel` / `imageModel` (T18): the brain's own models, when the file gives it some (else it uses the conversation's). */
+type BrainInfo = { name: string; kind: string; color?: string; about?: string; reasoning?: string; makes?: string; textModel?: string; imageModel?: string };
 type ExampleInfo = { name: string; title: string; about?: string; brains: BrainInfo[]; setup: string[]; messages: number; error?: string };
 type PresetInfo = { name: string; title: string; about?: string; brains: BrainInfo[]; error?: string };
 
@@ -311,6 +341,8 @@ async function listLibrary(lib: Library): Promise<ExampleInfo[]> {
           ...(doc.brains[i]?.about ? { about: doc.brains[i]!.about } : {}),
           ...(b.reasoning.enabled ? { reasoning: b.reasoning.effort } : {}),
           ...(b.makes?.enabled ? { makes: b.makes.name } : {}),
+          ...(b.textModel ? { textModel: b.textModel } : {}),
+          ...(b.kind === "image" && b.imageModel ? { imageModel: b.imageModel } : {}),
         })),
         setup: doc.setup.map((s) => s.label),
         messages: doc.messages.length,
@@ -398,6 +430,8 @@ async function checkSettings(ctx: Ctx, conv: Conversation, where: string): Promi
     );
   await lookupModel(ctx.deps.venice, "text", conv.settings.textModel).catch(named("text", conv.settings.textModel));
   const model = await lookupModel(ctx.deps.venice, "image", conv.settings.imageModel).catch(named("image", conv.settings.imageModel));
+  // T18: each brain's own models too (and those its blueprint gives the brains it makes).
+  await checkBrainModels(ctx, conv.brains, (i, field) => `${where}: brains.${i}.${field}`);
   const set = (Object.keys(conv.settings.image) as (keyof ImageSettings)[]).filter((k) => conv.settings.image[k] !== undefined);
   const problem = imageSettingsProblem(conv.settings.image, model, set);
   if (problem) throw badRequest(`${where}: settings.image: ${problem}`);
@@ -486,6 +520,7 @@ learns secrets from hidden notes, never from another brain's system prompt: the 
     const wanted = args.brain.trim().toLowerCase();
     const found = src.brains.find((b) => b.name.toLowerCase() === wanted);
     if (!found) throw notFound(`${lib === "preset" ? "The preset" : "The example"} "${title}" has no brain called "${args.brain.trim()}". Its brains: ${src.brains.map((b) => b.name).join(", ")}.`);
+    await checkBrainModels(ctx, [found], (_i, field) => `${where}: ${found.name}'s ${field}`); // T18: its own models, if it has any
 
     const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
       // T16: its pins and the message it was made from are that file's messages, so they stay behind; its maker setting comes.
@@ -506,6 +541,10 @@ learns secrets from hidden notes, never from another brain's system prompt: the 
     }
     if (lib === "example") notes.push(`It was written for "${title}", so its prompt may name that campaign's world and people: brain.list shows it, and brain.update changes it.`);
     if (found.pins.length) notes.push(`Its ${found.pins.length === 1 ? "pin" : `${found.pins.length} pins`} stayed behind: ${found.pins.length === 1 ? "it was a message" : "they were messages"} of "${title}". Pin one of yours with brain.pin.`);
+    if (result.textModel || result.imageModel) {
+      const own = [result.textModel ? `text model ${result.textModel}` : "", result.kind === "image" && result.imageModel ? `image model ${result.imageModel}` : ""].filter(Boolean).join(" and ");
+      notes.push(`${result.name} came with its own ${own}, not this conversation's: brain.update --brain "${result.name}" --text-model null${result.imageModel ? " (or --image-model null)" : ""} puts it on this conversation's.`);
+    }
     if (result.makes?.enabled) notes.push(`${result.name} makes a brain from each new message ("${result.makes.name}", from ${result.makes.next}): brain.list shows the blueprint, and brain.update --no-makes.enabled stops it.`);
     // T10 QA-3: a preset brain learns secrets from hidden notes. A brain whose prompt doesn't know the convention
     // (the Gilded Goat's GM) may keep its secrets in that prompt, which no other brain reads.
@@ -534,7 +573,10 @@ the World Bible and the prompts to suit. With --through <message id> the ledger 
 message, every version and image of the messages that come: the story as it stood there, to play the next turn
 again (with --text-model, under another model). The brains made from messages that stay behind (a Character
 Creator's characters) stay behind with them, and their makers hand those numbers back; without the ledger the
-makers count from 1 again.`,
+makers count from 1 again.
+--text-model sets the copy's conversation model, which every brain without a model of its own uses (T18). A brain
+with its own (brain.update --text-model) keeps it, as it would if you changed the conversation's model: the answer
+names those brains, and brain.update --brain <name> --text-model null puts one on the copy's model.`,
   args: z.object({
     id: conversationId.describe("The conversation to copy (c_...)"),
     title: title.optional().describe('Title for the copy (default: "<title> (copy)")'),
@@ -542,7 +584,11 @@ makers count from 1 again.`,
     through: messageId
       .optional()
       .describe("Keep the ledger up to and including this message (m_..., from conversation.get); every later message stays behind"),
-    textModel: z.string().min(1).optional().describe("The copy's text model (default: the original's). See ./ss models.list --type text"),
+    textModel: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("The copy's text model, for every brain without one of its own (default: the original's). A brain with its own keeps it. See ./ss models.list --type text"),
   }),
   examples: [
     './ss conversation.clone --id c_k3j9x0q2ma --title "Pathfinder" --without-messages',
@@ -585,15 +631,22 @@ makers count from 1 again.`,
 });
 
 function started(verb: string, c: Conversation): string {
-  // T10 QA-8: reasoning is a labeled opt-in, and a preset or a file can switch it on for you.
+  // T10 QA-8: reasoning is a labeled opt-in, and a preset or a file can switch it on for you. T18: so is a model of its own.
+  const ownModels = (b: Brain) => [b.textModel ? `its own model ${b.textModel}` : "", b.kind === "image" && b.imageModel ? `its own image model ${b.imageModel}` : ""].filter(Boolean);
   const brains = c.brains
-    .map((b) => `${b.name}${b.id === c.defaultBrainId ? " (default)" : ""}${b.kind === "image" ? " (image)" : ""}${b.reasoning.enabled ? ` (reasoning ${b.reasoning.effort})` : ""}`)
+    .map((b) => `${b.name}${b.id === c.defaultBrainId ? " (default)" : ""}${b.kind === "image" ? " (image)" : ""}${b.reasoning.enabled ? ` (reasoning ${b.reasoning.effort})` : ""}${ownModels(b).map((x) => ` (${x})`).join("")}`)
     .join(", ");
+  const own = c.brains.filter((b) => ownModels(b).length);
   // Only the images that came over unpainted: a clone copies finished ones (T07 QA-8).
   const images = c.messages.filter((m) => m.kind === "image" && m.versions[m.activeVersion]?.image?.status === "error").length;
   return [
     `${verb} ${c.id} "${c.title}" · ${c.settings.textModel} · images ${c.settings.imageModel}`,
     `Brains: ${brains}`,
+    ...(own.length
+      ? [
+          `${own.map((b) => b.name).join(", ")} ${own.length === 1 ? "has a model of its own and keeps it" : "have models of their own and keep them"}; the rest use the conversation's. brain.update --brain <name> --text-model null${own.some((b) => b.kind === "image" && b.imageModel) ? " (or --image-model null)" : ""} puts one on the conversation's.`,
+        ]
+      : []),
     `Setup: ${c.setup.map((s) => s.label).join(", ") || "none"} · ${c.messages.length} message${c.messages.length === 1 ? "" : "s"}${images ? ` (${images} image prompt${images === 1 ? "" : "s"} still to paint: image.retry --message <id> paints one)` : ""}`,
     // T10: a preset brings brains and no world. Every brain reads the setup messages, so the World Bible comes first.
     ...(c.setup.length ? [] : [`No World Bible yet: write one before you play (every brain reads it): ./ss setup.add --conversation ${c.id} --content @world.md`]),

@@ -72,6 +72,12 @@ function setPath(target: Record<string, unknown>, keys: string[], value: unknown
   else o[last] = value;
 }
 
+/** A field that takes null (unset it, or T18's "back to the conversation's model"): `--flag null` sends null. */
+function nullable(s: JsonSchema): boolean {
+  if (Array.isArray(s.type)) return s.type.includes("null");
+  return s.anyOf?.some((a) => a.type === "null") ?? false;
+}
+
 function parseBool(v: string): boolean | null {
   const s = v.toLowerCase();
   if (["true", "1", "yes", "on"].includes(s)) return true;
@@ -87,6 +93,7 @@ function parseBool(v: string): boolean | null {
  *   --tag a --tag b                   arrays (repeat the flag, or pass a JSON array)
  *   --settings '{"a":1}'              objects as JSON
  *   --content @file.md | --content -  text from a file or stdin (one trailing newline dropped); @@x is a literal "@x"
+ *   --text-model null                 null, for a field that takes it (unset it); elsewhere "null" is the word
  *   secret args (passwords) take "-" for stdin but are otherwise literal: no @file, so "@x" is "@x"
  */
 export async function parseFlags(
@@ -118,6 +125,7 @@ export async function parseFlags(
   };
 
   const coerce = async (v: string, s: JsonSchema, flag: string): Promise<unknown> => {
+    if (v === "null" && nullable(s)) return null;
     switch (schemaType(s)) {
       case "number":
       case "integer": {

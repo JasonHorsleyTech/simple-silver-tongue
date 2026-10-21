@@ -13,6 +13,7 @@ import {
   type ModelCaps,
 } from "../src/conversations/prompt.ts";
 import { newMessage, planRegenerate, planTurn, reviewBody } from "../src/conversations/turn.ts";
+import { alwaysReasonsNote } from "../src/conversations/wording.ts";
 import type { Author, Brain, Conversation, MessageVersion } from "../src/conversations/types.ts";
 
 const DEEPSEEK: ModelCaps = { reasoning: { supported: true, effortOptions: ["none", "low", "high", "max"] } };
@@ -181,6 +182,39 @@ describe("buildRequest: each brain sees one shared ledger from its own point of 
     const b = buildRequest(conv, gm.id, { model: DEEPSEEK });
     assert.equal(b.max_tokens, 300);
     assert.equal(b.temperature, 0);
+  });
+
+  test("T18: each brain's request names its own text model, or the conversation's, with that model's caps", () => {
+    const { conv, gm, dice, painter } = table();
+    // A conversation from before T18: no brain has a model of its own, so every request uses the conversation's.
+    for (const b of conv.brains) assert.equal(buildRequest(conv, b.id, { model: DEEPSEEK }).model, "deepseek-v4-1-flash");
+    dice.textModel = "venice-uncensored-1-2";
+    painter.textModel = "z-ai-glm-5-3";
+    const asked: string[] = [];
+    const caps: Record<string, ModelCaps> = {
+      "deepseek-v4-1-flash": { id: "deepseek-v4-1-flash", ...DEEPSEEK },
+      "venice-uncensored-1-2": { id: "venice-uncensored-1-2", reasoning: { supported: false, effortOptions: null } },
+      "z-ai-glm-5-3": { id: "z-ai-glm-5-3", reasoning: { supported: true, effortOptions: null, always: "refused" } },
+    };
+    const book = (id: string, brain: Brain) => {
+      asked.push(`${brain.name}:${id}`);
+      return caps[id]!;
+    };
+    const sent = (b: Brain) => {
+      const body = buildRequest(conv, b.id, { model: book });
+      return [body.model, body.reasoning_effort, body.venice_parameters.disable_thinking];
+    };
+    assert.deepEqual(sent(gm), ["deepseek-v4-1-flash", "none", undefined]);
+    assert.deepEqual(sent(dice), ["venice-uncensored-1-2", undefined, undefined], "its model can't reason: nothing about reasoning");
+    assert.deepEqual(sent(painter), ["z-ai-glm-5-3", undefined, true], "its model has no effort levels: reasoning off is disable_thinking");
+    assert.deepEqual(asked, ["Game Master:deepseek-v4-1-flash", "Dice Master:venice-uncensored-1-2", "Scene Painter:z-ai-glm-5-3"]);
+    // Caps for another model than the brain's can't shape its request.
+    assert.throws(() => buildRequest(conv, dice.id, { model: caps["deepseek-v4-1-flash"]! }), /caps for deepseek-v4-1-flash were given for Dice Master, whose requests use venice-uncensored-1-2/);
+    // The plans carry the caps they used, and review the body with them: GLM's note for a brain with reasoning off.
+    const plan = planTurn(conv, { brain: painter.id, content: "Paint it." }, book);
+    assert.equal(plan.model, caps["z-ai-glm-5-3"]);
+    assert.ok(plan.notes.includes(alwaysReasonsNote("z-ai-glm-5-3", "refused", "Scene Painter")), plan.notes.join("\n"));
+    assert.equal(planTurn(conv, { brain: gm.id }, book).notes.some((n) => /GLM|always/.test(n)), false);
   });
 
   test("hard rule 1: no request without a non-empty system message", () => {

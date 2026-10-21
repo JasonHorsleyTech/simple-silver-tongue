@@ -59,7 +59,8 @@ describe("streaming chat end to end: CLI → server → mock Venice", () => {
       assert.match(r.stderr, /\[Assistant · \d+ in \/ \d+ out · \$/);
       assert.deepEqual(lastSent(), preview.body);
     }
-    assert.match((await t.cli(["prompt.preview", "--conversation", conv.id])).stdout, /^Exact request .*\nNote: Reasoning on: the provider adds/);
+    // T18: the model, and whose it is, then the notes.
+    assert.match((await t.cli(["prompt.preview", "--conversation", conv.id])).stdout, /^Exact request .*\nText model: .*\(deepseek-v4-1-flash\), the conversation's\.\nNote: Reasoning on: the provider adds/);
     const saved = await get(conv.id);
     assert.deepEqual(
       saved.messages.map((m) => (m.author.type === "player" ? "player" : "brain")),

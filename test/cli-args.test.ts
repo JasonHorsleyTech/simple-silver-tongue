@@ -71,6 +71,9 @@ test("arrays, objects, dotted paths and nullable fields", async () => {
     settings: { temperature: 0.2, textModel: "m1" },
   });
   assert.deepEqual(await parse(["--note", "hi"]), { note: "hi" });
+  // T18: "null" is null for a field that takes it (brain.update --text-model null), and the word everywhere else.
+  assert.deepEqual(await parse(["--note", "null"]), { note: null });
+  assert.deepEqual(await parse(["--username", "null"]), { username: "null" });
 });
 
 test("usage errors are clear", async () => {

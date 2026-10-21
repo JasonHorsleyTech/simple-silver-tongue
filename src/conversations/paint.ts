@@ -11,7 +11,7 @@ import type { ModelInfo } from "../venice/models.ts";
 import { endPainting, paintJob, type PaintResult } from "./images.ts";
 import { loadConversation, mutateConversation } from "./store.ts";
 import { addSpend, lookupModel } from "./turn.ts";
-import type { Brain, Conversation, ImageRecord, LedgerMessage, RetryRequest } from "./types.ts";
+import { imageModelOf, type Brain, type Conversation, type ImageRecord, type LedgerMessage, type RetryRequest } from "./types.ts";
 
 /**
  * Painting one image (design.md, "Image generation"). An image is a job of its own (T05 triage): it starts
@@ -21,12 +21,15 @@ import type { Brain, Conversation, ImageRecord, LedgerMessage, RetryRequest } fr
  * the request is with Venice the image is being made and billed, so it is kept.
  */
 
-/** Who paints, with what: the conversation's image model (from /models) and the brain's safe mode and shape. */
+/**
+ * Who paints, with what: the brain's image model (its own, T18, or the conversation's; from /models), the brain's
+ * safe mode and shape, and the conversation's image settings.
+ */
 export type Painter = { model: ModelInfo; safeMode: boolean; plan(prompt: string): ImagePlan };
 
 /** An unknown image model is refused here, before the brain is asked for a prompt or anything is spent. */
 export async function painterFor(venice: VeniceClient, conv: Conversation, brain: Brain): Promise<Painter> {
-  const model = await lookupModel(venice, "image", conv.settings.imageModel);
+  const model = await lookupModel(venice, "image", imageModelOf(conv, brain), brain);
   const safeMode = brain.safeMode !== false;
   const shape = brain.shape ?? DEFAULT_SHAPE;
   const settings = structuredClone(conv.settings);

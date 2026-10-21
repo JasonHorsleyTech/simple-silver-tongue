@@ -125,7 +125,20 @@ export type Brain = {
    * message deletes this brain too while it has never spoken. Display and bookkeeping only: never sent.
    */
   madeFrom?: string;
+  /**
+   * T18: this brain's own text model (a Venice id), used for its requests instead of the conversation's. Absent: the
+   * conversation's (settings.textModel), so changing that moves every brain without one of its own. An image brain
+   * uses it to write its prompt. textModelOf says which one a brain uses.
+   */
+  textModel?: string;
+  /** T18, image brains only: its own image model, which paints its prompts instead of the conversation's. Absent: the conversation's. */
+  imageModel?: string;
 };
+
+/** T18: the text model a brain's requests use: its own, or the conversation's. The one rule; the browser imports it too. */
+export const textModelOf = (conv: { settings: Pick<Settings, "textModel"> }, brain: Pick<Brain, "textModel">): string => brain.textModel ?? conv.settings.textModel;
+/** T18: the image model that paints an image brain's prompts: its own, or the conversation's. */
+export const imageModelOf = (conv: { settings: Pick<Settings, "imageModel"> }, brain: Pick<Brain, "imageModel">): string => brain.imageModel ?? conv.settings.imageModel;
 
 /**
  * T16: how a pinned message is sent to the brain it is pinned to, right after the setup messages. `ledger`: exactly
@@ -161,7 +174,8 @@ export type BrainMaker = {
   blueprint: BrainBlueprint;
 };
 
-export type BrainBlueprint = Pick<Brain, "kind" | "systemPrompt" | "finalReminder" | "reasoning" | "stop" | "safeMode" | "shape" | "tool">;
+/** T18: a blueprint may name the made brains' own models too (absent: they use the conversation's). */
+export type BrainBlueprint = Pick<Brain, "kind" | "systemPrompt" | "finalReminder" | "reasoning" | "stop" | "safeMode" | "shape" | "tool" | "textModel" | "imageModel">;
 
 export type ImageShape = "portrait" | "square" | "landscape";
 

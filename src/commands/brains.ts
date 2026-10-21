@@ -3,11 +3,12 @@ import { DEFAULT_PIN_AS, defaultStop, makeImageBrain, newBrain, nextColor, REMIN
 import { freeNumber, makeBrain, madeName, nextMadeName } from "../conversations/makers.ts";
 import { REASONING_NOTE, resolveBrain } from "../conversations/prompt.ts";
 import { assertBrainIdle, loadConversation, mutateConversation } from "../conversations/store.ts";
-import { PIN_ROLES, type Brain, type BrainBlueprint, type Conversation, type ImageShape, type PinRole } from "../conversations/types.ts";
+import { lookupModel } from "../conversations/turn.ts";
+import { imageModelOf, PIN_ROLES, textModelOf, type Brain, type BrainBlueprint, type Conversation, type ImageShape, type PinRole, type Settings } from "../conversations/types.ts";
 import { FRAMING_STOP, MAKES_NUMBER, MAX_STOPS, PIN_AS_WORDS, STOP_REASONING_NOTE } from "../conversations/wording.ts";
 import { DEFAULT_SHAPE, IMAGE_SHAPES } from "../images/request.ts";
 import { badRequest, CommandError, conflict, notFound } from "../lib/errors.ts";
-import { command } from "../registry.ts";
+import { command, type Ctx } from "../registry.ts";
 import { conversationId, messageId, systemPrompt } from "./conversations.ts";
 
 /**
@@ -77,6 +78,25 @@ export const shape = z
   .enum(IMAGE_SHAPES as [ImageShape, ...ImageShape[]])
   .describe("Image brains: the picture's shape, portrait, square or landscape (default landscape). Sent as a width × height, or the nearest aspect ratio the image model offers");
 
+/**
+ * T18: a brain's own models. Any Venice id works (checked against Venice's list when set), as for the conversation's;
+ * null puts the brain back on the conversation's. The CLI reads `--text-model null` as null.
+ */
+export const textModel = z
+  .string()
+  .trim()
+  .min(1)
+  .nullable()
+  .describe(
+    "This brain's own text model (a Venice id: ./ss models.list --type text), used for its requests instead of the conversation's; an image brain writes its prompts with it. null: back to the conversation's (the default), so it follows a change of the conversation's model",
+  );
+export const imageModel = z
+  .string()
+  .trim()
+  .min(1)
+  .nullable()
+  .describe("Image brains: their own image model (a Venice id: ./ss models.list --type image), which paints their prompts instead of the conversation's. null: back to the conversation's (the default)");
+
 /** T16: how a pinned message is sent to the brain it is pinned to. */
 export const pinAs = z
   .enum(PIN_ROLES)
@@ -108,6 +128,8 @@ export const blueprint = z
     safeMode,
     shape,
     tool,
+    textModel: textModel.describe("The made brains' own text model (a Venice id), instead of the conversation's. null: they use the conversation's (the default)"),
+    imageModel: imageModel.describe("Image blueprints: the made brains' own image model (a Venice id). null: they use the conversation's (the default)"),
   })
   .partial()
   .describe("The new brain: everything brain.add takes but its name and color");
@@ -162,9 +184,10 @@ export function applyMakes(brain: Brain, args: z.output<typeof makes> | undefine
   // T16 QA-2: one made as image from the start had no tool text, so brain.list couldn't show the words its brains
   // would get, and --makes.blueprint.tool.* was a 500.
   if (b.kind === "image") fillImageBlueprint(b);
-  if (b.kind !== "image" && (bp.safeMode !== undefined || bp.shape !== undefined || (bp.tool && Object.keys(bp.tool).length))) {
-    throw badRequest(`Safe mode, shape and tool text are for image brains, and ${brain.name} makes text brains. Pass --makes.blueprint.kind image too.`);
+  if (b.kind !== "image" && (bp.safeMode !== undefined || bp.shape !== undefined || (bp.tool && Object.keys(bp.tool).length) || typeof bp.imageModel === "string")) {
+    throw badRequest(`Safe mode, shape, tool text and an image model are for image brains, and ${brain.name} makes text brains. Pass --makes.blueprint.kind image too.`);
   }
+  setModels(b, bp); // T18: the made brains' own models (null: they use the conversation's)
   if (bp.systemPrompt !== undefined) b.systemPrompt = bp.systemPrompt;
   Object.assign(b.reasoning, bp.reasoning ?? {});
   Object.assign(b.finalReminder, bp.finalReminder ?? {});
@@ -178,6 +201,43 @@ export function applyMakes(brain: Brain, args: z.output<typeof makes> | undefine
   if (args.pinAs !== undefined) m.pinAs = args.pinAs;
   if (madeName(m.name, m.next).length > 60) throw badRequest(`"${madeName(m.name, m.next)}" is too long for a brain name (60 characters): shorten the pattern.`);
   brain.makes = m;
+}
+
+/** T18: set or clear (null) a brain's or a blueprint's own models; undefined leaves one as it is. */
+function setModels(target: Pick<Brain, "textModel" | "imageModel">, args: { textModel?: string | null; imageModel?: string | null }): void {
+  for (const k of ["textModel", "imageModel"] as const) {
+    const v = args[k];
+    if (v === null) delete target[k];
+    else if (v !== undefined) target[k] = v;
+  }
+}
+
+/**
+ * T18: a brain's own models (and its blueprint's) must be models Venice lists, as the conversation's must: checked
+ * before anything is written. `where` says which field, for a campaign file.
+ */
+export async function checkBrainModels(
+  ctx: Ctx,
+  brains: Array<{ textModel?: string | null; imageModel?: string | null; makes?: { blueprint?: { textModel?: string | null; imageModel?: string | null } } | null }>,
+  where = (i: number, field: string) => `--${field.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`,
+): Promise<void> {
+  for (const [i, b] of brains.entries()) {
+    const fields: Array<[string, "text" | "image", string | null | undefined]> = [
+      ["textModel", "text", b.textModel],
+      ["imageModel", "image", b.imageModel],
+      ["makes.blueprint.textModel", "text", b.makes?.blueprint?.textModel],
+      ["makes.blueprint.imageModel", "image", b.makes?.blueprint?.imageModel],
+    ];
+    for (const [field, type, id] of fields) {
+      if (typeof id !== "string") continue;
+      await lookupModel(ctx.deps.venice, type, id).catch((err: unknown) => {
+        if (err instanceof CommandError && err.code === "unknown_model") {
+          throw new CommandError(400, "unknown_model", `${where(i, field)}: Venice has no ${type} model "${id}". ./ss models.list --type ${type} lists the curated ones (--all: every one); any id Venice lists works.`);
+        }
+        throw err;
+      });
+    }
+  }
 }
 
 /** An image blueprint's tool text, safe mode and shape, as makeImageBrain gives a brain (it keeps what is set). */
@@ -202,15 +262,15 @@ export function checkName(conv: Conversation, value: string, self?: Brain, hint 
 
 export const messagesBy = (conv: Conversation, brain: Brain) => conv.messages.filter((m) => m.author.type === "brain" && m.author.brainId === brain.id).length;
 
-/** Safe mode, shape and tool text only mean something for an image brain. */
-function imageOnly(brain: Brain, args: { safeMode?: boolean; shape?: ImageShape; tool?: object }): void {
+/** Safe mode, shape, tool text and an image model (T18) only mean something for an image brain. Clearing the model is fine. */
+function imageOnly(brain: Brain, args: { safeMode?: boolean; shape?: ImageShape; tool?: object; imageModel?: string | null }): void {
   if (brain.kind === "image") return;
-  if (args.safeMode !== undefined || args.shape !== undefined || (args.tool && Object.keys(args.tool).length)) {
-    throw badRequest(`Safe mode, shape and tool text are for image brains, and ${brain.name} is a text brain. Pass --kind image too.`);
+  if (args.safeMode !== undefined || args.shape !== undefined || (args.tool && Object.keys(args.tool).length) || typeof args.imageModel === "string") {
+    throw badRequest(`Safe mode, shape, tool text and an image model are for image brains, and ${brain.name} is a text brain. Pass --kind image too.`);
   }
 }
 
-function applyImageFields(brain: Brain, args: { safeMode?: boolean; shape?: ImageShape; tool?: z.output<typeof tool> }): void {
+function applyImageFields(brain: Brain, args: { safeMode?: boolean; shape?: ImageShape; tool?: z.output<typeof tool>; imageModel?: string | null }): void {
   imageOnly(brain, args);
   if (args.safeMode !== undefined) brain.safeMode = args.safeMode;
   if (args.shape !== undefined) brain.shape = args.shape;
@@ -220,10 +280,22 @@ function applyImageFields(brain: Brain, args: { safeMode?: boolean; shape?: Imag
 /** What a brain with reasoning on should know: the provider's hidden text, and that stop sequences cut reasoning too. */
 export const reasoningNotes = (b: Brain) => (b.reasoning.enabled ? `\n${REASONING_NOTE}${b.stop.length ? `\n${STOP_REASONING_NOTE}` : ""}` : "");
 
-/** The CLI's one-line summary of a brain. */
-export function brainLine(b: Brain, conv?: Pick<Conversation, "defaultBrainId">): string {
+/**
+ * T18: which models a brain uses, in words: "model grok-4-7 (the conversation's)", "model z-ai-glm-5-3 (its own)". Without
+ * the conversation's settings, only a model of its own is named.
+ */
+export function modelBits(b: Brain, settings?: Pick<Settings, "textModel" | "imageModel">): string[] {
+  const bit = (what: string, own: string | undefined, id: string | undefined) => (own ? `${what} ${own} (its own)` : id ? `${what} ${id} (the conversation's)` : "");
+  const out = [bit("model", b.textModel, settings && textModelOf({ settings }, b))];
+  if (b.kind === "image") out.push(bit("image model", b.imageModel, settings && imageModelOf({ settings }, b)));
+  return out.filter(Boolean);
+}
+
+/** The CLI's one-line summary of a brain. `settings` (T18): the conversation's models, to say which one it uses. */
+export function brainLine(b: Brain, conv?: { defaultBrainId?: string; settings?: Pick<Settings, "textModel" | "imageModel"> }): string {
   const bits = [`${b.name} (${b.id})`, b.kind];
   if (conv?.defaultBrainId === b.id) bits.push("default");
+  bits.push(...modelBits(b, conv?.settings));
   bits.push(`reasoning ${b.reasoning.enabled ? b.reasoning.effort : "off"}`, `final reminder ${b.finalReminder.enabled && b.finalReminder.content.trim() ? "on" : "off"}`);
   bits.push(b.stop.length ? `stops at ${b.stop.map((x) => JSON.stringify(x)).join(", ")}` : "no stop sequences");
   if (b.kind === "image") bits.push(`safe mode ${b.safeMode === false ? "off" : "on"}`, b.shape ?? DEFAULT_SHAPE);
@@ -258,7 +330,7 @@ function pinAndMakerLines(b: Brain, conv: { messages: Array<{ id: string; author
     const bp = m.blueprint;
     out.push(
       `Makes a brain from each new message (${m.enabled ? "on" : "off: brain.make still uses it"}): named "${m.name}", next ${nextFree(conv, m)}, the message pinned ${PIN_AS_WORDS[m.pinAs]}.`,
-      `  Each one: ${bp.kind} · reasoning ${bp.reasoning.enabled ? bp.reasoning.effort : "off"} · final reminder ${bp.finalReminder.enabled && bp.finalReminder.content.trim() ? "on" : "off"} · ${bp.stop.length ? `stops at ${bp.stop.map((x) => JSON.stringify(x)).join(", ")}` : "no stop sequences"}${bp.kind === "image" ? ` · safe mode ${bp.safeMode === false ? "off" : "on"} · ${bp.shape ?? DEFAULT_SHAPE}` : ""}`,
+      `  Each one: ${bp.kind}${[bp.textModel ? ` · model ${bp.textModel} (its own)` : "", bp.kind === "image" && bp.imageModel ? ` · image model ${bp.imageModel} (its own)` : ""].join("")} · reasoning ${bp.reasoning.enabled ? bp.reasoning.effort : "off"} · final reminder ${bp.finalReminder.enabled && bp.finalReminder.content.trim() ? "on" : "off"} · ${bp.stop.length ? `stops at ${bp.stop.map((x) => JSON.stringify(x)).join(", ")}` : "no stop sequences"}${bp.kind === "image" ? ` · safe mode ${bp.safeMode === false ? "off" : "on"} · ${bp.shape ?? DEFAULT_SHAPE}` : ""}`,
       "  Its system prompt:",
       bp.systemPrompt,
       "  Its final reminder:",
@@ -273,6 +345,8 @@ function pinAndMakerLines(b: Brain, conv: { messages: Array<{ id: string; author
 export type BrainListing = {
   conversationId: string;
   defaultBrainId: string;
+  /** T18: the conversation's models, which every brain without its own uses. */
+  settings: Pick<Settings, "textModel" | "imageModel">;
   brains: Array<Brain & { messageCount: number }>;
   messages: Array<{ id: string; author: Conversation["messages"][number]["author"] }>;
 };
@@ -282,7 +356,8 @@ export const brainList = command({
   description: `Show every brain in a conversation, with its system prompt, final reminder and tool text in full.
 These are sent to the models word for word; prompt.preview --brain <name> shows a brain's whole request.
 Each brain's stop sequences are listed too: Venice ends its reply just before any of them. So are its pinned
-messages (T16) and, for a brain that makes brains, its name pattern and the whole blueprint.`,
+messages (T16) and, for a brain that makes brains, its name pattern and the whole blueprint. Each brain's line
+names the model it uses (T18): its own, or the conversation's.`,
   args: z.object({ conversation: conversationId }),
   examples: ["./ss brain.list --conversation c_k3j9x0q2ma"],
   handler: async (args, ctx): Promise<BrainListing> => {
@@ -291,6 +366,7 @@ messages (T16) and, for a brain that makes brains, its name pattern and the whol
     return {
       conversationId: conv.id,
       defaultBrainId: conv.defaultBrainId,
+      settings: { textModel: conv.settings.textModel, imageModel: conv.settings.imageModel },
       brains: conv.brains.map((b) => ({ ...b, messageCount: messagesBy(conv, b) })),
       messages: conv.messages.filter((m) => pinned.has(m.id)).map((m) => ({ id: m.id, author: m.author })),
     };
@@ -322,6 +398,8 @@ An image brain (--kind image) answers with a forced generate_image call: its rep
 painted with the conversation's image model. It gets editable tool text, safe mode on (Venice blurs adult content)
 and a shape (--shape portrait, square or landscape; landscape by default).
 A text brain stops before "${FRAMING_STOP}" (--stop), so it can't write a framing line for another speaker.
+It uses the conversation's models unless you give it its own (T18): --text-model, and for an image brain
+--image-model too (see brain.update).
 --makes (T16) makes it a brain that makes brains: see brain.update.`,
   args: z.object({
     conversation: conversationId,
@@ -336,19 +414,24 @@ A text brain stops before "${FRAMING_STOP}" (--stop), so it can't write a framin
     tool: tool.optional(),
     stop: stop.optional(),
     makes: makes.optional(),
+    textModel: textModel.optional(),
+    imageModel: imageModel.optional(),
   }),
   examples: [
     './ss brain.add --conversation c_k3j9x0q2ma --name "Dice Master" --system-prompt @dice.md',
+    './ss brain.add --conversation c_k3j9x0q2ma --name "Co-GM" --system-prompt @co-gm.md --text-model z-ai-glm-5-3 --reasoning.enabled   # its own model',
     './ss brain.add --conversation c_k3j9x0q2ma --name "Dice Master" --system-prompt "You roll dice." --final-reminder.content "<!-- System reminder --> Only roll."',
     './ss brain.add --conversation c_k3j9x0q2ma --name "Scene Painter" --kind image --system-prompt "You paint the scene."',
     './ss brain.add --conversation c_k3j9x0q2ma --name "Portraitist" --kind image --shape portrait --system-prompt @portraits.md',
   ],
   handler: async (args, ctx): Promise<Brain> => {
     const { vault } = ctx.requireSession();
+    await checkBrainModels(ctx, [args]); // T18: before anything is written
     const { result } = await mutateConversation(vault, args.conversation, (c) => {
       checkName(c, args.name);
       const brain = newBrain({ name: args.name, systemPrompt: args.systemPrompt, color: args.color ?? nextColor(c), isDefault: false, kind: args.kind });
       applyImageFields(brain, args);
+      setModels(brain, args);
       Object.assign(brain.reasoning, args.reasoning ?? {});
       Object.assign(brain.finalReminder, args.finalReminder ?? {});
       if (args.stop) brain.stop = args.stop;
@@ -373,7 +456,12 @@ takes), named from the pattern (--makes.name "Character ${MAKES_NUMBER}", number
 with that message pinned to it (--makes.pin-as). New versions of the message make none. --no-makes.enabled keeps the
 setting and makes nothing; --makes null removes it. Starting one needs the pattern and the blueprint's system prompt.
 The brain called Muse writes fresh takes' notes (T17): renamed, it is just another brain (its notes stay, under its
-new name), and the next fresh take adds a new Muse.`,
+new name), and the next fresh take adds a new Muse.
+--text-model (T18) gives the brain a text model of its own (any Venice id; models.list --type text), used for its
+requests instead of the conversation's; everything that depends on the model follows it (reasoning levels, the
+always-reasons note, the version's recorded model). An image brain writes its prompts with it, and --image-model
+gives it its own image model (sizing and price follow). --text-model null (or --image-model null) puts it back on
+the conversation's. prompt.preview --brain shows which model, and whose.`,
   args: z.object({
     conversation: conversationId,
     brain: brainRef.optional(),
@@ -388,9 +476,14 @@ new name), and the next fresh take adds a new Muse.`,
     tool: tool.optional(),
     stop: stop.optional(),
     makes: makes.optional(),
+    textModel: textModel.optional(),
+    imageModel: imageModel.optional(),
   }),
   examples: [
     './ss brain.update --conversation c_k3j9x0q2ma --system-prompt "You are a terse pirate."',
+    './ss brain.update --conversation c_k3j9x0q2ma --brain "Co-GM" --text-model z-ai-glm-5-3 --reasoning.enabled   # its own model (GLM always reasons)',
+    './ss brain.update --conversation c_k3j9x0q2ma --brain "Co-GM" --text-model null   # back to the conversation\'s',
+    './ss brain.update --conversation c_k3j9x0q2ma --brain "Scene Painter" --image-model krea-2-turbo',
     "./ss brain.update --conversation c_k3j9x0q2ma --system-prompt @prompt.md --reasoning.effort high",
     './ss brain.update --conversation c_k3j9x0q2ma --brain "Dice Master" --final-reminder.content @reminder.md',
     "./ss brain.update --conversation c_k3j9x0q2ma --no-reasoning.enabled",
@@ -403,10 +496,13 @@ new name), and the next fresh take adds a new Muse.`,
   ],
   handler: async (args, ctx): Promise<Brain> => {
     const { vault } = ctx.requireSession();
-    const fields = ["name", "color", "systemPrompt", "reasoning", "finalReminder", "kind", "safeMode", "shape", "tool", "stop", "makes"] as const;
+    const fields = ["name", "color", "systemPrompt", "reasoning", "finalReminder", "kind", "safeMode", "shape", "tool", "stop", "makes", "textModel", "imageModel"] as const;
     if (!fields.some((f) => args[f] !== undefined)) {
-      throw badRequest("Nothing to change. Pass --name, --color, --system-prompt, --reasoning.<field>, --final-reminder.<field>, --kind, --safe-mode, --shape, --tool.<field>, --stop or --makes.<field>.");
+      throw badRequest(
+        "Nothing to change. Pass --name, --color, --system-prompt, --reasoning.<field>, --final-reminder.<field>, --kind, --safe-mode, --shape, --tool.<field>, --stop, --makes.<field>, --text-model or --image-model.",
+      );
     }
+    await checkBrainModels(ctx, [args]); // T18: before anything is written
     const { result } = await mutateConversation(vault, args.conversation, (c) => {
       const brain = resolveBrain(c, args.brain);
       if (args.name !== undefined) checkName(c, args.name, brain);
@@ -424,6 +520,7 @@ new name), and the next fresh take adds a new Muse.`,
         else brain.kind = "text"; // its tool text and safe mode are kept, unused, in case it goes back
       }
       applyImageFields(brain, args);
+      setModels(brain, args);
       if (args.name !== undefined) brain.name = args.name;
       if (args.color !== undefined) brain.color = args.color;
       if (args.systemPrompt !== undefined) brain.systemPrompt = args.systemPrompt;
