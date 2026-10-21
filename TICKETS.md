@@ -363,14 +363,7 @@ Jason, 2026-10-14: typing in a campaign's brains by hand is the slow part. A **p
 
 Presets are committed files, edited in the repo like `examples/`. A T07 campaign file already holds everything a preset needs (brains, templates, settings), so a preset is probably a campaign file with no setup or messages, checked by the same `toConversation`. Whether presets get their own folder or are examples flagged as presets is the engineer's call. The browser offers them as "start from a preset" (an empty world), apart from the example campaigns (ready to play).
 
-**Where the words come from.** Sassy Text (`../sassy-text`, Jason's large product) already worked out how to coach models on running a game, acting a character and writing image prompts. **`docs/sassy-text-source.md` holds that text verbatim**: 75 excerpts with source paths, lifted 2026-10-14 from sassy-text `430c28d33`. Adapt it, don't paste it. The current Sassy GM writes JavaScript `actions([...])` of XML bubbles, so keep the coaching and drop the machinery. The older Sassy pipeline (deleted 2026-09-18, quoted from git) was single-job brains writing plain prose, and maps onto this app almost one to one. Where to start:
-- **GM:** §1.1, the charter's "The loop", "Seven turns" and "House law"; also §1.2's "GM advice that *might* apply".
-- **Co-GM:** §2.1 Part one, the old Gatekeeper ("do not answer a question by advancing the plot"), plus §2.2–2.4.
-- **Show Me the Odds:** §2.1 Part two ("When a roll earns its place", "How to design a roll"), without the engine's dice.
-- **Character sheet:** §3.1 `create-character.md` and §4.2 `brief-the-actor.md` (wants / holds / knows).
-- **Acting:** §4.1 `actor.md`.
-- **Images:** §5.1–5.4 ("abundant positives", the "smile-iest smile"), plus §5.9, the image bench's laws (hands, objects in hands, "empty" backfiring).
-- **What to write ourselves:** the **Gaps** list at the end.
+**Where the words come from.** Sassy Text (Jason's other project) had already worked out how to coach models on running a game, acting a character and writing image prompts. The T10 engineer adapted that coaching, keeping the craft and dropping Sassy's machinery. The excerpts it worked from (`docs/sassy-text-source.md`) were removed from the repo and its history before it went to GitHub (2026-10-21).
 
 **The first preset: "Tabletop RPG"**, genre-free: the World Bible makes it noir or fantasy. Seven brains:
 

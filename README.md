@@ -1,6 +1,6 @@
 # simple-silver
 
-Your local scratch pad for [Venice AI](https://venice.ai): a streaming chat with several AI "brains" at one table, steered regeneration, image brains, and per-user encryption. It runs only on this Mac (`127.0.0.1`), and nothing is ever pushed anywhere.
+Your local scratch pad for [Venice AI](https://venice.ai): a streaming chat with several AI "brains" at one table, steered regeneration, image brains, and per-user encryption. It runs only on this Mac (`127.0.0.1`); your conversations, images and API key stay here (`data/` and `.env` are never committed).
 
 Every word sent to a model is yours to see and edit: system prompts, the World Bible, the `<!-- from: ... -->` framing, reminders, tool text. The **Payload** button (or `./ss prompt.preview`) shows the exact request.
 

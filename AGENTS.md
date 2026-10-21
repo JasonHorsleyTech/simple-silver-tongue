@@ -2,7 +2,7 @@
 
 ## What this is
 
-A personal, local-only chat interface for the [Venice AI](https://venice.ai) API. The aim is to be a slightly better scratch pad than Venice's classic chat (`venice.ai/chat/classic/<uuid>`). It is not a product: no deployment, no monetization, no cloud, no users but Jason. Git is used locally for checkpoints only. **Nothing is ever pushed. There is no remote.**
+A personal, local-only chat interface for the [Venice AI](https://venice.ai) API. The aim is to be a slightly better scratch pad than Venice's classic chat (`venice.ai/chat/classic/<uuid>`). It is not a product: no deployment, no monetization, no cloud, no users but Jason. Git is for checkpoints. Since 2026-10-21 the repo is on GitHub (`JasonHorsleyTech/simple-silver`, private), pushed by the orchestrator when Jason asks. **Pass agents never push.** Nothing under `data/`, `.run/` or `.env` is ever committed: they are gitignored and hold Jason's keys and campaigns.
 
 On top of a normal streaming chat, it adds:
 
@@ -165,7 +165,7 @@ Tickets live in **[TICKETS.md](TICKETS.md)**. The orchestrator (the main Claude 
 | 4. Frontend | `.claude/skills/frontend/SKILL.md` | Builds or updates the browser UI on top of the existing commands and verifies it in Chrome via the DevTools MCP. One commit with `reports/TNN-frontend.md`. |
 
 Rules for every pass:
-- Work directly on `main`. Make **one commit per pass**, message `TNN <pass>: <summary>`. Never push. Never add a remote.
+- Work directly on `main`. Make **one commit per pass**, message `TNN <pass>: <summary>`. Never push, and never change the remote.
 - Before committing, `npm run typecheck` and `npm test` must pass.
 - Update TICKETS.md status, plus docs/design.md and this file if anything changed.
 - End the pass with the server stopped (`npm run down`) or freshly restarted on current code. Never leave a stale server running.

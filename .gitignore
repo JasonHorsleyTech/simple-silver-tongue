@@ -1,5 +1,7 @@
 # secrets
 .env
+.env.*
+!.env.example
 
 # user data — never committed (examples/ holds the committed demo campaign)
 data/
@@ -16,3 +18,11 @@ web/dist/
 
 # a picture saved with image.get --out from the project folder: a plaintext copy, never committed (T07 QA-3)
 /img_*
+
+# local tool and editor state
+.claude/settings.local.json
+.vscode/
+.idea/
+*.swp
+*.log
+coverage/

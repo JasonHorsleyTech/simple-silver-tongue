@@ -521,7 +521,7 @@ A **preset** is a ready-made kit of brains with good default instructions and no
 
 ### The Tabletop RPG preset (`presets/tabletop-rpg.json`)
 
-Genre-free: the World Bible makes it noir or fantasy. Every word was tuned live against `deepseek-v4-1-flash` (T10 engineer report), adapting Sassy Text's coaching (`docs/sassy-text-source.md`) and dropping its machinery.
+Genre-free: the World Bible makes it noir or fantasy. Every word was tuned live against `deepseek-v4-1-flash` (T10 engineer report), adapting Sassy Text's coaching and dropping its machinery.
 
 | Brain | Job | Source and key choices |
 |---|---|---|
