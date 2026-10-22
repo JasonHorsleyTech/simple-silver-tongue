@@ -247,3 +247,7 @@ jq -r '.brains[] | select(.name == "Character Creator").finalReminder.content' p
 Once the Actor has no lines left, `brain.delete --brain "Character Actor"` removes it.
 
 </details>
+
+## License
+
+MIT. See [LICENSE](LICENSE).

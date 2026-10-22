@@ -2,7 +2,7 @@
 
 ## What this is
 
-A personal, local-only chat interface for the [Venice AI](https://venice.ai) API. The aim is to be a slightly better scratch pad than Venice's classic chat (`venice.ai/chat/classic/<uuid>`). It is not a product: no deployment, no monetization, no cloud. It is Jason's own tool, shared with colleagues as an experimental side project (and a record of how agents built it). Git is for checkpoints. Since 2026-10-21 the repo is on GitHub (`JasonHorsleyTech/simple-silver-tongue`, private; the name is Simple Silver Tongue, hence the `./sst` CLI and the `SST_*` variables), pushed by the orchestrator when Jason asks. **Pass agents never push.** Nothing under `data/`, `.run/`, `.env` or `models.ini` is ever committed: they are gitignored and hold Jason's keys, campaigns and model list.
+A personal, local-only chat interface for the [Venice AI](https://venice.ai) API. The aim is to be a slightly better scratch pad than Venice's classic chat (`venice.ai/chat/classic/<uuid>`). It is not a product: no deployment, no monetization, no cloud. It is Jason's own tool, shared with colleagues as an experimental side project (and a record of how agents built it). Git is for checkpoints. Since 2026-10-21 the repo is on GitHub (`JasonHorsleyTech/simple-silver-tongue`, public and MIT-licensed since 2026-10-22, so everything committed is world-readable; the name is Simple Silver Tongue, hence the `./sst` CLI and the `SST_*` variables), pushed by the orchestrator when Jason asks. **Pass agents never push.** Nothing under `data/`, `.run/`, `.env` or `models.ini` is ever committed: they are gitignored and hold Jason's keys, campaigns and model list.
 
 On top of a normal streaming chat, it adds:
 
