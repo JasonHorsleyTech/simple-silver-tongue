@@ -19,6 +19,8 @@ It began as a slightly better scratch pad than Venice's own chat and grew into a
 
 This repo is as much an experiment in building software with AI agents as it is a game. Claude Code subagents wrote nearly all of the code. Jason, the human in charge, set the goals, made the calls and played the game.
 
+**By the numbers:** about 2 hours of Jason talking (19,118 dictated words) and about 24 hours of Claude Opus working, over 15 sessions and 64 subagents. The first run went from an approved plan to a playable game in 10½ unattended hours. [HOW-IT-WAS-BUILT.md](HOW-IT-WAS-BUILT.md) has the story, the day-by-day numbers and how to replay the first run yourself.
+
 - **Tickets.** [TICKETS.md](TICKETS.md) is both the backlog and the history. It has every feature, from T01 (the foundation) to T19 (this cleanup), with its intent, scope and acceptance bar, plus what each pass reported back.
 - **An orchestrator and a four-pass loop.** The main Claude Code session acts as CTO. It writes no product code: it writes tickets, delegates and reviews. Each ticket goes through four fresh subagents in turn, and each one reads its role skill first:
   - **Engineer** builds the terminal and backend scope and proves it through the CLI.
