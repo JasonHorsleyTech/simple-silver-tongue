@@ -105,6 +105,15 @@
     color: var(--quote);
     color: oklch(from var(--quote) max(l, 0.7) c h);
   }
+  /* An emoji (lib/emoji.ts) as wide as it is drawn. On a 1x screen Chrome lays it out 1em wide but draws it wider
+     at text sizes (measured: 4px up to 16px, then less, none by 24px), over the space after it ("🎲I rolled").
+     Firefox and Safari already lay it out that wide, so this min-width changes nothing there; 2x draws it at 1em. */
+  @media (max-resolution: 1.49dppx) {
+    .md .md-emoji {
+      display: inline-block;
+      min-width: calc(1em + clamp(0px, (24px - 1em) / 2, 4px));
+    }
+  }
   .md a {
     color: #a9c4f5;
     text-decoration: underline;

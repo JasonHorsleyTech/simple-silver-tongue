@@ -7,13 +7,14 @@ import remarkGfm from "remark-gfm";
 import { isHiddenInfo } from "../api/types.ts";
 import { cx } from "../lib/cx.ts";
 import { copyText } from "../lib/clipboard.ts";
+import { rehypeEmoji } from "../lib/emoji.ts";
 import { rehypeQuotes } from "../lib/quotes.ts";
 import { HiddenNote } from "./HiddenNote.tsx";
 
 /**
  * The scrollback's Markdown: GFM (tables, task lists, strikethrough, footnotes), single newlines kept as line
- * breaks, highlighted code blocks with a copy button, tables that scroll sideways instead of squashing, and
- * links that open in a new tab.
+ * breaks, highlighted code blocks with a copy button, tables that scroll sideways instead of squashing,
+ * links that open in a new tab, and each emoji in a span that keeps it off the next word (lib/emoji.ts).
  *
  * Raw HTML is never rendered as HTML, and never silently dropped either: it shows as literal, faint text.
  * Models here see framing like `<!-- from: the user -->` and sometimes echo it back, and in this app nothing
@@ -68,10 +69,11 @@ function remarkVisibleHtml() {
 // remark-breaks: a single newline is a line break, as typed in the composer (and as a haiku needs).
 const REMARK = [remarkGfm, remarkBreaks, remarkVisibleHtml];
 type Plugins = NonNullable<ComponentProps<typeof ReactMarkdown>["rehypePlugins"]>;
-const REHYPE = [[rehypeHighlight, { detect: false }]] as Plugins;
+const HIGHLIGHT = [rehypeHighlight, { detect: false }];
+const REHYPE = [HIGHLIGHT, rehypeEmoji] as Plugins;
 const REHYPE_QUOTES = {
-  done: [...REHYPE, [rehypeQuotes, { open: false }]] as Plugins,
-  writing: [...REHYPE, [rehypeQuotes, { open: true }]] as Plugins,
+  done: [HIGHLIGHT, [rehypeQuotes, { open: false }], rehypeEmoji] as Plugins,
+  writing: [HIGHLIGHT, [rehypeQuotes, { open: true }], rehypeEmoji] as Plugins,
 };
 
 type HastNode = {
