@@ -4,6 +4,60 @@ An experimental side project: a local chat app for playing a tabletop RPG with a
 
 It began as a slightly better scratch pad than Venice's own chat and grew into a place to run a one-player game: a Game Master, a Dice Master, a painter for the scene and a brain for each character you meet, all reading the same story. It's a personal tool, shared as it is. There's no hosting, no sign-up (accounts are made in your terminal) and no roadmap.
 
+## A session in the tavern
+
+A short live session in the example campaign, *The Gilded Goat*, on the default models (DeepSeek V4.1 Flash writes, Z-Image Turbo paints). Apart from the campaign's opening scene, only the player's lines and the steer were written by hand. The whole session, nine text replies and two pictures, cost under three cents.
+
+![The Game Master calls for an Insight check, the Dice Master names the roll, a d20 comes up 20 and the Game Master narrates the result](docs/screenshots/tavern-dice.png)
+
+*Several brains, one scrollback: the Game Master calls for an Insight check, the Dice Master names the roll, the server rolls a real d20, and the Game Master narrates what a 20 earns.*
+
+![The Scene Painter's picture of the tavern, with its prompt as the caption](docs/screenshots/tavern-scene.png)
+
+*The Scene Painter's turn: it writes an image prompt (the caption, which every other brain reads word for word), and the picture is painted while play goes on.*
+
+![The regenerate box open under the Game Master's last reply, with a steer typed in](docs/screenshots/steer-box.png)
+
+*Regenerate with a steer: a one-off direction for the Game Master's last reply.*
+
+![The steered reply as version 2 of 2, the steer shown in its header](docs/screenshots/steer-result.png)
+
+*The steered reply becomes version 2: its header shows the steer, the pager goes back to version 1, and the steer is never sent again.*
+
+![The Payload view, listing the request's messages verbatim](docs/screenshots/payload.png)
+
+*The Payload view shows the literal request body (here, the steered regenerate's): other brains' lines arrive framed as `<!-- from: ... -->`, the Game Master's own as `assistant`.*
+
+![Settings, Brains tab: the Dice Master's system prompt, final reminder and stop sequences, beside a portrait of the hooded figure](docs/screenshots/settings.png)
+
+*Settings → Brains: every system prompt, reminder and stop sequence is editable mid-game (here the Dice Master's), beside the Character Portraitist's take on the hooded figure.*
+
+The same moment from the terminal, where most of this session was played:
+
+```text
+$ export SST_CONVERSATION=c_...
+$ ./sst turn --content "I take my cider to the corner booth, sit down across from her with my best travelling-bard smile, and tell her the rain has made fools of us both. Then I ask, lightly, who the letter is for."
+[Game Master · in "The Gilded Goat (D&D 5e)"]
+You slide into the booth. Up close, the hood can't hide everything: a pale chin, a scattering of freckles, the smell of wet wool and lavender soap. …
+"The letter?" A pause just long enough to be a lie being built. "Grain tariffs. Very boring. Extremely official. I'm a — a clerk. Millbrook Grain Guild. So. Yes."
+…
+That's an Insight check.
+[Game Master · 2188 in / 173 out · $0.00086]
+
+$ ./sst turn --brain "Dice Master" --content "What do I roll?"
+[Dice Master · in "The Gilded Goat (D&D 5e)"]
+**Insight check:** roll 1d20 + 3, DC 12. Make it, and you can tell whether "grain clerk" is a lie.
+[Dice Master · 1868 in / 36 out · $0.0006]
+
+$ ./sst turn --brain "Game Master" --roll
+🎲 d20: 20
+[Game Master · in "The Gilded Goat (D&D 5e)"]
+You've heard a thousand lies in a hundred taverns, and every one of them had a grain tariff in it somewhere. …
+"Please don't say it out loud."
+…
+[Game Master · 2433 in / 175 out · $0.00094]
+```
+
 ## What it does
 
 **Start with the tavern.** The app ships with a ready-made campaign, *The Gilded Goat*: a quiet D&D 5e evening in a village tavern, with a World Bible, an opening scene and five brains (Game Master, Dice Master, Joke Teller, Scene Painter, Character Portraitist). A hooded figure sits in the corner booth. One click (or `./sst conversation.import --example dnd-tavern`) and you're playing.
