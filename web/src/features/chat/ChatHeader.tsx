@@ -9,12 +9,13 @@ import { cx } from "../../lib/cx.ts";
 import { conversationCost, formatUsd } from "../../lib/format.ts";
 import { otherTextModels, ownModels } from "../../lib/models.ts";
 import { patchConversation, refreshConversations } from "../conversations/store.ts";
+import { TokenCounter } from "./TokenCounter.tsx";
 
 /**
  * Title (click to rename), the text model, what the conversation has cost so far (every version ever
  * generated), and the two panels: the exact payload and the settings. T18: the text model is the conversation's,
  * the default; when some brains write with another of their own, it says so ("· Co-GM: z-ai-glm-5-3", or "· 2 brains
- * on their own"), and the tooltip names every brain with a model of its own.
+ * on their own"), and the tooltip names every brain with a model of its own. T20: the token counter (TokenCounter).
  */
 export function ChatHeader({
   conv,
@@ -39,7 +40,7 @@ export function ChatHeader({
         .join(", ")}.`
     : "Text model (the conversation's: every brain writes with it)";
   return (
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line px-4 sm:px-5">
+    <header className="relative flex h-14 shrink-0 items-center gap-3 border-b border-line px-4 sm:px-5">
       <div className="min-w-0 flex-1">
         {editing ? (
           <TitleEditor conv={conv} onDone={() => setEditing(false)} onRenamed={onRenamed} />
@@ -71,6 +72,8 @@ export function ChatHeader({
         </span>
       </div>
       <div className="flex items-center gap-0.5">
+        {/* T20: every brain's prompt size, what tells you when to compact. */}
+        <TokenCounter conv={conv} />
         <Button variant="ghost" size="sm" onClick={onOpenPayload} title="The exact request each brain would be sent next">
           <Braces aria-hidden className="size-4" />
           <span className="hidden lg:inline">Payload</span>

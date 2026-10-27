@@ -29,6 +29,7 @@ import type {
 } from "../../../src/conversations/types.ts";
 import type { ModelInfo } from "../../../src/venice/models.ts";
 import type { LastCount, PromptSizes } from "../../../src/conversations/size.ts";
+import type { CutMoved } from "../../../src/conversations/compaction.ts";
 
 export type { Brain, BrainBlueprint, BrainMaker, BrainTool, ChatMessage, ChatRequest, Conversation, ImageRecord, ImageRequest, ImageShape, LedgerMessage, MessageVersion, ModelInfo, Pin, PinRole, RetryRequest, Roll, SetupMessage, SetupRole, Templates };
 
@@ -221,8 +222,9 @@ export type MessageView = { conversationId: string; author: string; message: Led
 /**
  * message.edit and message.add: for an image message (T05), `painting` names the image being made for it now.
  * T16: `made` (message.add) is the brain the message made, when its author makes brains: add it to the brain list.
+ * T20: `cutMoved` (message.add) when the message went in a compaction brain's mouth: it is the newest compaction now.
  */
-export type ImageMessageView = MessageView & { painting?: { imageId: string; model: string }; made?: Brain };
+export type ImageMessageView = MessageView & { painting?: { imageId: string; model: string }; made?: Brain; cutMoved?: CutMoved };
 
 /**
  * generation.stop. `message` is what the stopped reply saved (null when no text had arrived; `error` says so).
@@ -283,6 +285,11 @@ export type BrainFields = {
    */
   textModel?: string | null;
   imageModel?: string | null;
+  /**
+   * T20: "Its messages are compactions" (text brains only). Every brain's request then takes the ledger from the newest
+   * compaction on. Turned on (or off) for a brain that has spoken, it moves the cut at once: brain.update says so (`cutMoved`).
+   */
+  compacts?: boolean;
 };
 
 /** T16: what brain.add / brain.update take for the maker setting: any of its fields, the blueprint's merged. */
@@ -320,6 +327,8 @@ export type LibraryBrain = {
   /** T18: the brain's own models, when the file gives it some (else it uses the conversation's). */
   textModel?: string;
   imageModel?: string;
+  /** T20: its messages are compactions (the Tabletop RPG preset's Chronicler). */
+  compacts?: true;
 };
 
 /** examples.list (T07): a committed campaign in examples/, ready to import. `error`: the file can't be imported. */
@@ -383,7 +392,8 @@ export type Commands = {
   };
   /** T07: a new conversation from one of yours: same brains, setup, templates and settings; the ledger and images too unless withoutMessages. */
   "conversation.clone": { args: { id: string; title?: string; withoutMessages?: boolean; through?: string; textModel?: string }; result: Conversation };
-  "brain.update": { args: BrainUpdate; result: Brain };
+  /** T20: `cutMoved` is spread into the brain when the change moved where every request starts (--compacts on a brain that has spoken): strip it before storing the brain. */
+  "brain.update": { args: BrainUpdate; result: Brain & { cutMoved?: CutMoved } };
   /** Without color: the first unused badge color. Without finalReminder: on, pre-filled with REMINDER_EXAMPLE. */
   "brain.add": { args: BrainFields & { conversation: string; name: string; systemPrompt: string }; result: Brain };
   /** Only a brain that has never spoken, isn't the default and isn't writing (409 brain_in_use / default_brain / conflict). */
@@ -444,13 +454,15 @@ export type Commands = {
       imagesDeleted?: string[];
       brainsDeleted?: Array<{ brainId: string; name: string }>;
       unpinned?: Array<{ brainId: string; name: string; madeFrom?: true }>;
+      /** T20: the delete moved where every request starts (it was the newest compaction). */
+      cutMoved?: CutMoved;
     };
   };
   /**
    * T16: change who said a message ("Said by"): `as` is "player" or a brain (name or id) of the message's kind. A
    * brain's message comes to you only with one version; a roll stays yours. 409 while a reply is being generated.
    */
-  "message.set-author": { args: { conversation: string; message: string; as: string }; result: MessageView & { from: string; changed: boolean } };
+  "message.set-author": { args: { conversation: string; message: string; as: string }; result: MessageView & { from: string; changed: boolean; cutMoved?: CutMoved } };
   /** `version` is 1-based (what the pager shows); the document's activeVersion is 0-based. 409 while generating. */
   "message.select-version": { args: { conversation: string; message: string; version: number }; result: MessageView };
   "generation.stop": { args: { conversation: string }; result: StopOutcome };

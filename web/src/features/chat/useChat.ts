@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client.ts";
 import { ApiError, diagnosticsOf, errorMessage, isAbortError, retryOf } from "../../api/errors.ts";
-import { IMAGE_STOP_NOTE, type Brain, type ChatDiagnostics, type Conversation, type LedgerMessage, type PinRole, type RetryRequest, type StreamYield } from "../../api/types.ts";
+import { IMAGE_STOP_NOTE, isCompactor, type Brain, type ChatDiagnostics, type Conversation, type CutMoved, type LedgerMessage, type PinRole, type RetryRequest, type StreamYield } from "../../api/types.ts";
+import { cutMovedWords } from "../../lib/compaction.ts";
 import { forBrowser } from "../../lib/format.ts";
 import { refreshConversations } from "../conversations/store.ts";
 
@@ -31,6 +32,11 @@ import { refreshConversations } from "../conversations/store.ts";
  * (`brain_made`, before `done`), as do message.add (`made`) and brain.make, and the brain joins the cast at once,
  * marked `fresh` for this view (its button glows, its message offers a name). The maker's counter moved too, so the
  * conversation is re-read once the reply is over. A delete that took a made brain (or pins) with it patches them out.
+ *
+ * Compaction (T20): `compact()` streams message.compact. The live reply carries `compact.through`, the message it
+ * compacts through, so the scrollback paints it right after that message (a re-version: in the compaction's own slot),
+ * and the saved compaction goes in there too, not at the end. A turn to a compaction brain says the same in its
+ * `start`. A command that moved where every request starts (`cutMoved`) says so in a notice.
  */
 
 export type LiveReply = {
@@ -62,6 +68,11 @@ export type LiveReply = {
   diagnostics: ChatDiagnostics | null;
   /** An image brain's reply: `content` is its image prompt, streaming in; the image is made once it is saved. */
   image: boolean;
+  /**
+   * T20: a compaction (message.compact, or a turn to a compaction brain): the message it compacts through. A new
+   * compaction streams, and is saved, right after that message; a re-version (`kind: "regenerate"`) in its own slot.
+   */
+  compact: { through: string } | null;
 };
 
 /**
@@ -107,6 +118,14 @@ export type MessageActions = {
   setAuthor(messageId: string, as: string): Promise<string | null>;
   /** T16: rename a brain (brain.update), from the message it was made from. */
   renameBrain(brainId: string, name: string): Promise<string | null>;
+  /**
+   * T20: compact through a message (message.compact) with a compaction brain (`brainId`; default: the only one). It
+   * streams right after the message; `version`: the compaction right after it gets a new version instead (its id).
+   * Resolves to an up-front refusal (its words, or a Problem when Venice refused), else null.
+   */
+  compact(throughId: string, brainId?: string, version?: string): Promise<string | Problem | null>;
+  /** T20: add a brain from a preset (brain.import), for "Compact through here" in a conversation with no compaction brain. */
+  importBrain(preset: string, brain: string): Promise<string | null>;
   /**
    * A new version of the last message, streaming in its place. Resolves to an up-front failure: its message, or a
    * Problem when Venice refused the request (its diagnostics, for Details).
@@ -263,13 +282,16 @@ export function useChat(id: string): Chat {
    * An older copy than ours is ignored. `known`: only replace, never add (an image landing for a message that
    * was deleted meanwhile must not bring it back).
    */
-  const upsertMessage = useCallback((m: LedgerMessage, opts?: { known?: boolean }) => {
+  const upsertMessage = useCallback((m: LedgerMessage, opts?: { known?: boolean; after?: string }) => {
     setConv((c) => {
       if (!c) return c;
       const i = c.messages.findIndex((x) => x.id === m.id);
       if (i === -1 && opts?.known) return c;
       if (i !== -1 && !newer(m, c.messages[i])) return c;
-      const messages = i === -1 ? [...c.messages, m] : c.messages.map((x, j) => (j === i ? m : x));
+      // T20: a new compaction goes right after the message it compacts through, as the server inserted it.
+      const at = i === -1 && opts?.after ? c.messages.findIndex((x) => x.id === opts.after) : -1;
+      const messages =
+        i !== -1 ? c.messages.map((x, j) => (j === i ? m : x)) : at !== -1 ? [...c.messages.slice(0, at + 1), m, ...c.messages.slice(at + 1)] : [...c.messages, m];
       return { ...c, messages, updatedAt: m.updatedAt > c.updatedAt ? m.updatedAt : c.updatedAt };
     });
   }, []);
@@ -280,7 +302,7 @@ export function useChat(id: string): Chat {
    * reply has no cost yet; the re-reads after a stop pick it up.
    */
   const saveReply = useCallback(
-    (m: LedgerMessage, spentUsd: number | undefined, opts?: { known?: boolean }) => {
+    (m: LedgerMessage, spentUsd: number | undefined, opts?: { known?: boolean; after?: string }) => {
       upsertMessage(m, opts);
       // The total only grows; a stream that read it a moment before another's save can't shrink it.
       if (spentUsd !== undefined) setConv((c) => c && { ...c, spentUsd: Math.max(spentUsd, c.spentUsd ?? 0) });
@@ -304,6 +326,9 @@ export function useChat(id: string): Chat {
     const next = await api.call("conversation.get", { id }, { signal: alive.current.signal });
     if (!busyRef.current) setConv((c) => mergeRead(c, next));
   }, [id]);
+
+  /** T20: the compaction being written (from its `start`): its saved message goes in right after `through`. */
+  const compactAt = useRef<{ through: string; messageId: string } | null>(null);
 
   const watchCost = useCallback(() => {
     costWatch.current = { until: Date.now() + 60_000, spentAtStop: convRef.current?.spentUsd };
@@ -335,6 +360,7 @@ export function useChat(id: string): Chat {
             retry: null,
             diagnostics: null,
             image: false,
+            compact: null,
           });
           break;
         case "message":
@@ -349,6 +375,7 @@ export function useChat(id: string): Chat {
           if (ev.imageOnly) break; // only an image is being made (no text streams): the watchers show it
           flush();
           setNotice((n) => (n?.tone === "info" ? null : n));
+          compactAt.current = ev.compact && !ev.regenerate ? { through: ev.compact.through, messageId: ev.messageId } : null;
           setLive((l) => ({
             ...(l ?? { origin: "follow", content: "", reasoning: "", phase: "waiting", error: null, retry: null, diagnostics: null }),
             kind: ev.regenerate ? "regenerate" : "turn",
@@ -358,6 +385,7 @@ export function useChat(id: string): Chat {
             brainName: ev.brainName,
             messageId: ev.messageId,
             image: ev.kind === "image",
+            compact: ev.compact ?? null,
           }));
           break;
         case "reasoning":
@@ -405,12 +433,15 @@ export function useChat(id: string): Chat {
             return { ...c, brains, messages };
           });
           break;
-        case "done":
+        case "done": {
           flush();
-          if (ev.message) saveReply(ev.message, ev.spentUsd);
+          const at = compactAt.current;
+          compactAt.current = null;
+          if (ev.message) saveReply(ev.message, ev.spentUsd, at?.messageId === ev.message.id ? { after: at.through } : undefined);
           setLive(null);
           void refreshConversations();
           break;
+        }
       }
       return false;
     },
@@ -622,6 +653,7 @@ export function useChat(id: string): Chat {
         retry: null,
         diagnostics: null,
         image: target?.kind === "image",
+        compact: null, // a compaction brain's turn says so in its `start`
       });
       let saved = false;
       let started = false;
@@ -682,6 +714,7 @@ export function useChat(id: string): Chat {
         retry: null,
         diagnostics: null,
         image: m?.kind === "image",
+        compact: null,
       });
       let started = false;
       try {
@@ -748,6 +781,12 @@ export function useChat(id: string): Chat {
     [follow, reload],
   );
 
+  /** T20: a ledger command moved where every request starts: say so (the fold above the compaction shows where). */
+  const cutMoved = useCallback((moved: CutMoved | undefined, fresh?: LedgerMessage) => {
+    const c = convRef.current;
+    if (moved && c) setNotice({ tone: "info", message: cutMovedWords(moved, c, fresh) });
+  }, []);
+
   const edit = useCallback(
     async (messageId: string, content: string) => {
       if (busyRef.current) return BUSY_LEDGER;
@@ -790,12 +829,13 @@ export function useChat(id: string): Chat {
         );
         void reload().catch(() => {}); // the server pinned the running total; pick it up
         void refreshConversations();
+        cutMoved(r.cutMoved);
         return null;
       } catch (err) {
         return ledgerFailure(err);
       }
     },
-    [id, reload, ledgerFailure],
+    [id, reload, ledgerFailure, cutMoved],
   );
 
   const selectVersion = useCallback(
@@ -866,19 +906,22 @@ export function useChat(id: string): Chat {
     async (messageId: string, as: string) => {
       if (busyRef.current) return BUSY_LEDGER;
       try {
-        upsertMessage((await api.call("message.set-author", { conversation: id, message: messageId, as })).message);
+        const r = await api.call("message.set-author", { conversation: id, message: messageId, as });
+        upsertMessage(r.message);
+        cutMoved(r.cutMoved, r.message);
         return null;
       } catch (err) {
         return ledgerFailure(err);
       }
     },
-    [id, upsertMessage, ledgerFailure],
+    [id, upsertMessage, ledgerFailure, cutMoved],
   );
 
   const renameBrain = useCallback(
     async (brainId: string, name: string) => {
       try {
-        replaceBrain(await api.call("brain.update", { conversation: id, brain: brainId, name }));
+        const { cutMoved: _, ...brain } = await api.call("brain.update", { conversation: id, brain: brainId, name });
+        replaceBrain(brain);
         return null;
       } catch (err) {
         return errorMessage(err);
@@ -895,7 +938,7 @@ export function useChat(id: string): Chat {
       if (imagePending(m, "active")) return IMAGE_BUSY;
       try {
         if (opts?.safeModeOff && m.author.type === "brain") {
-          const brain = await api.call("brain.update", { conversation: id, brain: m.author.brainId, safeMode: false });
+          const { cutMoved: _, ...brain } = await api.call("brain.update", { conversation: id, brain: m.author.brainId, safeMode: false });
           setConv((x) => x && { ...x, brains: x.brains.map((b) => (b.id === brain.id ? brain : b)) });
         }
         for await (const ev of api.stream("image.retry", { conversation: id, message: messageId }, { signal: alive.current.signal })) {
@@ -915,9 +958,72 @@ export function useChat(id: string): Chat {
     [id, upsertMessage, saveReply, ledgerFailure],
   );
 
+  const compact = useCallback(
+    async (through: string, brainId?: string, version?: string): Promise<string | Problem | null> => {
+      const c = convRef.current;
+      if (!c || busyRef.current) return BUSY_LEDGER;
+      const brain = c.brains.find((b) => b.id === brainId) ?? (c.brains.filter(isCompactor).length === 1 ? c.brains.find(isCompactor) : undefined) ?? null;
+      busyRef.current = true;
+      setNotice(null);
+      // From the first moment the slot right after the message shows it (typing dots), or the compaction's own slot.
+      setLive({
+        origin: "turn",
+        kind: version ? "regenerate" : "turn",
+        brainId: brain?.id ?? null,
+        brainName: brain?.name ?? null,
+        messageId: version ?? null,
+        steer: null,
+        thought: null,
+        content: "",
+        reasoning: "",
+        phase: "waiting",
+        error: null,
+        retry: null,
+        diagnostics: null,
+        image: false,
+        compact: { through },
+      });
+      let started = false;
+      try {
+        const args = { conversation: id, message: through, ...(brainId ? { brain: brainId } : {}) };
+        for await (const ev of api.stream("message.compact", args, { signal: alive.current.signal })) {
+          if (ev.type === "start") started = true;
+          apply(ev);
+        }
+        return null;
+      } catch (err) {
+        if (isAbortError(err) || stoppedEarly(err)) return null;
+        if (started) {
+          fail(err); // the partial compaction stays in its slot, dimmed, with the error and a Retry
+          return null;
+        }
+        flush();
+        setLive(null);
+        if (err instanceof ApiError && err.code === "conflict") {
+          void follow();
+          return BUSY_LEDGER;
+        }
+        return problemOf(err);
+      }
+    },
+    [apply, fail, flush, follow, stoppedEarly, id],
+  );
+
+  const importBrain = useCallback(
+    async (preset: string, brain: string) => {
+      try {
+        replaceBrain((await api.call("brain.import", { conversation: id, preset, brain })).brain);
+        return null;
+      } catch (err) {
+        return errorMessage(err);
+      }
+    },
+    [id, replaceBrain],
+  );
+
   const actions = useMemo<MessageActions>(
-    () => ({ edit, remove, selectVersion, regenerate, repaint, pin, unpin, make, setAuthor, renameBrain }),
-    [edit, remove, selectVersion, regenerate, repaint, pin, unpin, make, setAuthor, renameBrain],
+    () => ({ edit, remove, selectVersion, regenerate, repaint, pin, unpin, make, setAuthor, renameBrain, compact, importBrain }),
+    [edit, remove, selectVersion, regenerate, repaint, pin, unpin, make, setAuthor, renameBrain, compact, importBrain],
   );
 
   const retry = useCallback(async () => {
@@ -935,9 +1041,15 @@ export function useChat(id: string): Chat {
       if (problem) setNotice({ tone: "error", message: problem });
       return;
     }
+    if (r?.command === "message.compact") {
+      // T20: the same compaction brain, through the same message (a re-version again, if that is what broke).
+      const problem = await compact(r.args.message, r.args.brain, l.kind === "regenerate" ? (l.messageId ?? undefined) : undefined);
+      if (problem) setNotice(errorNotice(problem));
+      return;
+    }
     // A turn: the brain the server names, else the one this reply was from. Never a bare turn (the default brain).
     await send("", r?.command === "turn" ? r.args.brain : (l.brainId ?? undefined));
-  }, [regenerate, repaint, send]);
+  }, [regenerate, repaint, send, compact]);
 
   const add = useCallback(
     async (as: string, content: string) => {
@@ -947,13 +1059,14 @@ export function useChat(id: string): Chat {
         upsertMessage(r.message);
         if (r.made) addMadeBrain(r.made); // T16: words in a maker's mouth make a brain too
         setNotice(null);
+        cutMoved(r.cutMoved, r.message); // T20: words in a compaction brain's mouth are the newest compaction
         void refreshConversations();
         return null;
       } catch (err) {
         return ledgerFailure(err);
       }
     },
-    [id, upsertMessage, ledgerFailure, addMadeBrain],
+    [id, upsertMessage, ledgerFailure, addMadeBrain, cutMoved],
   );
 
   const roll = useCallback(async () => {

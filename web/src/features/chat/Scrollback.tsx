@@ -1,7 +1,9 @@
-import { ArrowDown, ArrowUp, ImageIcon, X } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { isMuse, type Brain, type Conversation, type PinRole } from "../../api/types.ts";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, ImageIcon, ScrollText, X } from "lucide-react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
+import { isCompaction, isMuse, type Brain, type Conversation, type PinRole } from "../../api/types.ts";
 import { madeFromIndex, pinsByMessage } from "../../lib/cast.ts";
+import { cutView, storyCount } from "../../lib/compaction.ts";
 import { cx } from "../../lib/cx.ts";
 import { freshTakeTarget, thoughtBesideImage } from "../../lib/thought.ts";
 import { GalleryContext, type GalleryItem } from "./ImageCard.tsx";
@@ -18,17 +20,30 @@ const AWAY_PX = 64;
 /** How long after opening a conversation it is kept at its end while things settle, unless you act first. */
 const SETTLE_MS = 1500;
 
+/** T20: unfold the messages above the newest compaction if `messageId` is one of them (a pin's "Jump to it"), so it can be scrolled to. */
+export function revealMessage(messageId: string) {
+  window.dispatchEvent(new CustomEvent<string>(REVEAL_EVENT, { detail: messageId }));
+}
+const REVEAL_EVENT = "sst:reveal-message";
+
 /**
  * The ledger, top to bottom, then the optimistic player message, a roll on its way (T09) and the live reply. A regenerate's live reply
  * goes in the slot of the message it rewrites instead. It opens at the end, and from then on scrolls the browser's
  * way: new text comes in below without moving the view ("Latest" appears when there is more below), and only you,
  * "Latest" and the picture-is-ready pill scroll it.
+ *
+ * T20, compaction: the messages above the newest compaction are left out of every request, so they fold under one band
+ * ("12 earlier messages, left out of every request"), still there to open, read and edit; the compaction has a look of
+ * its own (MessageFrame's `compaction`). A compaction being written streams right after the message it compacts
+ * through. When the fold changes under you (a compaction lands, or is deleted), the message you were looking at keeps
+ * its place on screen, as the browser's scroll anchoring does when it can (it can't when that message folds away).
  */
 export function Scrollback({
   conv,
   chat,
   onRetry,
   onPreviewRegenerate,
+  onPreviewCompact,
   onOpenBrain,
   empty,
 }: {
@@ -36,12 +51,23 @@ export function Scrollback({
   chat: Chat;
   onRetry(): void;
   onPreviewRegenerate(messageId: string, ask: RegenerateAsk): void;
+  /** T20: the payload view of "Compact through here" on a message, with a compaction brain. */
+  onPreviewCompact(messageId: string, brainId: string): void;
   /** T16: open a brain's card in Settings → Brains (a message's made brain, or a brain it is pinned to). */
   onOpenBrain(brainId: string): void;
   empty: ReactNode;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const [away, setAway] = useState(false);
+  /** T20: the newest compaction (where every request starts), and whether you opened the fold above it (per cut). */
+  const cut = useMemo(() => cutView(conv), [conv]);
+  const cutId = cut.at >= 0 ? conv.messages[cut.at]!.id : null;
+  const [openCut, setOpenCut] = useState<string | null>(null);
+  const folded = cut.at > 0 && openCut !== cutId;
+  /** A stable way for a message's Compact menu to read the conversation as it is when it opens (keeps MessageItem's memo). */
+  const convRef = useRef(conv);
+  convRef.current = conv;
+  const getConv = useCallback(() => convRef.current, []);
   const brains = new Map(conv.brains.map((b) => [b.id, b]));
   const { live, pendingPlayer, pendingRoll } = chat;
   const gallery = useMemo(() => galleryOf(conv), [conv]);
@@ -99,10 +125,68 @@ export function Scrollback({
 
   const toBottom = () => box.current?.scrollTo({ top: box.current.scrollHeight, behavior: "smooth" });
 
+  /**
+   * T20: the message at the top of the view, and where it is, so a fold that changes under it (a compaction lands, or
+   * is deleted) can put it back where it was. The browser's scroll anchoring does this by itself, except when the
+   * message it anchored to is the one that folds away.
+   */
+  const anchor = useRef<{ id: string; top: number } | null>(null);
+  const noteAnchor = useCallback(() => {
+    const el = box.current;
+    if (!el) return;
+    const b = el.getBoundingClientRect();
+    // A compaction being written, in view: once saved (with this id) it is the one to keep in place.
+    const lc = el.querySelector<HTMLElement>("li[data-live-compaction]");
+    const lt = lc?.dataset.liveCompaction ? lc.getBoundingClientRect().top - b.top : null;
+    if (lc && lt !== null && lt > -40 && lt < el.clientHeight - 40) {
+      anchor.current = { id: lc.dataset.liveCompaction!, top: lt };
+      return;
+    }
+    for (const y of [24, 64, 120, 200]) {
+      const hit = document.elementFromPoint(b.left + b.width / 2, b.top + y)?.closest<HTMLElement>("li[id]");
+      if (hit && el.contains(hit)) {
+        anchor.current = { id: hit.id, top: hit.getBoundingClientRect().top - b.top };
+        return;
+      }
+    }
+  }, []);
+
   /** "Latest" shows while there is more below the view. It only shows: nothing here moves the box. */
   const measure = useCallback(() => {
     const el = box.current;
     if (el) setAway(el.scrollHeight - el.scrollTop - el.clientHeight > AWAY_PX);
+    noteAnchor();
+  }, [noteAnchor]);
+
+  // T20: the fold changed (a new cut, or the fold opened or closed). Put the message that was at the top of the view
+  // back where it was; if it folded away, the compaction takes its place. Before paint, so nothing visibly jumps.
+  const lastFold = useRef({ cutId, folded });
+  useLayoutEffect(() => {
+    const was = lastFold.current;
+    lastFold.current = { cutId, folded };
+    if (was.cutId === cutId && was.folded === folded) return;
+    const el = box.current;
+    const a = anchor.current;
+    if (!el || !a) return;
+    const target = document.getElementById(a.id) ?? (cutId ? document.getElementById(cutId) : null);
+    if (!target) return;
+    el.scrollTop += target.getBoundingClientRect().top - el.getBoundingClientRect().top - a.top;
+    noteAnchor();
+  }, [cutId, folded, noteAnchor]);
+
+  // T20: "Jump to it" on a message in the fold opens the fold first (synchronously, so the caller can scroll to it).
+  useEffect(() => {
+    const onReveal = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      const c = convRef.current;
+      const at = c.messages.findIndex((m) => m.id === id);
+      const { at: cutAt } = cutView(c);
+      if (at < 0 || at >= cutAt) return;
+      const cid = c.messages[cutAt]!.id;
+      flushSync(() => setOpenCut(cid));
+    };
+    window.addEventListener(REVEAL_EVENT, onReveal);
+    return () => window.removeEventListener(REVEAL_EVENT, onReveal);
   }, []);
 
   // A conversation opens at its end: the one scroll the scrollback makes by itself (ChatView is keyed by the
@@ -158,9 +242,11 @@ export function Scrollback({
   // A regenerate streams in its message's slot (also when re-attached by generation.follow, once `start` says
   // which message). Anything else, or a regenerate of a message we don't have, goes at the bottom.
   const inSlot = live?.kind === "regenerate" && live.messageId && conv.messages.some((m) => m.id === live.messageId) ? live.messageId : null;
-  const atBottom = live && !inSlot ? live : null;
+  // T20: a new compaction streams right after the message it compacts through (at the bottom when that is the last).
+  const afterId = live?.kind === "turn" && live.compact && conv.messages.some((m) => m.id === live.compact!.through) ? live.compact.through : null;
+  const atBottom = live && !inSlot && !afterId ? live : null;
   const waiting = pendingPlayer !== null || pendingRoll;
-  const canRegenerate = !!last && last.author.type === "brain" && !atBottom && !waiting;
+  const canRegenerate = !!last && last.author.type === "brain" && !atBottom && !afterId && !waiting;
   /** T17: what a fresh take on the last message does with the Muse's note (its Regenerate box says so). */
   const freshTarget = useMemo(() => (last ? freshTakeTarget(conv, last.id) : undefined), [conv, last]);
   const authorOf = (i: number) => {
@@ -177,18 +263,35 @@ export function Scrollback({
           ) : (
             <GalleryContext value={gallery}>
                 <ol className="space-y-7">
+                  {cut.at > 0 && (
+                    <li data-fold>
+                      <FoldBand
+                        count={cut.at}
+                        pinned={cut.pinnedAbove}
+                        compactor={authorOf(cut.at)}
+                        open={!folded}
+                        onToggle={() => setOpenCut(folded ? cutId : null)}
+                      />
+                    </li>
+                  )}
                   {conv.messages.map((m, i) => {
+                    if (folded && i < cut.at) return null;
                     const brain = authorOf(i);
                     // T17: a Muse's note sits close above the reply it is for (the next message, a brain's).
                     const muse = !!brain && isMuse(brain);
                     const next = muse ? authorOf(i + 1) : undefined;
                     const v = m.versions[m.activeVersion];
-                    return (
-                    <li key={m.id} id={m.id} className={cx(muse && next && !isMuse(next) && "!mb-1")}>
+                    const compaction = isCompaction(conv, m) ? (i === cut.at ? "newest" : "older") : undefined;
+                    const item = (
+                    <li
+                      id={m.id}
+                      data-compacted={i < cut.at ? "" : undefined}
+                      className={cx(muse && next && !isMuse(next) && "!mb-1", i < cut.at && "opacity-70 transition-opacity focus-within:opacity-100 hover:opacity-100")}
+                    >
                       <MessageItem
                         message={m}
                         brain={brain}
-                        isLast={m === last && !atBottom && !waiting}
+                        isLast={m === last && !atBottom && !afterId && !waiting}
                         canRegenerate={m === last && canRegenerate}
                         live={m.id === inSlot ? live! : undefined}
                         busy={chat.busy}
@@ -206,8 +309,37 @@ export function Scrollback({
                         onOpenBrain={onOpenBrain}
                         cloneSource={cloneSource}
                         position={i + 1}
+                        compaction={compaction}
+                        storyCount={compaction ? storyCount(conv, i) : 0}
+                        prevId={conv.messages[i - 1]?.id}
+                        getConv={getConv}
+                        onPreviewCompact={onPreviewCompact}
                       />
                     </li>
+                    );
+                    // The fold is open: a line says where requests start, right above the compaction.
+                    const startsHere = i === cut.at && cut.at > 0 && !folded && (
+                      <li className="flex items-center gap-3 text-[11.5px] text-faint">
+                        <span className="h-px flex-1 bg-line-strong" />
+                        Every request starts here
+                        <button type="button" onClick={() => setOpenCut(null)} className="rounded px-1 text-faint underline decoration-line-strong underline-offset-4 hover:text-muted">
+                          Fold the {cut.at} above
+                        </button>
+                        <span className="h-px flex-1 bg-line-strong" />
+                      </li>
+                    );
+                    const liveAfter = m.id === afterId && (
+                      <li data-live-compaction={live!.messageId ?? ""}>
+                        <LiveReply live={live!} brain={live!.brainId ? brains.get(live!.brainId) : undefined} onRetry={onRetry} onDismiss={chat.dismissLive} />
+                      </li>
+                    );
+                    // One keyed fragment per message, its parts always in the same places, so nothing remounts as they come and go.
+                    return (
+                      <Fragment key={m.id}>
+                        {startsHere}
+                        {item}
+                        {liveAfter}
+                      </Fragment>
                     );
                   })}
                   {pendingPlayer !== null && (
@@ -280,6 +412,38 @@ export function Scrollback({
 }
 
 const NO_PINS: Array<{ brain: Brain; as: PinRole }> = [];
+
+/**
+ * T20: the messages above the newest compaction, folded: they are left out of every request (the compaction stands
+ * for them), but still here, to open, read and edit. A message among them that is pinned to a brain still reaches it.
+ */
+function FoldBand({ count, pinned, compactor, open, onToggle }: { count: number; pinned: number; compactor?: Brain; open: boolean; onToggle(): void }) {
+  const Chevron = open ? ChevronUp : ChevronDown;
+  return (
+    <button
+      type="button"
+      aria-expanded={open}
+      onClick={onToggle}
+      title={`Left out of every request since ${compactor ? `${compactor.name}'s` : "the"} compaction, which stands for them. Nothing is deleted: open them to read or edit them, or delete the compaction to bring them back into every request.`}
+      className="flex w-full items-center gap-3 rounded-xl border border-dashed border-line-strong px-4 py-2.5 text-left text-[13px] text-muted transition-colors hover:border-faint hover:bg-hover/40 hover:text-fg"
+    >
+      <ScrollText aria-hidden className="size-4 shrink-0" style={compactor ? { color: compactor.color } : undefined} />
+      <span className="min-w-0 flex-1">
+        <span className="font-medium text-fg">
+          {count} earlier message{count === 1 ? "" : "s"}
+        </span>
+        <span className="text-faint">
+          {" "}
+          · left out of every request since the compaction below
+          {pinned > 0 && (pinned === 1 ? " (one is pinned to a brain, which still gets it)" : ` (${pinned} are pinned to brains, which still get them)`)}
+        </span>
+      </span>
+      <span className="inline-flex shrink-0 items-center gap-1 text-[12.5px] text-faint">
+        {open ? "Fold" : "Show"} <Chevron aria-hidden className="size-3.5" />
+      </span>
+    </button>
+  );
+}
 
 /** Where a message is, seen from the scroll box: at least partly on screen, or above or below it. */
 function whereIs(box: HTMLElement | null, id: string): "in view" | "above" | "below" {

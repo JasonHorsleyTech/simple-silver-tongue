@@ -73,5 +73,6 @@ export function idleDuration(minutes: number): string {
  * only the command is cut; the rest is the server's own sentence.
  */
 export function forBrowser(message: string): string {
-  return message.replace(/: turn --brain \S+ without --content(?: or --roll)?/g, "");
+  // T20: a broken compaction's "To retry, compact again (the same command)." sits right above the browser's Retry.
+  return message.replace(/: turn --brain \S+ without --content(?: or --roll)?/g, "").replace(/ To retry, compact again \(the same command\)\./g, "");
 }

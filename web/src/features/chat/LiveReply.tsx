@@ -1,5 +1,5 @@
 import { RotateCw, X } from "lucide-react";
-import { isMuse, type Brain } from "../../api/types.ts";
+import { isCompactor, isMuse, type Brain } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { FailureDetails } from "./FailureDetails.tsx";
 import { expectedAspect, LiveImage } from "./ImageCard.tsx";
@@ -19,7 +19,8 @@ import type { LiveReply as Live } from "./useChat.ts";
  * being written and with what steer (or "fresh take": T17, the Muse's note it answers is already in its place
  * above), and a failure leaves the message's saved versions as they were.
  *
- * The Muse's own turn (T17) is written in the Muse's note frame, as it will be saved.
+ * The Muse's own turn (T17) is written in the Muse's note frame, as it will be saved. A compaction (T20: message.compact,
+ * or a turn to a compaction brain) is written in the compaction's frame, right after the message it compacts through.
  *
  * An image brain's reply (`live.image`) is its prompt: the frame the picture will fill, and the prompt
  * streaming in under it as plain text. It ends when the prompt is saved; the saved message then shows the
@@ -48,9 +49,14 @@ export function LiveReply({
       </div>
     );
   }
+  const compacting = !!live.compact || (!!brain && isCompactor(brain));
   const status = slot ? (
     <span className={failed ? "shrink-0 text-[11.5px] text-red-200/80" : "shimmer shrink-0 text-[11.5px] font-medium"}>
       {failed ? `version ${slot.nextVersion} wasn't saved` : `writing version ${slot.nextVersion}…`}
+    </span>
+  ) : compacting ? (
+    <span className={failed ? "shrink-0 text-[11.5px] text-red-200/80" : "shimmer shrink-0 text-[11.5px] font-medium"}>
+      {failed ? "it wasn't saved, so requests start where they did" : "summing up the story to here…"}
     </span>
   ) : undefined;
   return (
@@ -60,6 +66,7 @@ export function LiveReply({
         color={brain?.color ?? "#9aa3b0"}
         status={status}
         muse={brain && isMuse(brain) ? { for: null } : undefined}
+        compaction={compacting ? { newest: true, count: 0 } : undefined}
         origin={
           slot && live.thought !== null ? (
             <SteerNote freshTake image={live.image} />

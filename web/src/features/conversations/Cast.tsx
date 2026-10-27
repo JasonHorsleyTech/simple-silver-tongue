@@ -1,4 +1,4 @@
-import { BrainCircuit, ImageIcon } from "lucide-react";
+import { BrainCircuit, ImageIcon, ScrollText } from "lucide-react";
 import { useState } from "react";
 import { BRAIN_COLORS, MAKES_NUMBER, type LibraryBrain } from "../../api/types.ts";
 import { BrainBadge } from "../chat/BrainBadge.tsx";
@@ -7,12 +7,33 @@ import { BrainBadge } from "../chat/BrainBadge.tsx";
  * What a badge can't say: an image brain answers with a picture, and reasoning is on (a labeled opt-in, AGENTS.md:
  * the provider adds a small hidden instruction, so every list of brains says so; T10's Character Actor ships with it).
  * T16: a brain that makes brains ("makes Character N"), with its name pattern. T18: a brain's own models (`models`:
- * its text model and an image brain's image model, ids), since the conversation's are everyone else's.
+ * its text model and an image brain's image model, ids), since the conversation's are everyone else's. T20: a brain
+ * whose messages are compactions ("compacts").
  */
-export function BrainTags({ kind, reasoning, makes, models }: { kind: LibraryBrain["kind"]; reasoning?: string | null; makes?: string | null; models?: { text?: string | null; image?: string | null } }) {
+export function BrainTags({
+  kind,
+  reasoning,
+  makes,
+  models,
+  compacts,
+}: {
+  kind: LibraryBrain["kind"];
+  reasoning?: string | null;
+  makes?: string | null;
+  models?: { text?: string | null; image?: string | null };
+  compacts?: boolean;
+}) {
   const own = [models?.text, models?.image && `images: ${models.image}`].filter(Boolean).join(" · ");
   return (
     <>
+      {compacts && (
+        <span
+          className="inline-flex shrink-0 items-center gap-1 text-[11.5px] whitespace-nowrap text-faint"
+          title="Its messages are compactions: each sums up the story so far, and every brain's request starts at the newest one."
+        >
+          <ScrollText aria-hidden className="size-3" /> compacts
+        </span>
+      )}
       {makes && (
         <span
           className="inline-flex shrink-0 items-center gap-1 text-[11.5px] whitespace-nowrap text-faint"
@@ -54,7 +75,7 @@ export function Cast({ brains }: { brains: LibraryBrain[] }) {
             <li key={b.name} className="text-[13px] leading-5">
               <span className="flex items-center gap-1.5">
                 <BrainBadge name={b.name} color={colorOf(b, i)} />
-                <BrainTags kind={b.kind} reasoning={b.reasoning} makes={b.makes} models={{ text: b.textModel, image: b.imageModel }} />
+                <BrainTags kind={b.kind} reasoning={b.reasoning} makes={b.makes} models={{ text: b.textModel, image: b.imageModel }} compacts={b.compacts} />
               </span>
               {b.about && <p className="mt-1 pl-0.5 text-muted">{b.about}</p>}
             </li>
@@ -65,7 +86,7 @@ export function Cast({ brains }: { brains: LibraryBrain[] }) {
           {brains.map((b, i) => (
             <li key={b.name} className="inline-flex max-w-full items-center gap-1" title={b.about}>
               <BrainBadge name={b.name} color={colorOf(b, i)} />
-              <BrainTags kind={b.kind} reasoning={b.reasoning} makes={b.makes} models={{ text: b.textModel, image: b.imageModel }} />
+              <BrainTags kind={b.kind} reasoning={b.reasoning} makes={b.makes} models={{ text: b.textModel, image: b.imageModel }} compacts={b.compacts} />
             </li>
           ))}
         </ul>

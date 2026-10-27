@@ -13,7 +13,8 @@ import { imageModelsInUse, otherTextModels, ownModels, resolutionChoices, whoseI
 import { brainInitials } from "../web/src/lib/initials.ts";
 import { freshTakeTarget, mergedThought, prefillThought, thoughtBesideImage } from "../web/src/lib/thought.ts";
 import { newBrain, newConversation, newMuse } from "../src/conversations/defaults.ts";
-import { newMessage, planMuseNote } from "../src/conversations/turn.ts";
+import { newMessage, planCompact, planMuseNote } from "../src/conversations/turn.ts";
+import { compactOffer, cutMovedWords, cutView, storyCount } from "../web/src/lib/compaction.ts";
 import { rollLineIndex, rollView } from "../web/src/lib/rolls.ts";
 import { STOP_BILL_NOTE as SERVER_STOP_NOTE } from "../src/commands/chat.ts";
 import { BRAIN_COLORS as SERVER_COLORS, DEFAULT_TEMPLATES } from "../src/conversations/defaults.ts";
@@ -645,6 +646,98 @@ test("the Fresh take box says what the server will do with the Muse's note (T17 
     conv.messages.push(newMessage({ type: "player" }, "text", text("hi", "authored")), reply);
     check("an image Muse", conv, reply.id, "refused: bad_brain");
   }
+});
+
+test("Compact through here says what the server will do (T20 frontend: compactOffer agrees with planCompact; storyCount is what {{count}} is sent as)", () => {
+  const at = "2026-10-27T12:00:00.000Z";
+  const DEEPSEEK = { reasoning: { supported: true, effortOptions: ["none", "low", "high", "max"] } };
+  const scene = (compactors: number) => {
+    const conv = newConversation({ title: "t", systemPrompt: "You are the GM." });
+    const gm = conv.brains[0]!;
+    const summers: Brain[] = [];
+    for (let i = 0; i < compactors; i++) {
+      const b = newBrain({ name: i ? `Chronicler ${i + 1}` : "Chronicler", systemPrompt: "You keep the record.", isDefault: false });
+      b.compacts = true;
+      b.finalReminder = { enabled: true, content: "COUNT={{count}}" };
+      summers.push(b);
+    }
+    conv.brains.push(...summers);
+    const add = (author: LedgerMessage["author"], content: string) => {
+      const m = newMessage(author, "text", { content, source: "authored", createdAt: at });
+      conv.messages.push(m);
+      return m;
+    };
+    const by = (b: Brain): LedgerMessage["author"] => ({ type: "brain", brainId: b.id });
+    return { conv, gm, summers, add, by };
+  };
+  const server = (conv: Conversation, messageId: string, brain?: string) => {
+    try {
+      const plan = planCompact(conv, { message: messageId, brain }, DEEPSEEK);
+      const count = plan.body.messages.at(-1)!.content; // the reminder, COUNT={{count}} rendered
+      return plan.into.kind === "version" ? `version ${plan.into.message.versions.length + 1}, ${count}` : `new, ${plan.after} after, ${count}`;
+    } catch (err) {
+      return `refused: ${(err as { code: string }).code}`;
+    }
+  };
+  const browser = (conv: Conversation, messageId: string, brain?: string) => {
+    const o = compactOffer(conv, messageId, brain);
+    if (o.kind === "version") return `version ${o.version}, COUNT=${o.count}`;
+    if (o.kind === "new") return `new, ${o.after} after, COUNT=${o.count}`;
+    return `refused: ${{ none: "no_compactor", pick: "bad_request", compaction: "nothing_to_compact", above: "above_compaction" }[o.kind]}`;
+  };
+  const check = (label: string, conv: Conversation, messageId: string, want: string, brain?: string) => {
+    assert.equal(server(conv, messageId, brain), want, `${label}: the server`);
+    assert.equal(browser(conv, messageId, brain), want, `${label}: the browser`);
+  };
+
+  { // No compaction brain: the menu offers one.
+    const { conv, gm, add, by } = scene(0);
+    const m = add(by(gm), "Hello.");
+    check("no compactor", conv, m.id, "refused: no_compactor");
+  }
+  { // Several, none named: say which.
+    const { conv, gm, add, by } = scene(2);
+    const m = add(by(gm), "Hello.");
+    check("several", conv, m.id, "refused: bad_request");
+  }
+  { // The plain cases, then the cut moves.
+    const { conv, gm, summers, add, by } = scene(1);
+    const [chron] = summers;
+    const p1 = add({ type: "player" }, "I wait.");
+    const g1 = add(by(gm), "Rain.");
+    const p2 = add({ type: "player" }, "I leave.");
+    check("the last message", conv, p2.id, "new, 0 after, COUNT=3");
+    check("a middle message", conv, g1.id, "new, 1 after, COUNT=2");
+    const c1 = add(by(chron!), "SUMMARY");
+    // conv: p1 g1 p2 c1
+    assert.equal(storyCount(conv, 3), 3, "the compaction stands for the 3 messages before it");
+    check("a compaction itself", conv, c1.id, "refused: nothing_to_compact");
+    check("right before its own newest compaction: a new version", conv, p2.id, "version 2, COUNT=3");
+    check("above the newest compaction", conv, g1.id, "refused: above_compaction");
+    check("above it, the first message", conv, p1.id, "refused: above_compaction");
+    const g2 = add(by(gm), "Thunder.");
+    const p3 = add({ type: "player" }, "I run.");
+    check("after the cut: compactions aren't counted", conv, g2.id, "new, 1 after, COUNT=4");
+    check("after the cut, the last", conv, p3.id, "new, 0 after, COUNT=5");
+    assert.deepEqual(cutView(conv), { at: 3, pinnedAbove: 0 });
+    gm.pins = [{ messageId: g1.id, as: "ledger" }];
+    assert.deepEqual(cutView(conv), { at: 3, pinnedAbove: 1 }, "a pinned message above the cut still reaches its brain");
+  }
+  { // Two compaction brains: the other one's newest compaction covers the message right before it.
+    const { conv, gm, summers, add, by } = scene(2);
+    const [a, b] = summers;
+    add({ type: "player" }, "I wait.");
+    const g1 = add(by(gm), "Rain.");
+    add(by(a!), "SUMMARY A");
+    check("right before another brain's compaction", conv, g1.id, "refused: above_compaction", b!.id);
+    check("right before its own", conv, g1.id, "version 2, COUNT=2", a!.id);
+  }
+  // The browser's words for a moved cut name the compaction's author, never an id.
+  const { conv, summers, add, by } = scene(1);
+  add({ type: "player" }, "hi");
+  const c = add(by(summers[0]!), "S");
+  assert.equal(cutMovedWords({ from: null, to: c.id, before: 1 }, conv), "Every brain's request now starts at Chronicler's compaction: the message before it is left out of requests (still here, folded above it).");
+  assert.equal(cutMovedWords({ from: c.id, to: null, before: 0 }, conv), "No compaction is left, so every brain's request holds the whole story again.");
 });
 
 test("an image fresh take's idea shows above its picture only when no note above has it, and T15 text versions are told apart (T17 frontend)", () => {

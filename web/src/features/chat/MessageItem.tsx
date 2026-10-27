@@ -1,12 +1,13 @@
 import { BrainCircuit, ImagePlus, Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { memo, useEffect, useState } from "react";
-import { isMuse, type Brain, type LedgerMessage, type MessageVersion, type PinRole } from "../../api/types.ts";
+import { isMuse, type Brain, type Conversation, type LedgerMessage, type MessageVersion, type PinRole } from "../../api/types.ts";
 import { cx } from "../../lib/cx.ts";
 import { activeVersion, clockTime, fullTime } from "../../lib/format.ts";
 import { rollView } from "../../lib/rolls.ts";
 import { readLocal, writeLocal } from "../../lib/storage.ts";
 import { mergedThought, type FreshTakeTarget } from "../../lib/thought.ts";
 import { CloneMenu, type CloneSource } from "./CloneMenu.tsx";
+import { CompactMenu } from "./CompactMenu.tsx";
 import { expectedAspect, ImageBody } from "./ImageCard.tsx";
 import { LiveReply } from "./LiveReply.tsx";
 import { MessageEditor } from "./MessageEditor.tsx";
@@ -45,6 +46,9 @@ const REGEN_MODE_KEY = "sst.regenerateMode";
  * T16: under the body, the brain this message made (Rename) and the brains it is pinned to (Unpin) (LinksBand); in
  * the footer, Pin to a brain, Said by… (change who said it), and "Make a brain" on a maker's message that has none.
  * Clone from here (CloneMenu): a new conversation with the story up to and including this message.
+ * T20: Compact through here (CompactMenu), beside it: a compaction brain sums up the story to here, and every request
+ * starts at its summary from then on. A compaction has a look of its own (`compaction`), and the newest one, when it
+ * isn't the last message, has "Compact again" (a new version of it, through the message before it).
  * Actions show on hover or keyboard focus, and stay shown on the last message. During a reply they explain
  * why they can't run instead of failing with the server's 409, and so do those that would replace or remove
  * an image still being made (its prompt edit, its retry, the message's delete).
@@ -70,6 +74,11 @@ export const MessageItem = memo(function MessageItem({
   onOpenBrain,
   cloneSource,
   position,
+  compaction,
+  storyCount,
+  prevId,
+  getConv,
+  onPreviewCompact,
 }: {
   message: LedgerMessage;
   brain?: Brain;
@@ -86,6 +95,15 @@ export const MessageItem = memo(function MessageItem({
   /** "Clone from here": the conversation this message is in, and the message's place in it (1-based). */
   cloneSource: CloneSource;
   position: number;
+  /** T20: a compaction, the newest (where every request starts) or an older one (left out like the messages around it). */
+  compaction?: "newest" | "older";
+  /** T20, a compaction: the messages it stands for (every message before it, compactions not counted). */
+  storyCount: number;
+  /** The message right before it (the newest compaction's "Compact again" compacts through it). */
+  prevId?: string;
+  /** T20: the conversation as it is now, read when the Compact menu opens. */
+  getConv(): Conversation;
+  onPreviewCompact(messageId: string, brainId: string): void;
   /** The last thing in the scrollback: its footer stays shown. */
   isLast: boolean;
   /** The last ledger message, a brain's text: it can be regenerated. */
@@ -205,6 +223,19 @@ export const MessageItem = memo(function MessageItem({
     <AuthorMenu message={message} brains={brains} busy={busy} busyHint={BUSY_HINT} onSet={(as) => actions.setAuthor(message.id, as)} onOpenChange={setMenuOpen} />
   );
   const cloneMenu = <CloneMenu source={cloneSource} position={position} messageId={message.id} onOpenChange={setMenuOpen} />;
+  /** T20: compact through this message (any message but a compaction). */
+  const compactMenu = compaction ? null : (
+    <CompactMenu
+      messageId={message.id}
+      getConv={getConv}
+      busy={busy}
+      busyHint={BUSY_HINT}
+      actions={actions}
+      onPreview={onPreviewCompact}
+      onOpenChange={setMenuOpen}
+      onProblem={(p) => setHint(typeof p === "string" ? p : p.message)}
+    />
+  );
   /** A maker's message with no brain of its own (written before the setting, or with it off): "Make a brain". */
   const canMake = !!brain?.makes && !made;
   const links = (
@@ -247,6 +278,7 @@ export const MessageItem = memo(function MessageItem({
             {pinMenu}
             {!roll && authorMenu}
             {cloneMenu}
+            {compactMenu}
             <IconAction label={roll ? "Delete the roll" : "Delete"} blocked={busy} onClick={unlessBusy(() => setMode("delete"))}>
               <Trash2 aria-hidden className="size-3.5" />
             </IconAction>
@@ -320,6 +352,7 @@ export const MessageItem = memo(function MessageItem({
         time={v.createdAt}
         authored={v.source === "authored"}
         muse={muse ? { for: noteFor ?? null } : undefined}
+        compaction={compaction ? { newest: compaction === "newest", count: storyCount } : undefined}
         origin={
           count > 1 ? (
             <SteerNote
@@ -380,6 +413,19 @@ export const MessageItem = memo(function MessageItem({
                       <RefreshCw aria-hidden className="size-3.5" /> Regenerate
                     </button>
                   )}
+                  {compaction === "newest" && !canRegenerate && prevId && brain && (
+                    <CompactMenu
+                      messageId={prevId}
+                      getConv={getConv}
+                      busy={busy}
+                      busyHint={BUSY_HINT}
+                      actions={actions}
+                      onPreview={onPreviewCompact}
+                      onOpenChange={setMenuOpen}
+                      onProblem={(p) => setHint(typeof p === "string" ? p : p.message)}
+                      again={{ brainId: brain.id }}
+                    />
+                  )}
                   {canMake && !making && (
                     <button
                       type="button"
@@ -402,6 +448,7 @@ export const MessageItem = memo(function MessageItem({
                   {pinMenu}
                   {authorMenu}
                   {cloneMenu}
+                  {compactMenu}
                   <IconAction label="Delete" blocked={busy || paintingAny} onClick={unlessBusy(unlessPainting(paintingAny, () => setMode("delete")))}>
                     <Trash2 aria-hidden className="size-3.5" />
                   </IconAction>

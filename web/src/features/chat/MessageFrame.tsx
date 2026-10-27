@@ -1,4 +1,4 @@
-import { CornerDownRight, PenLine, Sparkles } from "lucide-react";
+import { CornerDownRight, PenLine, ScrollText, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
 import { cx } from "../../lib/cx.ts";
 import { clockTime, fullTime } from "../../lib/format.ts";
@@ -31,6 +31,10 @@ export function PlayerBubble({ children, footer, pending }: { children: ReactNod
  * badge: a sparkle and "Muse's note for Game Master" (the brain whose message follows it), "written by you" (a fresh
  * take's, or one you wrote as the Muse) or "its own idea" (the Muse's turn), and a dotted rail. It sits close above
  * the reply it is for.
+ *
+ * T20, `compaction`: a compaction (its brain's messages are compactions). It stands for every message before it, so
+ * it doesn't wear a speaker's badge either: a scroll in its brain's color, "Chronicler's compaction", what it stands
+ * for ("the story so far, 42 messages"), and, for the newest, that every request starts here; a double rail.
  */
 export function BrainMessageFrame({
   name,
@@ -43,6 +47,7 @@ export function BrainMessageFrame({
   children,
   footer,
   muse,
+  compaction,
 }: {
   name: string;
   color: string;
@@ -58,7 +63,16 @@ export function BrainMessageFrame({
   footer?: ReactNode;
   /** T17: a note from the Muse, for `for` (the brain whose message comes right after it), if any. */
   muse?: { for: { name: string; color: string } | null };
+  /** T20: a compaction: the newest (every request starts here) or an older one, and the messages it stands for (0: not known yet). */
+  compaction?: { newest: boolean; count: number };
 }) {
+  if (compaction) {
+    return (
+      <CompactionFrame name={name} color={color} time={time} authored={authored} status={status} origin={origin} reasoning={reasoning} footer={footer} compaction={compaction}>
+        {children}
+      </CompactionFrame>
+    );
+  }
   if (muse) {
     return (
       <MuseNoteFrame name={name} color={color} time={time} authored={authored} status={status} origin={origin} reasoning={reasoning} footer={footer} noteFor={muse.for}>
@@ -178,6 +192,77 @@ function MuseNoteFrame({
         {children}
       </div>
       {footer && <div className="ml-[6px] pl-[16px]">{footer}</div>}
+    </div>
+  );
+}
+
+function CompactionFrame({
+  name,
+  color,
+  time,
+  authored,
+  status,
+  origin,
+  reasoning,
+  children,
+  footer,
+  compaction,
+}: {
+  name: string;
+  color: string;
+  time?: string;
+  authored?: boolean;
+  status?: ReactNode;
+  origin?: ReactNode;
+  reasoning?: ReactNode;
+  children: ReactNode;
+  footer?: ReactNode;
+  compaction: { newest: boolean; count: number };
+}) {
+  const ink = `color-mix(in oklab, ${color} 62%, white)`;
+  const { newest, count } = compaction;
+  return (
+    <div className="group" data-compaction={newest ? "newest" : "older"}>
+      <div className="mb-1.5 flex min-w-0 items-center gap-2 text-[12px]">
+        <span
+          title={
+            newest
+              ? `${name}'s compaction: every brain's request starts here, with this summary standing in for the messages before it (they are kept, folded above). Edit it like any message; delete it to bring them back.`
+              : `An older compaction, above the newest one: left out of every request, like the messages around it.`
+          }
+          className="flex min-w-0 cursor-help items-center gap-1.5"
+        >
+          <ScrollText aria-hidden className="size-3.5 shrink-0" style={{ color }} />
+          <span className="shrink-0 font-medium" style={{ color: ink }}>
+            {name}'s compaction
+          </span>
+          {count > 0 && (
+            <span className="min-w-0 truncate text-faint">
+              · the story so far, {count} message{count === 1 ? "" : "s"}
+            </span>
+          )}
+        </span>
+        {status ??
+          (time && (
+            <time dateTime={time} title={fullTime(time)} className="shrink-0 text-[11.5px] text-faint tabular-nums">
+              {clockTime(time)}
+            </time>
+          ))}
+        {authored && !status && (
+          <span title={`You wrote this in ${name}'s mouth: a compaction like any other.`} className="flex shrink-0 cursor-help items-center gap-1 text-[11.5px] text-faint">
+            <span aria-hidden className="text-line-strong">
+              ·
+            </span>
+            <PenLine aria-hidden className="size-3" /> written by you
+          </span>
+        )}
+        {origin}
+      </div>
+      <div className="ml-[5px] border-l-[3px] border-double pl-[19px]" style={{ borderColor: `color-mix(in oklab, ${color} ${newest ? 60 : 35}%, transparent)` }}>
+        {reasoning}
+        {children}
+      </div>
+      {footer && <div className="ml-[5px] pl-[15px]">{footer}</div>}
     </div>
   );
 }

@@ -1,6 +1,6 @@
-import { ArrowUp, Check, ImageIcon, PenLine, Plus, Search, Sparkles, Square, X } from "lucide-react";
+import { ArrowUp, Check, ImageIcon, PenLine, Plus, ScrollText, Search, Sparkles, Square, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject, type SyntheticEvent } from "react";
-import { isMuse, STOP_BILL_NOTE, type Brain } from "../../api/types.ts";
+import { isCompactor, isMuse, STOP_BILL_NOTE, type Brain } from "../../api/types.ts";
 import { D20Icon } from "../../components/D20.tsx";
 import { Spinner } from "../../components/Spinner.tsx";
 import { cx } from "../../lib/cx.ts";
@@ -106,6 +106,8 @@ export function Composer({
   const paints = author?.kind === "image";
   /** T17: writing as the Muse: the words are a note every brain reads (an idea for the next reply). */
   const noting = !!author && !paints && isMuse(author);
+  /** T20: writing as a compaction brain: the words are a compaction, and every request starts at them. */
+  const summing = !!author && !paints && !noting && isCompactor(author);
   const empty = value.trim() === "";
   const several = brains.length > 1;
   /** The die is armed and this is a send (writing as someone adds words, with no roll). */
@@ -277,12 +279,20 @@ export function Composer({
                   ? `Your words become ${author.name}'s image prompt, word for word: the image model paints them, and every other brain sees them framed as ${author.name}'s prompt. No brain is asked to write anything.`
                   : noting && author
                     ? `A note from ${author.name}, in your words: every brain reads it framed as ${author.name}'s, and the next reply carries it out. In a \`\`\`hidden block it stays folded for you. Nothing is generated.`
+                    : summing && author
+                    ? `${author.name}'s messages are compactions: your words become the newest one, and every brain's request starts at them, leaving out the messages before (kept, folded). Nothing is generated.`
                     : author
                     ? `${author.name} sees these words as its own past reply; every other brain sees them framed with its name. Nothing is generated.`
                     : "Added as your own message. No brain is asked to reply."
               }
             >
-              {paints ? "· your words are its prompt, painted as written" : noting ? "· a note every brain reads; nothing is generated" : "· nothing is generated"}
+              {paints
+                ? "· your words are its prompt, painted as written"
+                : noting
+                  ? "· a note every brain reads; nothing is generated"
+                  : summing
+                    ? "· a compaction: every request starts at it"
+                    : "· nothing is generated"}
             </span>
             <button
               type="button"
@@ -509,6 +519,9 @@ function chipTitle(b: Brain, empty: boolean, roll: boolean, key = ""): string {
   if (isMuse(b) && !image && !roll) {
     return `${empty ? `Ask ${b.name} for an idea` : `Send to ${b.name}`}: it answers with a hidden note, an idea for the next reply, which every brain reads${key}`;
   }
+  if (isCompactor(b) && !roll) {
+    return `${empty ? `Ask ${b.name} to compact the story so far` : `Send to ${b.name}`}: it sums up everything up to here in one message, and every brain's request starts at that summary from then on${key}`;
+  }
   return roll
     ? `${empty ? "Roll a d20 and send it" : "Send your words and a d20 roll"} to ${b.name}${image ? ": it paints a picture, with the roll as its note" : ""}${key}`
     : image
@@ -533,11 +546,11 @@ function ChipMeasurer({ measurer, brains, labels, roll }: { measurer: RefObject<
           <span key={b.id} className="contents">
             <span data-measure="full" className={cx(base, "gap-1.5 px-2", roll ? "max-w-[13rem]" : "max-w-[11rem]")}>
               {roll && <D20Icon className="size-3.5 shrink-0" strokeWidth={1.9} />}
-              {b.kind === "image" || isMuse(b) ? <ImageIcon className="size-3.5 shrink-0" /> : roll ? null : <span className="size-1.5 shrink-0" />}
+              {b.kind === "image" || isMuse(b) || isCompactor(b) ? <ImageIcon className="size-3.5 shrink-0" /> : roll ? null : <span className="size-1.5 shrink-0" />}
               <span className="truncate">{b.name}</span>
             </span>
             <span data-measure="initials" className={cx(base, "gap-1 px-1.5")}>
-              {(b.kind === "image" || isMuse(b)) && <ImageIcon className="size-3.5 shrink-0" />}
+              {(b.kind === "image" || isMuse(b) || isCompactor(b)) && <ImageIcon className="size-3.5 shrink-0" />}
               <span className="tracking-[0.03em]">{labels[i]}</span>
             </span>
           </span>
@@ -660,6 +673,7 @@ function MoreBrains({
                 <BrainBadge name={b.name} color={b.color} className="min-w-0" />
                 {b.kind === "image" && <ImageIcon aria-label="(paints)" className="size-3.5 shrink-0 text-faint" />}
                 {isMuse(b) && b.kind === "text" && <Sparkles aria-label="(writes ideas)" className="size-3.5 shrink-0 text-faint" />}
+                {isCompactor(b) && <ScrollText aria-label="(compacts)" className="size-3.5 shrink-0 text-faint" />}
                 {fresh.has(b.id) && <span className="ml-auto shrink-0 text-[11px] text-faint">new</span>}
               </button>
             ))}
@@ -706,6 +720,8 @@ function BrainChip({
   const image = b.kind === "image";
   /** T17: the Muse writes ideas (hidden notes), not lines of the story: a sparkle where a speaker has its dot. */
   const muse = !image && isMuse(b);
+  /** T20: a compaction brain sums up the story: a scroll where a speaker has its dot. */
+  const compacts = !muse && isCompactor(b);
   const key = index < 9 ? ` (⌥${index + 1})` : "";
   const title = chipTitle(b, empty, roll, key);
   const ink = `color-mix(in oklab, ${b.color} 55%, white)`;
@@ -713,6 +729,8 @@ function BrainChip({
     <ImageIcon aria-hidden className="size-3.5 shrink-0" style={{ color: b.color }} />
   ) : muse ? (
     <Sparkles aria-hidden className="size-3.5 shrink-0" style={{ color: b.color }} />
+  ) : compacts ? (
+    <ScrollText aria-hidden className="size-3.5 shrink-0" style={{ color: b.color }} />
   ) : null;
   const whole = (
     <>
@@ -746,6 +764,10 @@ function BrainChip({
               ? empty
                 ? `Ask ${b.name} for an idea`
                 : `Send to ${b.name} for an idea`
+              : compacts
+                ? empty
+                  ? `Ask ${b.name} to compact the story`
+                  : `Send to ${b.name}, which compacts the story`
               : empty
                 ? `Ask ${b.name} to respond`
                 : `Send to ${b.name}`
@@ -885,6 +907,7 @@ function WriteAsMenu({
               <BrainBadge name={b.name} color={b.color} className="min-w-0" />
               {b.kind === "image" && <span className="shrink-0 text-[11.5px] text-faint">image prompt</span>}
               {b.kind === "text" && isMuse(b) && <span className="shrink-0 text-[11.5px] text-faint">a note</span>}
+              {isCompactor(b) && !isMuse(b) && <span className="shrink-0 text-[11.5px] text-faint">a compaction</span>}
               {current === b.id && <Check aria-hidden className="ml-auto size-3.5 text-muted" />}
             </button>
           ))}

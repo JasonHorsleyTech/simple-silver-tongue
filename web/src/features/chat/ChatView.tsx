@@ -11,7 +11,7 @@ import { drafts } from "../../lib/drafts.ts";
 import { Link } from "../../lib/router.tsx";
 import { readLocal, writeLocal } from "../../lib/storage.ts";
 import { useMediaQuery } from "../../lib/useMediaQuery.ts";
-import { DEFAULT_SETUP_LABEL, type Brain, type Conversation } from "../../api/types.ts";
+import { DEFAULT_SETUP_LABEL, isCompactor, type Brain, type Conversation } from "../../api/types.ts";
 import { BrainTags } from "../conversations/Cast.tsx";
 import { PayloadDialog, type PayloadRequest } from "../payload/PayloadDialog.tsx";
 import { SETTINGS_TABS, SettingsPanel, type SettingsTab } from "../settings/SettingsPanel.tsx";
@@ -19,7 +19,7 @@ import { BrainBadge } from "./BrainBadge.tsx";
 import { ChatHeader } from "./ChatHeader.tsx";
 import { DamagedFile } from "./DamagedFile.tsx";
 import { AS_PLAYER, Composer } from "./Composer.tsx";
-import { Scrollback } from "./Scrollback.tsx";
+import { revealMessage, Scrollback } from "./Scrollback.tsx";
 import { FailureDetails } from "./FailureDetails.tsx";
 import { useChat, type RegenerateAsk } from "./useChat.ts";
 
@@ -47,11 +47,13 @@ export function ChatView({ id }: { id: string }) {
   const [writeAs, setWriteAsState] = useState<string | null>(null);
   /** T09: the die is armed: the next send rolls a d20 after the composer's words, and then switches it off. */
   const [roll, setRoll] = useState(false);
-  const [payload, setPayload] = useState<{ kind: "turn"; brainId: string | null } | Extract<PayloadRequest, { kind: "regenerate" }> | null>(null);
+  const [payload, setPayload] = useState<{ kind: "turn"; brainId: string | null } | Extract<PayloadRequest, { kind: "regenerate" | "compact" }> | null>(null);
   const previewRegenerate = useCallback(
     (messageId: string, ask: RegenerateAsk) => setPayload({ kind: "regenerate", messageId, steer: ask.steer ?? "", ...(ask.thought !== undefined ? { thought: ask.thought } : {}) }),
     [],
   );
+  /** T20: "Compact through here"'s payload: prompt.preview --compact. */
+  const previewCompact = useCallback((messageId: string, brainId: string) => setPayload({ kind: "compact", messageId, brainId }), []);
   const docked = useMediaQuery("(min-width: 1180px)");
   /** T16: a brain card to open in Settings → Brains (a message's made brain, a brain it is pinned to). */
   const [focusBrain, setFocusBrain] = useState<{ id: string; nonce: number } | null>(null);
@@ -130,6 +132,7 @@ export function ChatView({ id }: { id: string }) {
   const jumpToMessage = useCallback(
     (messageId: string) => {
       if (!docked) toggleSettings(false);
+      revealMessage(messageId); // T20: a message in the fold above the newest compaction opens it first
       setTimeout(() => {
         const box = document.querySelector<HTMLElement>("[data-scrollback]");
         const el = document.getElementById(messageId);
@@ -227,7 +230,11 @@ export function ChatView({ id }: { id: string }) {
   const live = chat.live;
   const liveBrain = live?.brainName ?? brain.name;
   const status =
-    live?.kind === "regenerate" && live.messageId
+    live?.compact
+      ? live.kind === "regenerate"
+        ? `${liveBrain} is writing its compaction again`
+        : `${liveBrain} is summing up the story`
+      : live?.kind === "regenerate" && live.messageId
       ? `${liveBrain} is writing version ${(conv.messages.find((m) => m.id === live.messageId)?.versions.length ?? 0) + 1}${live.image ? "'s prompt" : ""}`
       : live?.image
         ? `${liveBrain} is writing an image prompt`
@@ -273,6 +280,7 @@ export function ChatView({ id }: { id: string }) {
           chat={chat}
           onRetry={() => void chat.retry()}
           onPreviewRegenerate={previewRegenerate}
+          onPreviewCompact={previewCompact}
           onOpenBrain={openBrain}
           empty={
             <EmptyConversation
@@ -343,10 +351,10 @@ export function ChatView({ id }: { id: string }) {
         <PayloadDialog
           conversationId={conv.id}
           brains={conv.brains}
-          brainId={payload.kind === "regenerate" ? brainOf(payload.messageId).id : (payload.brainId ?? brain.id)}
+          brainId={payload.kind === "regenerate" ? brainOf(payload.messageId).id : payload.kind === "compact" ? payload.brainId : (payload.brainId ?? brain.id)}
           // In "write as" mode the composer's text isn't a message to anyone, so it isn't in the preview. An armed
           // die is (T09): the preview then has the roll's line, with {{roll}} where the number will go.
-          request={payload.kind === "regenerate" ? payload : { kind: "turn", draft: writeAs ? "" : draft, roll: roll && !writeAs }}
+          request={payload.kind === "turn" ? { kind: "turn", draft: writeAs ? "" : draft, roll: roll && !writeAs } : payload}
           onClose={() => setPayload(null)}
         />
       )}
@@ -437,7 +445,7 @@ function EmptyConversation({
             {conv.brains.map((b) => (
               <span key={b.id} className="inline-flex max-w-full items-center gap-1">
                 <BrainBadge name={b.name} color={b.color} />
-                <BrainTags kind={b.kind} reasoning={b.reasoning.enabled ? b.reasoning.effort : null} makes={b.makes?.enabled ? b.makes.name : null} models={{ text: b.textModel, image: b.kind === "image" ? b.imageModel : null }} />
+                <BrainTags kind={b.kind} reasoning={b.reasoning.enabled ? b.reasoning.effort : null} makes={b.makes?.enabled ? b.makes.name : null} models={{ text: b.textModel, image: b.kind === "image" ? b.imageModel : null }} compacts={isCompactor(b)} />
               </span>
             ))}
           </span>

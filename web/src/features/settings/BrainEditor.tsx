@@ -1,4 +1,4 @@
-import { Braces, BrainCircuit, LocateFixed, Plus, Sparkles, Star, Trash2 } from "lucide-react";
+import { Braces, BrainCircuit, LocateFixed, Plus, ScrollText, Sparkles, Star, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
@@ -8,6 +8,8 @@ import { Notice } from "../../components/Notice.tsx";
 import { SavedLine } from "../../components/SavedLine.tsx";
 import { Segmented } from "../../components/Segmented.tsx";
 import { Spinner } from "../../components/Spinner.tsx";
+import { Switch } from "../../components/Switch.tsx";
+import { cutMovedWords } from "../../lib/compaction.ts";
 import { cx } from "../../lib/cx.ts";
 import { BrainBadge } from "../chat/BrainBadge.tsx";
 import { BrainModels } from "./BrainModels.tsx";
@@ -19,7 +21,7 @@ import { PromptFields, ReasoningFields } from "./PromptFields.tsx";
 /**
  * One brain, in full: who it is (name, color, kind, default), its models (T18: the conversation's, or its own), then every text that shapes what it is sent
  * (system prompt, its pinned messages, reasoning, final reminder, stop sequences, and an image brain's safe mode and
- * tool text), then (T16) whether it makes brains and their blueprint, then delete. A brain made by another says so at
+ * tool text), then (T20) whether its messages are compactions, then (T16) whether it makes brains and their blueprint, then delete. A brain made by another says so at
  * the top: its words are its own copy of that blueprint. Long texts save on purpose (Save / ⌘ Enter); switches,
  * colors and kind save on click.
  */
@@ -75,14 +77,23 @@ export function BrainEditor({
   const [confirmDelete, setConfirmDelete] = useState(false);
   /** T17: the last rename made this brain the Muse, or made it stop being the Muse (said under the name). */
   const [museChange, setMuseChange] = useState<"left" | "became" | null>(null);
+  /** T20: the compactions switch moved where every request starts: said under it. */
+  const [cutNote, setCutNote] = useState<string | null>(null);
+
+  /** brain.update, minus the T20 `cutMoved` it may carry (said under the compactions switch). */
+  async function save(patch: BrainFields) {
+    const { cutMoved, ...saved } = await api.call("brain.update", { conversation: conversationId, brain: brain.id, ...patch });
+    onSaved(saved);
+    if (patch.compacts !== undefined) setCutNote(cutMoved ? cutMovedWords(cutMoved, { brains, messages }) : null);
+  }
 
   /** brain.update. Text fields (no `what`) show their own error inline; clicks show it at the bottom. */
   async function update(patch: BrainFields, what?: string) {
-    if (!what) return onSaved(await api.call("brain.update", { conversation: conversationId, brain: brain.id, ...patch }));
+    if (!what) return save(patch);
     setBusy(what);
     setError(null);
     try {
-      onSaved(await api.call("brain.update", { conversation: conversationId, brain: brain.id, ...patch }));
+      await save(patch);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -259,6 +270,39 @@ export function BrainEditor({
           />
         }
       />
+
+      {/* T20: a text brain's messages can be compactions (the Tabletop RPG preset's Chronicler). */}
+      {brain.kind === "text" && (
+        <div className="rounded-lg border border-line bg-canvas/40 p-3.5">
+          <Switch
+            id={id("compacts")}
+            checked={!!brain.compacts}
+            busy={busy === "compacts"}
+            onChange={(on) => void update({ compacts: on }, "compacts")}
+            label={
+              <span className="inline-flex items-center gap-1.5">
+                <ScrollText aria-hidden className="size-3.5 text-faint" /> Its messages are compactions
+              </span>
+            }
+            description={
+              brain.compacts
+                ? `Each message ${brain.name} writes sums up the story so far, and every brain's request starts at the newest one: the messages before it are left out (kept, folded in the chat). “Compact through here” on any message asks ${brain.name} for one.`
+                : `A compaction sums up the story so far in one message, and every brain's request then starts at it, leaving out the messages before it (kept, folded in the chat): smaller requests on a long story. Switch it on for a brain whose job that is.${
+                    messageCount === 1
+                      ? ` ${brain.name}'s one message would become a compaction at once.`
+                      : messageCount > 1
+                        ? ` ${brain.name}'s ${messageCount} messages would all become compactions at once.`
+                        : ""
+                  }`
+            }
+          />
+          {cutNote && (
+            <p role="status" className="mt-2 text-[12.5px] leading-5 text-muted">
+              {cutNote} {brain.compacts ? "Not what you meant? Switch it off again to undo it." : ""}
+            </p>
+          )}
+        </div>
+      )}
 
       <MakerSettings
         brain={brain}

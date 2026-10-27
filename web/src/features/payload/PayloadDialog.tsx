@@ -1,8 +1,8 @@
-import { Check, Copy, Pin, RotateCw, Sparkles } from "lucide-react";
+import { Check, Copy, Gauge, Pin, RotateCw, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import { isAllHidden, PIN_AS_WORDS, ROLL_PREVIEW_NOTE, stopNote, type Brain, type ChatMessage, type ModelUse, type PinRole, type Preview } from "../../api/types.ts";
+import { ESTIMATE_NOTE, isAllHidden, PIN_AS_WORDS, ROLL_PREVIEW_NOTE, stopNote, type Brain, type ChatMessage, type ModelUse, type PinRole, type Preview } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { D20Icon } from "../../components/D20.tsx";
 import { Dialog } from "../../components/Dialog.tsx";
@@ -15,9 +15,13 @@ import { BrainBadge } from "../chat/BrainBadge.tsx";
 
 /**
  * Which request to show: the next Send (with the unsent composer text, and a roll when the die is armed), or a
- * Regenerate with its steer, or (T15) a fresh take with its thought (T17: the Muse's note), exactly as the box holds it.
+ * Regenerate with its steer, or (T15) a fresh take with its thought (T17: the Muse's note), exactly as the box holds it,
+ * or (T20) "Compact through here" on a message, with a compaction brain.
  */
-export type PayloadRequest = { kind: "turn"; draft: string; roll?: boolean } | { kind: "regenerate"; messageId: string; steer: string; thought?: string };
+export type PayloadRequest =
+  | { kind: "turn"; draft: string; roll?: boolean }
+  | { kind: "regenerate"; messageId: string; steer: string; thought?: string }
+  | { kind: "compact"; messageId: string; brainId: string };
 
 /**
  * "Exact payload": prompt.preview for one brain, which is built by the same code path that turn and
@@ -37,6 +41,10 @@ export type PayloadRequest = { kind: "turn"; draft: string; roll?: boolean } | {
  *
  * T18: which model the request uses, and whose it is (the brain's own, or the conversation's), above everything else:
  * `preview.models`, the text model and an image brain's image model.
+ *
+ * T20: how big the request is, before it is sent (`preview.size`: an estimate, which says so), beside the brain's last
+ * real count from Venice; the compaction notes (where the request starts, what {{count}} was sent as, what a
+ * compaction does) are information, not warnings.
  */
 export function PayloadDialog({
   conversationId,
@@ -60,11 +68,13 @@ export function PayloadDialog({
   const [copied, setCopied] = useState(false);
   const [withRoll, setWithRoll] = useState(request.kind === "turn" && request.roll === true);
   const regen = request.kind === "regenerate" ? request : null;
+  const comp = request.kind === "compact" ? request : null;
   const draft = request.kind === "turn" ? request.draft : "";
   const withDraft = draft.trim() !== "";
   const thought = regen?.thought;
   const steer = thought === undefined ? (regen?.steer.trim() ?? "") : "";
   const regenId = regen?.messageId;
+  const compId = comp?.messageId;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -72,14 +82,16 @@ export function PayloadDialog({
     try {
       const args = regenId
         ? { conversation: conversationId, regenerate: true, message: regenId, ...(steer ? { steer } : {}), ...(thought !== undefined ? { thought } : {}) }
-        : { conversation: conversationId, brain: brain.id, ...(withDraft ? { content: draft } : {}), ...(withRoll ? { roll: true } : {}) };
+        : compId
+          ? { conversation: conversationId, compact: true, message: compId, brain: brain.id }
+          : { conversation: conversationId, brain: brain.id, ...(withDraft ? { content: draft } : {}), ...(withRoll ? { roll: true } : {}) };
       setPreview(await api.call("prompt.preview", args));
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, [conversationId, brain.id, draft, withDraft, withRoll, regenId, steer, thought]);
+  }, [conversationId, brain.id, draft, withDraft, withRoll, regenId, steer, thought, compId]);
 
   useEffect(() => {
     void load();
@@ -98,11 +110,18 @@ export function PayloadDialog({
       onClose={onClose}
       title={
         <span className="inline-flex items-center gap-2">
-          {regen ? "Regenerate payload" : "Exact payload"} {(regen || brains.length === 1) && <BrainBadge name={brain.name} color={brain.color} />}
+          {regen ? "Regenerate payload" : comp ? "Compaction payload" : "Exact payload"} {(regen || comp || brains.length === 1) && <BrainBadge name={brain.name} color={brain.color} />}
         </span>
       }
       subtitle={
-        regen ? (
+        comp ? (
+          <>
+            <code className="font-mono text-[11.5px] text-muted">POST /chat/completions</code>, exactly as Compact would make it
+            {preview?.compact?.newVersion ? ` (version ${preview.compact.newVersion} of the compaction)` : ""}, minus the API key. {brain.name} reads the
+            story up to and including the message, from its own point of view{preview?.cut ? ", which starts at the compaction before" : ""}, and its reply goes in
+            right after it.
+          </>
+        ) : regen ? (
           <>
             <code className="font-mono text-[11.5px] text-muted">POST /chat/completions</code>, exactly as Regenerate would make it
             {preview?.regenerate ? ` (version ${preview.regenerate.newVersion})` : ""}, minus the API key.{" "}
@@ -146,7 +165,7 @@ export function PayloadDialog({
               </button>
             ))}
           </div>
-          {!regen && (
+          {!regen && !comp && (
             <button
               type="button"
               aria-pressed={withRoll}
@@ -189,6 +208,7 @@ export function PayloadDialog({
       ) : preview && body ? (
         <div className={cx("space-y-4 transition-opacity", loading && "opacity-60")} aria-busy={loading || undefined}>
           {preview.models && <ModelsLine models={preview.models} brainName={preview.brainName} />}
+          {preview.size && <SizeLine size={preview.size} brainName={preview.brainName} />}
           {preview.notes.map((n) => (
             // The stop note says what a visible setting does; the rest warn of something we can't see or that will fail.
             // T16: the pin and maker notes say what a visible setting does, too.
@@ -199,6 +219,7 @@ export function PayloadDialog({
                 (body.stop?.length && n === stopNote(body.stop)) ||
                 n === ROLL_PREVIEW_NOTE ||
                 isT16Note(n, preview.brainName) ||
+                isT20Note(n, preview.brainName) ||
                 (note && n === preview.notes[0] && noteText !== undefined && isAllHidden(noteText)) ||
                 (note && n.startsWith(`${note.muse} makes a brain`))
                   ? "info"
@@ -210,7 +231,7 @@ export function PayloadDialog({
           ))}
           {preview.refusal && (
             <Notice tone="info">
-              <strong className="font-medium text-fg">{regen ? "Regenerate" : "Send"} would refuse this as it stands.</strong> {preview.refusal}
+              <strong className="font-medium text-fg">{regen ? "Regenerate" : comp ? "Compact" : "Send"} would refuse this as it stands.</strong> {preview.refusal}
             </Notice>
           )}
           {view === "json" ? (
@@ -355,6 +376,49 @@ const ROLE_TONE: Record<ChatMessage["role"], string> = {
   assistant: "text-emerald-200/90 bg-emerald-300/[0.07] border-emerald-300/20",
   tool: "text-violet-200/90 bg-violet-300/[0.08] border-violet-300/20",
 };
+
+/**
+ * T20: how big this request is before it is sent (an estimate, and it says so), and the brain's last real count from
+ * Venice beside it: what tells you when to compact.
+ */
+function SizeLine({ size, brainName }: { size: Preview["size"]; brainName: string }) {
+  const n = (x: number) => x.toLocaleString("en-US");
+  const last = size.last;
+  return (
+    <div className="space-y-0.5 text-[12.5px] leading-5" aria-label="Size">
+      <p className="flex flex-wrap items-baseline gap-x-1.5" title={ESTIMATE_NOTE}>
+        <Gauge aria-hidden className="size-3.5 shrink-0 translate-y-[2px] text-faint" />
+        <span className="text-faint">Size</span>
+        <span className="text-fg tabular-nums">about {n(size.tokens)} prompt tokens</span>
+        <span className="text-faint">
+          · an estimate, from its {n(size.chars)} characters{size.contextLength ? ` · the model takes ${n(size.contextLength)}` : ""}
+        </span>
+      </p>
+      <p className="pl-5 text-faint">
+        {last ? (
+          <>
+            Venice counted <span className="text-muted tabular-nums">{n(last.promptTokens)}</span>
+            {last.cachedTokens ? <> ({n(last.cachedTokens)} cached)</> : null} for {brainName}'s last reply,{" "}
+            {last.messagesAgo === 0 ? "the newest message" : `${last.messagesAgo} message${last.messagesAgo === 1 ? "" : "s"} ago`}
+            {last.beforeCut ? ", before the newest compaction was written" : ""}.
+          </>
+        ) : (
+          `No reply of ${brainName}'s has been counted by Venice yet.`
+        )}
+      </p>
+    </div>
+  );
+}
+
+/** T20: where a request starts (cutNote), what {{count}} was sent as (countNote), what a compaction does (compactNote, compactsNote): information. */
+function isT20Note(n: string, brainName: string): boolean {
+  return (
+    n.startsWith("Compacted: this request starts at ") ||
+    n.startsWith("The final reminder's {{count}} is sent as ") ||
+    n.startsWith("A compaction through ") ||
+    n.startsWith(`${brainName}'s messages are compactions: `)
+  );
+}
 
 /** T16: the payload notes on pinned messages (pinnedNote) and on a maker's side effect (makesNote): information, not warnings. */
 function isT16Note(n: string, brainName: string): boolean {

@@ -2,7 +2,7 @@ import { Braces, BrainCircuit, ChevronDown, Plus, Search, X } from "lucide-react
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api } from "../../api/client.ts";
 import { errorMessage } from "../../api/errors.ts";
-import { DEFAULT_SHAPE, isMuse, MAKES_NUMBER, type Brain, type BrainImport, type Conversation, type ImageShape } from "../../api/types.ts";
+import { DEFAULT_SHAPE, isCompactor, isMuse, MAKES_NUMBER, type Brain, type BrainImport, type Conversation, type ImageShape } from "../../api/types.ts";
 import { Button } from "../../components/Button.tsx";
 import { Notice } from "../../components/Notice.tsx";
 import { Segmented } from "../../components/Segmented.tsx";
@@ -275,6 +275,8 @@ function BrainCard({
     isDefault && "default",
     // T17: the brain called Muse writes the fresh takes' notes (an image brain called Muse stops them: its editor says why).
     isMuse(brain) && (brain.kind === "text" ? "writes fresh takes' notes" : "can't write fresh takes' notes"),
+    // T20: its messages are compactions: every request starts at its newest.
+    isCompactor(brain) && "compacts",
     brain.makes && `makes ${brain.makes.name.replace(MAKES_NUMBER, "N")}${brain.makes.enabled ? "" : " (off)"}`,
     // A made brain always has the message it was made from pinned: only more than that is news.
     extraPins > 0 && `${extraPins} pinned${brain.madeFrom ? " more" : ""}`,

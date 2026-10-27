@@ -294,7 +294,8 @@ function MakeForm({ maker, brains, onMake, onCancel }: { maker: Brain; brains: B
 /**
  * A footer icon that opens a small menu over the scrollback, above or below the button, whichever has more room in
  * the scroll box. Closes on Escape, a click outside, or `close()` from its content. `role="dialog"` is for a small
- * form instead of a list (Clone from here): the arrow keys are then the fields' own.
+ * form instead of a list (Clone from here): the arrow keys are then the fields' own. `trigger` (T20: "Compact again",
+ * a labeled button) replaces the footer icon.
  */
 export function FooterMenu({
   label,
@@ -302,6 +303,7 @@ export function FooterMenu({
   active,
   role = "menu",
   onOpenChange,
+  trigger,
   children,
 }: {
   label: string;
@@ -309,6 +311,7 @@ export function FooterMenu({
   active?: boolean;
   role?: "menu" | "dialog";
   onOpenChange?(open: boolean): void;
+  trigger?(open: boolean, toggle: () => void): ReactNode;
   children(close: () => void): ReactNode;
 }) {
   const [open, setOpenState] = useState(false);
@@ -351,9 +354,13 @@ export function FooterMenu({
   }, [open]);
   return (
     <span ref={box} className="relative">
-      <IconAction label={label} active={open || active} onClick={() => setOpen(!open)}>
-        {icon}
-      </IconAction>
+      {trigger ? (
+        trigger(open, () => setOpen(!open))
+      ) : (
+        <IconAction label={label} active={open || active} onClick={() => setOpen(!open)}>
+          {icon}
+        </IconAction>
+      )}
       {open && (
         <div
           data-menu
