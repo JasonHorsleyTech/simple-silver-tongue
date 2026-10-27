@@ -38,7 +38,7 @@ import { badRequest, CommandError, notFound } from "../lib/errors.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { activeVersion } from "../conversations/prompt.ts";
 import { lastCount, type PromptSizes } from "../conversations/size.ts";
-import { compactionCut } from "../conversations/compaction.ts";
+import { compactionCut, isCompactor } from "../conversations/compaction.ts";
 import { table } from "../lib/text.ts";
 import { command, streamCommand, type Ctx, type StreamEvent } from "../registry.ts";
 import { closeVault, forkVault, type Vault } from "../storage/vault.ts";
@@ -282,8 +282,11 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
     for (const message of added) yield { type: "message", message };
   }
   const messageId = newId("m");
+  // T20: a compaction brain's reply is a compaction through the last message, as message.compact's would be: say so.
+  const through = isCompactor(plan.brain) ? (added.at(-1) ?? conv.messages.at(-1))?.id : undefined;
+  const compact = through ? { compact: { through } } : {};
   // The title lets the CLI say which campaign SST_CONVERSATION sent this to (T07 QA-6).
-  yield { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId, kind: plan.brain.kind, ...modelOf(plan), conversationTitle: conv.title };
+  yield { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId, kind: plan.brain.kind, ...modelOf(plan), ...compact, conversationTitle: conv.title };
 
   const kept = plan.player && plan.roll ? "Your message and your roll are" : plan.roll ? "Your roll is" : plan.player ? "Your message is" : null;
   // Name the brain: with several, a bare "turn" goes to the default brain, which may be another one (T04 QA-1).
@@ -313,7 +316,7 @@ async function* turnEvents(args: z.output<typeof turnArgs>, ctx: Ctx, gen: Gener
     return { messageId, version: 0 };
   });
   if (made) yield brainMade(made, message.id);
-  yield { type: "done", message, note: replyNote(plan.brain.name, reply, plan.body.stop), spentUsd };
+  yield { type: "done", message, note: replyNote(`${plan.brain.name}${through ? ` · compaction through ${through}` : ""}`, reply, plan.body.stop), spentUsd };
 }
 
 /**

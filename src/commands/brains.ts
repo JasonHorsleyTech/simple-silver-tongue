@@ -5,7 +5,8 @@ import { REASONING_NOTE, resolveBrain } from "../conversations/prompt.ts";
 import { assertBrainIdle, loadConversation, mutateConversation } from "../conversations/store.ts";
 import { lookupModel } from "../conversations/turn.ts";
 import { imageModelOf, PIN_ROLES, textModelOf, type Brain, type BrainBlueprint, type Conversation, type ImageShape, type PinRole, type Settings } from "../conversations/types.ts";
-import { FRAMING_STOP, MAKES_NUMBER, MAX_STOPS, PIN_AS_WORDS, STOP_REASONING_NOTE } from "../conversations/wording.ts";
+import { cutAt, cutMove, isCompactor, type CutMoved } from "../conversations/compaction.ts";
+import { cutMovedLine, FRAMING_STOP, MAKES_NUMBER, MAX_STOPS, PIN_AS_WORDS, STOP_REASONING_NOTE } from "../conversations/wording.ts";
 import { DEFAULT_SHAPE, IMAGE_SHAPES } from "../images/request.ts";
 import { badRequest, CommandError, conflict, notFound } from "../lib/errors.ts";
 import { command, type Ctx } from "../registry.ts";
@@ -319,7 +320,7 @@ export function brainLine(b: Brain, conv?: { defaultBrainId?: string; settings?:
   if (b.kind === "image") bits.push(`safe mode ${b.safeMode === false ? "off" : "on"}`, b.shape ?? DEFAULT_SHAPE);
   if (b.pins?.length) bits.push(`${b.pins.length} pinned`);
   if (b.makes) bits.push(`makes "${b.makes.name}"${b.makes.enabled ? "" : " (off)"}`);
-  if (b.compacts) bits.push("compacts"); // T20
+  if (isCompactor(b)) bits.push("compacts"); // T20 (a hand-edited image brain with the flag doesn't compact)
   return bits.join(" · ");
 }
 
@@ -335,7 +336,7 @@ function nextFree(conv: Pick<Conversation, "brains">, m: NonNullable<Brain["make
 /** T16: brain.list's lines for a brain's pins and its maker setting, every word of the blueprint included. */
 function pinAndMakerLines(b: Brain, conv: { messages: Array<{ id: string; author: Conversation["messages"][number]["author"] }>; brains: Brain[] }): string[] {
   const out: string[] = [];
-  if (b.compacts) out.push("Its messages are compactions (T20): every brain's request starts at the newest compaction, and the messages before it are left out (kept in the ledger; their pins still reach their brains).");
+  if (isCompactor(b)) out.push("Its messages are compactions (T20): every brain's request starts at the newest compaction, and the messages before it are left out (kept in the ledger; their pins still reach their brains).");
   if (b.madeFrom) out.push(`Made from ${b.madeFrom}.`);
   if (b.pins.length) {
     out.push("Pinned (sent right after the setup messages, not at their place):");
@@ -525,7 +526,7 @@ the conversation's. prompt.preview --brain shows which model, and whose.`,
     "./sst brain.update --conversation c_k3j9x0q2ma --brain \"Character Creator\" --no-makes.enabled   # keep the setting, make nothing",
     "./sst brain.update --conversation c_k3j9x0q2ma --brain \"Character Creator\" --makes @makes.json   # the whole setting as JSON",
   ],
-  handler: async (args, ctx): Promise<Brain> => {
+  handler: async (args, ctx): Promise<Brain & { cutMoved?: CutMoved }> => {
     const { vault } = ctx.requireSession();
     const fields = ["name", "color", "systemPrompt", "reasoning", "finalReminder", "kind", "safeMode", "shape", "tool", "stop", "makes", "compacts", "textModel", "imageModel"] as const;
     if (!fields.some((f) => args[f] !== undefined)) {
@@ -536,6 +537,7 @@ the conversation's. prompt.preview --brain shows which model, and whose.`,
     await checkBrainModels(ctx, [args]); // T18: before anything is written
     const { result } = await mutateConversation(vault, args.conversation, (c) => {
       const brain = resolveBrain(c, args.brain);
+      const cutFrom = cutAt(c); // T20: --compacts on a brain that has spoken moves where every request starts
       if (args.name !== undefined) checkName(c, args.name, brain);
       if (args.kind !== undefined && args.kind !== brain.kind) {
         const n = messagesBy(c, brain);
@@ -564,11 +566,15 @@ the conversation's. prompt.preview --brain shows which model, and whose.`,
       if (args.stop) brain.stop = args.stop;
       applyMakes(brain, args.makes);
       applyCompacts(brain, args.compacts);
-      return brain;
+      const moved = cutMove(c, cutFrom);
+      return moved.cutMoved ? { ...brain, ...moved } : brain;
     });
     return result;
   },
-  format: (b: Brain) => `Updated brain ${brainLine(b)} · system prompt ${b.systemPrompt.length} chars${reasoningNotes(b)}`,
+  format: (b: Brain & { cutMoved?: CutMoved }) =>
+    `Updated brain ${brainLine(b)} · system prompt ${b.systemPrompt.length} chars${reasoningNotes(b)}${
+      b.cutMoved ? `\n${cutMovedLine(b.cutMoved)}${b.compacts ? ` Not what you meant? --no-compacts undoes it.` : ""}` : ""
+    }`,
 });
 
 export const brainDelete = command({

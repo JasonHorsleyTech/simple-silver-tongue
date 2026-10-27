@@ -169,7 +169,7 @@ describe("compaction (T20): the cut in prompt assembly", () => {
   });
 
   test("the size estimate and the last real count", () => {
-    const { conv, gm, alice, add, by } = table();
+    const { conv, gm, alice, chron, add, by } = table();
     const body = buildRequest(conv, gm.id, { model: DEEPSEEK });
     const chars = body.messages.reduce((n, m) => n + m.content.length, 0);
     assert.deepEqual(estimateSize(body), { chars, tokens: Math.ceil(chars / 4.4) + 4 * body.messages.length });
@@ -180,6 +180,14 @@ describe("compaction (T20): the cut in prompt assembly", () => {
     add({ type: "player" }, "and then");
     assert.deepEqual(lastCount(conv, gm.id), { messageId: r1.id, version: 2, at: "2026-10-27T02:00:00.000Z", promptTokens: 950, completionTokens: 12, messagesAgo: 1 });
     assert.equal(lastCount(conv, alice.id), null, "authored lines have no count");
+
+    // T20 QA-2: a compaction re-rolled at depth keeps its message's createdAt; its newer version is when it was written.
+    const c1 = newMessage(by(chron), "text", { content: "SUMMARY", source: "generated", createdAt: "2026-10-27T00:30:00.000Z" });
+    conv.messages.splice(1, 0, c1);
+    assert.equal(lastCount(conv, gm.id)!.beforeCut, undefined, "counted after the compaction was written");
+    c1.versions.push({ content: "SUMMARY, again", source: "generated", createdAt: "2026-10-27T03:00:00.000Z" });
+    c1.activeVersion = 1;
+    assert.equal(lastCount(conv, gm.id)!.beforeCut, true, "its new version came after the count");
   });
 });
 
@@ -320,6 +328,37 @@ describe("compaction (T20): CLI → server → mock Venice", () => {
     const moved = await ok(["message.set-author", "--conversation", c, "--message", c2.id, "--as", "Game Master"]);
     assert.match(moved.stdout, new RegExp(`now starts at the compaction ${c1.id} \\(it started at ${c2.id}\\)`));
     assert.deepEqual((await json(["prompt.preview", "--conversation", c])).cut, { messageId: c1.id, before: 3 });
+  });
+
+  test("every way of moving the cut says so: brain.update --compacts, message.add in its mouth, a turn to it (T20 QA-1)", async () => {
+    const { c } = await harbor();
+    await ok(["turn", "--conversation", c, "--content", "I wait."]);
+    const gmLine = (await get(c)).messages.at(-1)!;
+
+    // --compacts given to the wrong brain cuts every request at its newest line: the answer says so, and how to undo it.
+    const on = await json(["brain.update", "--conversation", c, "--brain", "Game Master", "--compacts"]);
+    assert.deepEqual(on.cutMoved, { from: null, to: gmLine.id, before: 7 });
+    const onText = (await ok(["brain.update", "--conversation", c, "--brain", "Game Master", "--color", "#ff8800"])).stdout;
+    assert.doesNotMatch(onText, /request now starts/, "a change that doesn't move the cut says nothing about it");
+    const off = await ok(["brain.update", "--conversation", c, "--brain", "Game Master", "--no-compacts"]);
+    assert.match(off.stdout, /No compaction is left, so every brain's request holds the whole ledger again/);
+    const again = await ok(["brain.update", "--conversation", c, "--brain", "Game Master", "--compacts"]);
+    assert.match(again.stdout, new RegExp(`now starts at the compaction ${gmLine.id}, and the 7 messages before it are left out .*--no-compacts undoes it`));
+    await ok(["brain.update", "--conversation", c, "--brain", "Game Master", "--no-compacts"]);
+
+    // In the compaction brain's mouth, a message is the new compaction.
+    const added = await ok(["message.add", "--conversation", c, "--as", "Chronicler", "--content", "A summary."]);
+    const summary = (await get(c)).messages.at(-1)!;
+    assert.match(added.stdout, new RegExp(`now starts at the compaction ${summary.id}, and the 8 messages before it are left out`));
+    assert.doesNotMatch((await ok(["message.add", "--conversation", c, "--as", "player", "--content", "x"])).stdout, /request now starts/);
+
+    // A turn to it is a compaction through the last message, as message.compact's: the header and the done line say so.
+    const turn = await ok(["turn", "--conversation", c, "--brain", "Chronicler"]);
+    const x = (await get(c)).messages.at(-2)!;
+    assert.match(turn.stderr, new RegExp(`\\[Chronicler · compacting through ${x.id}\\]`));
+    assert.match(turn.stderr, new RegExp(`\\[Chronicler · compaction through ${x.id} · \\d+ in`));
+    const plain = await ok(["turn", "--conversation", c, "--content", "On we go."]);
+    assert.doesNotMatch(plain.stderr, /compact/, "an ordinary turn says nothing about compactions");
   });
 
   test("prompt.size: each brain's last real count (cached tokens included) and an estimate of its request now", async () => {

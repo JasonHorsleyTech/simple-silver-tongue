@@ -22,7 +22,7 @@ export function estimateSize(body: Pick<ChatRequest, "messages" | "tools">): { c
 /**
  * The last real count for a brain: the newest version it wrote that Venice counted (its request's prompt tokens, cached
  * ones included). `messagesAgo`: how many ledger messages came after that message. `beforeCut`: the newest compaction
- * came after it, so its next request is cut, and probably smaller.
+ * was written after it was counted (wherever it sits in the ledger), so its next request is cut, and probably smaller.
  */
 export type LastCount = {
   messageId: string;
@@ -49,8 +49,9 @@ export function lastCount(conv: Pick<Conversation, "brains" | "messages">, brain
     }
   }
   if (!best) return null;
-  const cut = compactionCut(conv, conv.messages);
-  if (cut >= 0 && conv.messages[cut]!.createdAt > best.at) best.beforeCut = true;
+  const cut = conv.messages[compactionCut(conv, conv.messages)];
+  // When it was written: the version in use, so a compaction re-rolled at depth (same message, a newer version) counts too.
+  if (cut && (cut.versions[cut.activeVersion]?.createdAt ?? cut.createdAt) > best.at) best.beforeCut = true;
   return best;
 }
 

@@ -88,4 +88,9 @@ test("secret args are literal: no @file expansion (T01 QA-8), but - still reads 
   assert.deepEqual(await parse(["--password", "@Horse-qa1"]), { password: "@Horse-qa1" });
   assert.deepEqual(await parse(["--password", "@scene.md"]), { password: "@scene.md" });
   assert.deepEqual(await parse(["--password", "-"]), { password: "from stdin" });
+  // Its first line only, as the prompt reads without a terminal: printf 'pw\npw\n' | ./sst user.create ... --password - (T20 QA, outside the ticket)
+  const twoLines = (stdin: string) => parseFlags(["--password", "-"], schema, { ...readers, readStdin: async () => stdin }).then((r) => r.args);
+  assert.deepEqual(await twoLines("pw\npw\n"), { password: "pw" });
+  assert.deepEqual(await twoLines("pw\r\nother\r\n"), { password: "pw" });
+  assert.deepEqual(await twoLines(""), { password: "" });
 });

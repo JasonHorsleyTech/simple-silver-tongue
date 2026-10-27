@@ -207,6 +207,15 @@ export const compactsNote = (brain: string) =>
   `${brain}'s messages are compactions: once this reply is saved, every brain's request starts at it, and the messages before it are left out of requests (not deleted: delete the compaction to bring them back).`;
 
 /**
+ * T20: a command's answer when it moved where every request starts (`cutMoved`: a delete, a change of author, a message
+ * in a compaction brain's mouth, `brain.update --compacts`).
+ */
+export const cutMovedLine = (m: { from: string | null; to: string | null; before: number }) =>
+  m.to === null
+    ? "No compaction is left, so every brain's request holds the whole ledger again."
+    : `Every brain's request now starts at the compaction ${m.to}${m.from === null ? "" : ` (it started at ${m.from})`}, and the ${m.before === 1 ? "message" : `${m.before} messages`} before it ${m.before === 1 ? "is" : "are"} left out (kept in the ledger).`;
+
+/**
  * T20: the payload view's line for message.compact: who compacts through which message, where the reply goes, and what
  * stays verbatim after it. `version`: the compaction right after the message gets a new version instead (1-based).
  */

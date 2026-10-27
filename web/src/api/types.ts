@@ -44,7 +44,7 @@ export { DEFAULT_PIN_AS, PIN_ROLES } from "../../../src/conversations/types.ts";
 /** T18: the model a brain uses, the server's own rule: its own, or the conversation's. */
 export { imageModelOf, textModelOf } from "../../../src/conversations/types.ts";
 /** T20: where every request starts (the newest compaction), which messages are compactions, and the count a {{count}} gets. */
-export { compactionCut, COUNT_PLACEHOLDER, isCompaction, isCompactor, messageCount } from "../../../src/conversations/compaction.ts";
+export { compactionCut, COUNT_PLACEHOLDER, cutAt, isCompaction, isCompactor, messageCount, type CutMoved } from "../../../src/conversations/compaction.ts";
 /** T20: the token counter: a body's size estimate and a brain's last real count (prompt.size, prompt.preview's `size`). */
 export { estimateSize, lastCount, type LastCount, type PromptSizes } from "../../../src/conversations/size.ts";
 
@@ -94,6 +94,7 @@ export {
   compactsNote,
   countNote,
   cutNote,
+  cutMovedLine,
   ESTIMATE_NOTE,
 } from "../../../src/conversations/wording.ts";
 
@@ -519,7 +520,7 @@ export type StreamEvent =
       /** T18: the text model the reply is written with (turn, message.regenerate); `ownModel`: the brain's own, not the conversation's. */
       model?: string;
       ownModel?: true;
-      /** T20, message.compact: the message it compacts through (the reply goes right after it; with `regenerate`, a new version of messageId). */
+      /** T20, message.compact, or a turn to a compaction brain (through the last message): the message it compacts through (the reply goes right after it; with `regenerate`, a new version of messageId). */
       compact?: { through: string };
     }
   | { type: "reasoning"; delta: string }

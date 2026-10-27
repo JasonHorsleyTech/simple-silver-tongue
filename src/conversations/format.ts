@@ -5,7 +5,7 @@ import { foldHidden, revealHint } from "./hidden.ts";
 import { ESTIMATE_NOTE, PIN_AS_WORDS, rollLabel } from "./wording.ts";
 import { activeVersion, type CutAt, type PinnedAt } from "./prompt.ts";
 import type { LastCount } from "./size.ts";
-import { compactionCut, isCompaction } from "./compaction.ts";
+import { compactionCut, isCompaction, isCompactor } from "./compaction.ts";
 import { totalCost, type ModelUse } from "./turn.ts";
 import type { ChatRequest, Conversation, ImageRecord, ImageRequest, LedgerMessage, MessageVersion } from "./types.ts";
 
@@ -78,7 +78,7 @@ export function formatConversation(c: Conversation, opts?: FormatOpts): string {
         const reminder = b.finalReminder.enabled && b.finalReminder.content.trim() ? ", reminder" : "";
         // T16: what brain.list shows in full, in a word: its pins, and the brains it makes.
         const pins = b.pins?.length ? `, ${b.pins.length} pinned` : "";
-        const makes = (b.makes?.enabled ? `, makes "${b.makes.name}"` : "") + (b.compacts ? ", compacts" : "");
+        const makes = (b.makes?.enabled ? `, makes "${b.makes.name}"` : "") + (isCompactor(b) ? ", compacts" : "");
         // T18: a brain on a model of its own says so; the others use the one in the header.
         const own = [b.textModel ? `own model ${b.textModel}` : "", b.kind === "image" && b.imageModel ? `own image model ${b.imageModel}` : ""].filter(Boolean).map((x) => `, ${x}`).join("");
         return `${b.name}${b.id === c.defaultBrainId ? " (default)" : ""} [${b.id}, ${b.kind}, reasoning ${b.reasoning.enabled ? b.reasoning.effort : "off"}${reminder}${pins}${makes}${own}]`;
@@ -225,7 +225,7 @@ const n = (x: number) => x.toLocaleString("en-US");
 /** T20: a last real count in words: "11,980 in (10,240 cached) · m_…, 3 messages ago". */
 export function lastCountLine(l: LastCount): string {
   const ago = l.messagesAgo === 0 ? "the newest message" : `${l.messagesAgo} message${l.messagesAgo === 1 ? "" : "s"} ago`;
-  return `${n(l.promptTokens)} in${l.cachedTokens ? ` (${n(l.cachedTokens)} cached)` : ""} · ${l.messageId}, ${ago}${l.beforeCut ? " · before the newest compaction, so its next request is cut" : ""}`;
+  return `${n(l.promptTokens)} in${l.cachedTokens ? ` (${n(l.cachedTokens)} cached)` : ""} · ${l.messageId}, ${ago}${l.beforeCut ? " · counted before the newest compaction was written, so its next request is cut" : ""}`;
 }
 
 /** T20: the payload view's size line: the estimate, which says it is one, and the brain's last real count. */

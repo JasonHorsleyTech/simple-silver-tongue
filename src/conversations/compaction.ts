@@ -29,6 +29,26 @@ export function compactionCut(conv: Pick<Conversation, "brains">, messages: Read
 }
 
 /**
+ * Where every request starts now (the newest compaction), as the answers of commands that can move it report it:
+ * `cutMoved {from, to, before}`, `before` being how many messages are left out (0 when `to` is null). A delete, a change
+ * of author, a message added in a compaction brain's mouth or `brain.update --compacts` can each move it.
+ */
+export type CutMoved = { from: string | null; to: string | null; before: number };
+
+/** The newest compaction's id, or null: where every request starts. */
+export function cutAt(conv: Pick<Conversation, "brains" | "messages">): string | null {
+  const at = compactionCut(conv, conv.messages);
+  return at >= 0 ? conv.messages[at]!.id : null;
+}
+
+/** `{cutMoved}` when the cut is no longer at `from` (taken with `cutAt` before the change), else nothing. */
+export function cutMove(conv: Pick<Conversation, "brains" | "messages">, from: string | null): { cutMoved?: CutMoved } {
+  const at = compactionCut(conv, conv.messages);
+  const to = at >= 0 ? conv.messages[at]!.id : null;
+  return from === to ? {} : { cutMoved: { from, to, before: Math.max(at, 0) } };
+}
+
+/**
  * The number a final reminder's {{count}} is sent as: the messages from the start of the conversation through the last
  * one this request holds, compactions not counted. So a first compaction through message 42 reads 42, and a second one,
  * 20 messages later, reads 62: the whole story it now stands for, which a model would miscount.

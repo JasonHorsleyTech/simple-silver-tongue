@@ -9,8 +9,8 @@ import { rollD20 } from "../conversations/dice.ts";
 import { addSpend, newMessage, rollMessage } from "../conversations/turn.ts";
 import type { Author, Brain, Conversation, LedgerMessage } from "../conversations/types.ts";
 import { appendMessage, forgetMessage, type Forgotten } from "../conversations/makers.ts";
-import { isMuse, rollLabel } from "../conversations/wording.ts";
-import { compactionCut } from "../conversations/compaction.ts";
+import { cutMovedLine, isMuse, rollLabel } from "../conversations/wording.ts";
+import { cutAt, cutMove, type CutMoved } from "../conversations/compaction.ts";
 import { newMuse } from "../conversations/defaults.ts";
 import { badRequest, CommandError, conflict, notFound } from "../lib/errors.ts";
 import { nowIso } from "../lib/ids.ts";
@@ -42,9 +42,10 @@ export function viewOf(conv: Conversation, m: LedgerMessage): MessageView {
 
 /**
  * message.edit and message.add: the message, plus the image being made for it now, if they started one (T05), and
- * (T16, message.add) the brain it made, when its author makes brains.
+ * (T16, message.add) the brain it made, when its author makes brains, and (T20, message.add) `cutMoved` when it went in a
+ * compaction brain's mouth, so it is the new compaction.
  */
-export type ImageMessageView = MessageView & { painting?: { imageId: string; model: string }; made?: Brain; museAdded?: Brain };
+export type ImageMessageView = MessageView & { painting?: { imageId: string; model: string }; made?: Brain; museAdded?: Brain; cutMoved?: CutMoved };
 
 /**
  * T17: the brain `as` names, inside mutateConversation. "Muse" when no brain is called Muse adds one (newMuse), as a
@@ -77,21 +78,6 @@ function paintingLine(r: ImageMessageView): string {
 }
 
 const target = { conversation: conversationId, message: messageId };
-
-/**
- * T20: where every request starts (the newest compaction's id), or null. A delete or a change of author can move it;
- * the answer then says so (`cutMoved`), since every brain's next request changes with it.
- */
-const cutAt = (c: Conversation): string | null => {
-  const at = compactionCut(c, c.messages);
-  return at >= 0 ? c.messages[at]!.id : null;
-};
-export type CutMoved = { from: string | null; to: string | null };
-const moved = (from: string | null, to: string | null): { cutMoved?: CutMoved } => (from === to ? {} : { cutMoved: { from, to } });
-const cutLine = (m: CutMoved) =>
-  m.to === null
-    ? "No compaction is left, so every brain's request holds the whole ledger again."
-    : `Every brain's request now starts at the compaction ${m.to}${m.from === null ? ", and the messages before it are left out (kept in the ledger)" : ` (it started at ${m.from})`}.`;
 
 const messageText = (blank: string, describe: string) =>
   z
@@ -132,6 +118,7 @@ Refused while a reply is being generated (it would land after your message, answ
     }
     const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
       assertLedgerIdle(vault, c.id);
+      const cutFrom = cutAt(c); // T20: in a compaction brain's mouth, it is the new compaction
       let author: Author = { type: "player" };
       let museAdded: Brain | null = null;
       if (!player) {
@@ -141,13 +128,19 @@ Refused while a reply is being generated (it would land after your message, answ
         author = { type: "brain", brainId: found.brain.id };
       }
       const m = newMessage(author, "text", { content: args.content, source: "authored", createdAt: nowIso() });
-      return { m, museAdded, made: appendMessage(c, m) }; // T16: in a maker's mouth, it makes a brain in the same write
+      const made = appendMessage(c, m); // T16: in a maker's mouth, it makes a brain in the same write
+      return { m, museAdded, made, ...cutMove(c, cutFrom) };
     });
-    return { ...viewOf(conv, result.m), ...(result.made ? { made: result.made } : {}), ...(result.museAdded ? { museAdded: result.museAdded } : {}) };
+    return {
+      ...viewOf(conv, result.m),
+      ...(result.made ? { made: result.made } : {}),
+      ...(result.museAdded ? { museAdded: result.museAdded } : {}),
+      ...(result.cutMoved ? { cutMoved: result.cutMoved } : {}),
+    };
   },
   format: (r: ImageMessageView) => {
     const who = r.message.author.type === "player" ? "your message" : r.message.kind === "image" ? `an image prompt in ${r.author}'s mouth` : `in ${r.author}'s mouth`;
-    return `Added ${r.message.id} (${who}). Every brain sees it from the next request.${r.message.kind === "image" ? paintingLine(r) : ""}${r.museAdded ? `\n${museLine(r.museAdded)}` : ""}${r.made ? `\n${madeLine(r.made, r.conversationId)}` : ""}`;
+    return `Added ${r.message.id} (${who}). Every brain sees it from the next request.${r.message.kind === "image" ? paintingLine(r) : ""}${r.museAdded ? `\n${museLine(r.museAdded)}` : ""}${r.made ? `\n${madeLine(r.made, r.conversationId)}` : ""}${r.cutMoved ? `\n${cutMovedLine(r.cutMoved)}` : ""}`;
   },
 });
 
@@ -254,7 +247,7 @@ and while any of the message's images is still being made (Venice is making and 
       c.messages.splice(c.messages.indexOf(m), 1);
       // T16: its pins go, and a brain made from it goes too while it has never spoken. In the same write.
       const forgotten = forgetMessage(c, m.id);
-      return { gone: m, forgotten, ...moved(from, cutAt(c)) }; // T20: deleting a compaction brings the messages before it back
+      return { gone: m, forgotten, ...cutMove(c, from) }; // T20: deleting a compaction brings the messages before it back
     });
     // After the save: a failed removal leaves an unreferenced file, never a message whose image is missing.
     const images = imageIdsOf([result.gone]);
@@ -282,7 +275,7 @@ and while any of the message's images is still being made (Venice is making and 
           : `${b.name} (${b.brainId}) had it pinned; the pin is gone.`,
       );
     }
-    if (r.cutMoved) out.push(cutLine(r.cutMoved));
+    if (r.cutMoved) out.push(cutMovedLine(r.cutMoved));
     return out.join("\n");
   },
 });
@@ -373,7 +366,7 @@ the answer says so. Refused while a reply is being generated.`,
       m.author = to;
       m.updatedAt = nowIso(); // stamped in the write queue (the browser keeps the newer copy)
       // T20: to or from a brain whose messages are compactions, the message becomes one, or stops being one.
-      return { m, from, changed: true, museAdded: found?.museAdded ?? null, ...moved(cutFrom, cutAt(c)) };
+      return { m, from, changed: true, museAdded: found?.museAdded ?? null, ...cutMove(c, cutFrom) };
     });
     const cut = "cutMoved" in result && result.cutMoved ? { cutMoved: result.cutMoved } : {};
     return { ...viewOf(conv, result.m), from: result.from, changed: result.changed, ...(result.museAdded ? { museAdded: result.museAdded } : {}), ...cut };
@@ -381,7 +374,7 @@ the answer says so. Refused while a reply is being generated.`,
   format: (r: MessageView & { from: string; changed: boolean; museAdded?: Brain; cutMoved?: CutMoved }) =>
     (r.changed
       ? `${r.message.id} is now said by ${r.author} (was ${r.from}). Every brain sees it that way from the next request: ${r.author === "you" ? "framed as yours" : `${r.author} reads it as its own words, and the other brains see it framed with that name`}.`
-      : `${r.message.id} is already said by ${r.author}. Nothing changed.`) + (r.museAdded ? `\n${museLine(r.museAdded)}` : "") + (r.cutMoved ? `\n${cutLine(r.cutMoved)}` : ""),
+      : `${r.message.id} is already said by ${r.author}. Nothing changed.`) + (r.museAdded ? `\n${museLine(r.museAdded)}` : "") + (r.cutMoved ? `\n${cutMovedLine(r.cutMoved)}` : ""),
 });
 
 export default [messageAdd, messageRoll, messageGet, messageEdit, messageDelete, messageSelectVersion, messageSetAuthor];

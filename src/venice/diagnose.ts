@@ -14,6 +14,8 @@
  * Dependency-free (no Node APIs): the CLI and the browser import `formatDiagnostics` to show the same block.
  */
 
+import { CHARS_PER_TOKEN, TOKENS_PER_MESSAGE } from "../conversations/wording.ts"; // T20: one estimate everywhere (QA-6)
+
 export type Redacted = null | boolean | number | string | Redacted[] | { [key: string]: Redacted };
 
 /** One message of the request: its role and size, never its words. */
@@ -180,7 +182,7 @@ export function describeRequest(body: unknown): RequestShape {
     reasoning: reasoningOf(b),
     messages,
     params: redact(rest),
-    size: { messages: messages.length, chars, bytes: new TextEncoder().encode(json).length, estTokens: Math.ceil(chars / 4) + 4 * messages.length },
+    size: { messages: messages.length, chars, bytes: new TextEncoder().encode(json).length, estTokens: Math.ceil(chars / CHARS_PER_TOKEN) + TOKENS_PER_MESSAGE * messages.length },
     flags: flagsOf(messages, b),
   };
 }
@@ -398,7 +400,7 @@ export function formatDiagnostics(d: ChatDiagnostics): string {
   out.push(`  Model: ${r.model}${limits.length ? ` (${limits.join(" · ")})` : ""}`);
   out.push(`  Reasoning: ${r.reasoning}`);
   out.push(`  Knobs: ${knobs(r.params)}`);
-  out.push(`  Size: ${num(r.size.messages)} messages · ${num(r.size.chars)} chars of text · ${num(r.size.bytes)} bytes of JSON · about ${num(r.size.estTokens)} tokens (an estimate: ~4 chars a token; no tokenizer here)`);
+  out.push(`  Size: ${num(r.size.messages)} messages · ${num(r.size.chars)} chars of text · ${num(r.size.bytes)} bytes of JSON · about ${num(r.size.estTokens)} tokens (an estimate: ~${CHARS_PER_TOKEN} chars a token, as prompt.size counts; no tokenizer here)`);
   const lw = d.lastWorked;
   out.push(
     lw

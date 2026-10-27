@@ -94,7 +94,7 @@ function parseBool(v: string): boolean | null {
  *   --settings '{"a":1}'              objects as JSON
  *   --content @file.md | --content -  text from a file or stdin (one trailing newline dropped); @@x is a literal "@x"
  *   --text-model null                 null, for a field that takes it (unset it); elsewhere "null" is the word
- *   secret args (passwords) take "-" for stdin but are otherwise literal: no @file, so "@x" is "@x"
+ *   secret args (passwords) take "-" for stdin's first line but are otherwise literal: no @file, so "@x" is "@x"
  */
 export async function parseFlags(
   tokens: string[],
@@ -147,8 +147,10 @@ export async function parseFlags(
           throw new UsageError(`${flag} expects JSON`);
         }
       case "string":
-        // A password may start with "@", and a failed file read would echo it to the terminal.
-        return s.secret && v !== "-" ? v : text(v, flag);
+        // A password may start with "@", and a failed file read would echo it to the terminal. Its "-" reads the first
+        // line of stdin, as the prompt does without a terminal: no one can type a password with a newline in it.
+        if (s.secret) return v === "-" ? (await text(v, flag)).split(/\r?\n/)[0]! : v;
+        return text(v, flag);
       default: {
         // untyped: JSON if it parses, else the string
         const t = await text(v, flag);
