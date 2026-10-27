@@ -97,6 +97,24 @@ export const imageModel = z
   .nullable()
   .describe("Image brains: their own image model (a Venice id: ./sst models.list --type image), which paints their prompts instead of the conversation's. null: back to the conversation's (the default)");
 
+/** T20: "Its messages are compactions". */
+export const compacts = z
+  .boolean()
+  .describe(
+    "Its messages are compactions (T20, text brains only): every brain's request takes the ledger from the newest compaction on (its pins still reach it), the earlier messages left out but kept. A brain that has messages makes them all compactions at once. message.compact writes one through any message. --no-compacts: an ordinary brain again",
+  );
+
+/**
+ * T20: set or clear the compaction setting. Only a text brain writes compactions (an image brain's messages are
+ * prompts): refused on an image brain, as safe mode is refused on a text one. Stored only when on.
+ */
+export function applyCompacts(brain: Brain, value: boolean | undefined): void {
+  if (value === undefined) return;
+  if (value && brain.kind !== "text") throw badRequest(`${brain.name} is an image brain, and only a text brain writes compactions (its messages are image prompts).`);
+  if (value) brain.compacts = true;
+  else delete brain.compacts;
+}
+
 /** T16: how a pinned message is sent to the brain it is pinned to. */
 export const pinAs = z
   .enum(PIN_ROLES)
@@ -301,6 +319,7 @@ export function brainLine(b: Brain, conv?: { defaultBrainId?: string; settings?:
   if (b.kind === "image") bits.push(`safe mode ${b.safeMode === false ? "off" : "on"}`, b.shape ?? DEFAULT_SHAPE);
   if (b.pins?.length) bits.push(`${b.pins.length} pinned`);
   if (b.makes) bits.push(`makes "${b.makes.name}"${b.makes.enabled ? "" : " (off)"}`);
+  if (b.compacts) bits.push("compacts"); // T20
   return bits.join(" · ");
 }
 
@@ -316,6 +335,7 @@ function nextFree(conv: Pick<Conversation, "brains">, m: NonNullable<Brain["make
 /** T16: brain.list's lines for a brain's pins and its maker setting, every word of the blueprint included. */
 function pinAndMakerLines(b: Brain, conv: { messages: Array<{ id: string; author: Conversation["messages"][number]["author"] }>; brains: Brain[] }): string[] {
   const out: string[] = [];
+  if (b.compacts) out.push("Its messages are compactions (T20): every brain's request starts at the newest compaction, and the messages before it are left out (kept in the ledger; their pins still reach their brains).");
   if (b.madeFrom) out.push(`Made from ${b.madeFrom}.`);
   if (b.pins.length) {
     out.push("Pinned (sent right after the setup messages, not at their place):");
@@ -400,7 +420,8 @@ and a shape (--shape portrait, square or landscape; landscape by default).
 A text brain stops before "${FRAMING_STOP}" (--stop), so it can't write a framing line for another speaker.
 It uses the conversation's models unless you give it its own (T18): --text-model, and for an image brain
 --image-model too (see brain.update).
---makes (T16) makes it a brain that makes brains: see brain.update.`,
+--makes (T16) makes it a brain that makes brains: see brain.update.
+--compacts (T20): its messages are compactions (message.compact): see brain.update.`,
   args: z.object({
     conversation: conversationId,
     name: brainName.describe("The brain's name, unique in the conversation (other brains see it in the framing)"),
@@ -414,11 +435,13 @@ It uses the conversation's models unless you give it its own (T18): --text-model
     tool: tool.optional(),
     stop: stop.optional(),
     makes: makes.optional(),
+    compacts: compacts.optional(),
     textModel: textModel.optional(),
     imageModel: imageModel.optional(),
   }),
   examples: [
     './sst brain.add --conversation c_k3j9x0q2ma --name "Dice Master" --system-prompt @dice.md',
+    './sst brain.add --conversation c_k3j9x0q2ma --name Chronicler --system-prompt @chronicler.md --final-reminder.content @reminder.md --compacts',
     './sst brain.add --conversation c_k3j9x0q2ma --name "Co-GM" --system-prompt @co-gm.md --text-model z-ai-glm-5-3 --reasoning.enabled   # its own model',
     './sst brain.add --conversation c_k3j9x0q2ma --name "Dice Master" --system-prompt "You roll dice." --final-reminder.content "<!-- System reminder --> Only roll."',
     './sst brain.add --conversation c_k3j9x0q2ma --name "Scene Painter" --kind image --system-prompt "You paint the scene."',
@@ -436,6 +459,7 @@ It uses the conversation's models unless you give it its own (T18): --text-model
       Object.assign(brain.finalReminder, args.finalReminder ?? {});
       if (args.stop) brain.stop = args.stop;
       applyMakes(brain, args.makes);
+      applyCompacts(brain, args.compacts);
       c.brains.push(brain);
       return brain;
     });
@@ -455,6 +479,11 @@ or one written with message.add --as) makes a brain from the blueprint (--makes.
 takes), named from the pattern (--makes.name "Character ${MAKES_NUMBER}", numbered by a counter that only counts up),
 with that message pinned to it (--makes.pin-as). New versions of the message make none. --no-makes.enabled keeps the
 setting and makes nothing; --makes null removes it. Starting one needs the pattern and the blueprint's system prompt.
+--compacts (T20): its messages are compactions. Every brain's request then takes the ledger from the newest compaction
+on (system prompt, setup, its pins, the compaction, the messages after it); the earlier messages stay in the ledger,
+left out of requests. Text brains only. Turned on for a brain that has messages, they all become compactions at
+once, so requests start at its newest; --no-compacts makes them ordinary messages again (nothing is lost either way).
+A {{count}} in any brain's final reminder is sent as the number of messages so far, compactions not counted.
 The brain called Muse writes fresh takes' notes (T17): renamed, it is just another brain (its notes stay, under its
 new name), and the next fresh take adds a new Muse.
 --text-model (T18) gives the brain a text model of its own (any Venice id; models.list --type text), used for its
@@ -476,11 +505,13 @@ the conversation's. prompt.preview --brain shows which model, and whose.`,
     tool: tool.optional(),
     stop: stop.optional(),
     makes: makes.optional(),
+    compacts: compacts.optional(),
     textModel: textModel.optional(),
     imageModel: imageModel.optional(),
   }),
   examples: [
     './sst brain.update --conversation c_k3j9x0q2ma --system-prompt "You are a terse pirate."',
+    './sst brain.update --conversation c_k3j9x0q2ma --brain Chronicler --compacts   # its messages are compactions',
     './sst brain.update --conversation c_k3j9x0q2ma --brain "Co-GM" --text-model z-ai-glm-5-3 --reasoning.enabled   # its own model (GLM always reasons)',
     './sst brain.update --conversation c_k3j9x0q2ma --brain "Co-GM" --text-model null   # back to the conversation\'s',
     './sst brain.update --conversation c_k3j9x0q2ma --brain "Scene Painter" --image-model krea-2-turbo',
@@ -496,10 +527,10 @@ the conversation's. prompt.preview --brain shows which model, and whose.`,
   ],
   handler: async (args, ctx): Promise<Brain> => {
     const { vault } = ctx.requireSession();
-    const fields = ["name", "color", "systemPrompt", "reasoning", "finalReminder", "kind", "safeMode", "shape", "tool", "stop", "makes", "textModel", "imageModel"] as const;
+    const fields = ["name", "color", "systemPrompt", "reasoning", "finalReminder", "kind", "safeMode", "shape", "tool", "stop", "makes", "compacts", "textModel", "imageModel"] as const;
     if (!fields.some((f) => args[f] !== undefined)) {
       throw badRequest(
-        "Nothing to change. Pass --name, --color, --system-prompt, --reasoning.<field>, --final-reminder.<field>, --kind, --safe-mode, --shape, --tool.<field>, --stop, --makes.<field>, --text-model or --image-model.",
+        "Nothing to change. Pass --name, --color, --system-prompt, --reasoning.<field>, --final-reminder.<field>, --kind, --safe-mode, --shape, --tool.<field>, --stop, --makes.<field>, --compacts, --text-model or --image-model.",
       );
     }
     await checkBrainModels(ctx, [args]); // T18: before anything is written
@@ -516,6 +547,10 @@ the conversation's. prompt.preview --brain shows which model, and whose.`,
           );
         }
         assertBrainIdle(vault, c.id, brain, "change the kind of");
+        // T20: an image brain's messages are prompts, never compactions.
+        if (args.kind === "image" && brain.compacts && args.compacts !== false) {
+          throw badRequest(`${brain.name}'s messages are compactions, and only a text brain writes those. Pass --no-compacts too to make it an image brain.`);
+        }
         if (args.kind === "image") makeImageBrain(brain);
         else brain.kind = "text"; // its tool text and safe mode are kept, unused, in case it goes back
       }
@@ -528,6 +563,7 @@ the conversation's. prompt.preview --brain shows which model, and whose.`,
       Object.assign(brain.finalReminder, args.finalReminder ?? {});
       if (args.stop) brain.stop = args.stop;
       applyMakes(brain, args.makes);
+      applyCompacts(brain, args.compacts);
       return brain;
     });
     return result;

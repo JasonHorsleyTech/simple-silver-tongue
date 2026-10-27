@@ -1,4 +1,5 @@
 import { badRequest, CommandError, notFound } from "../lib/errors.ts";
+import { COUNT_PLACEHOLDER, compactionCut, messageCount } from "./compaction.ts";
 import { textModelOf, type Brain, type ChatMessage, type ChatRequest, type Conversation, type LedgerMessage, type PinRole, type Templates } from "./types.ts";
 
 /**
@@ -110,10 +111,26 @@ export function buildRequest(conv: Conversation, brainId: string, opts: BuildOpt
 export type PinnedAt = { index: number; messageId: string; as: PinRole };
 
 /**
- * buildRequest, plus where each pinned message went (T16), for prompt.preview to point out. The body is the same
- * object buildRequest returns, so the preview and the send can't differ.
+ * T20: the compaction a request starts at, and how many of the request's ledger messages come before it (left out at
+ * their place; any of them pinned to the brain still go in with the setup, step 2b). Display only.
  */
-export function assembleRequest(conv: Conversation, brainId: string, opts: BuildOptions): { body: ChatRequest; pinned: PinnedAt[] } {
+export type CutAt = { messageId: string; before: number };
+
+/** What assembleRequest built, beside the body (T16, T20), for prompt.preview to point out. */
+export type Assembled = {
+  body: ChatRequest;
+  pinned: PinnedAt[];
+  /** T20: the newest compaction this request holds, where its ledger starts; null when it holds none. */
+  cut: CutAt | null;
+  /** T20: what a {{count}} in the final reminder is sent as (messageCount: the messages so far, compactions not counted). */
+  count: number;
+};
+
+/**
+ * buildRequest, plus where each pinned message went (T16) and where the ledger was cut (T20), for prompt.preview to
+ * point out. The body is the same object buildRequest returns, so the preview and the send can't differ.
+ */
+export function assembleRequest(conv: Conversation, brainId: string, opts: BuildOptions): Assembled {
   const brain = conv.brains.find((b) => b.id === brainId);
   if (!brain) throw notFound(`No brain ${brainId} in conversation ${conv.id}.`);
   if (!brain.systemPrompt.trim()) throw emptySystemPrompt(brain, conv.id);
@@ -143,6 +160,14 @@ export function assembleRequest(conv: Conversation, brainId: string, opts: Build
     if (at < 0) throw notFound(`No message ${opts.excludeFromMessageId} in this conversation.`);
     ledger = conv.messages.slice(0, at);
   }
+
+  // T20, the cut: the ledger from the newest compaction on, that message included. The messages before it are only
+  // left out (pins below still reach their brain). A steer's message never cuts its own request: a compaction being
+  // revised needs what it summarized, so the cut is the one before it.
+  const at = compactionCut(conv, opts.steer !== undefined ? ledger.slice(0, -1) : ledger);
+  const cut: CutAt | null = at >= 0 ? { messageId: ledger[at]!.id, before: at } : null;
+  const kept = at >= 0 ? ledger.slice(at) : ledger;
+  const count = messageCount(conv, ledger);
 
   /** One ledger message as this brain sees it at its place (step 3). */
   const view = (m: LedgerMessage): ChatMessage[] => {
@@ -177,8 +202,9 @@ export function assembleRequest(conv: Conversation, brainId: string, opts: Build
 
   // 2b. T16: the messages pinned to this brain, in ledger order, right after the setup: a live link (the active
   // version as it stands), sent here instead of at their place. Only those this request's ledger holds (a
-  // regenerate's message, and whatever follows it, is left out here too). `system` and `assistant` send the text
-  // verbatim with that role, and skip it when blank, as setup messages are; `ledger` sends what step 3 would.
+  // regenerate's message, and whatever follows it, is left out here too), before the cut as well as after it (T20:
+  // a compaction doesn't take a brain's pins away). `system` and `assistant` send the text verbatim with that role,
+  // and skip it when blank, as setup messages are; `ledger` sends what step 3 would.
   const pinAs = new Map((brain.pins ?? []).map((p) => [p.messageId, p.as]));
   // A steer revises the last message, which must stay right before the steer ("write your previous response
   // again"), even when it is pinned to its own brain.
@@ -196,12 +222,14 @@ export function assembleRequest(conv: Conversation, brainId: string, opts: Build
     messages.push(...sent);
   }
 
-  // 3. The ledger, from this brain's point of view, using each message's active version. Pinned ones are above.
-  for (const m of ledger) if (!pinAs.has(m.id)) messages.push(...view(m));
+  // 3. The ledger from the cut on (T20), from this brain's point of view, using each message's active version.
+  // Pinned ones are above.
+  for (const m of kept) if (!pinAs.has(m.id)) messages.push(...view(m));
 
-  // 4. Final reminder, verbatim.
+  // 4. Final reminder, verbatim, except that a {{count}} in it is the number of messages so far (T20: messageCount,
+  // which a model would miscount). The payload view says what it was sent as.
   if (brain.finalReminder.enabled && brain.finalReminder.content.trim()) {
-    messages.push({ role: "user", content: brain.finalReminder.content });
+    messages.push({ role: "user", content: brain.finalReminder.content.replaceAll(COUNT_PLACEHOLDER, () => String(count)) });
   }
 
   // 5. Steer, last, so everything before it stays a cacheable prefix.
@@ -250,7 +278,7 @@ export function assembleRequest(conv: Conversation, brainId: string, opts: Build
   }
 
   assertSendable(body);
-  return { body, pinned };
+  return { body, pinned, cut, count };
 }
 
 /**

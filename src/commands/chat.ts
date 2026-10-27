@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { formatPreview, type Preview } from "../conversations/format.ts";
+import { formatPreview, lastCountLine, type Preview } from "../conversations/format.ts";
 import {
   beginGeneration,
   followGeneration,
@@ -22,6 +22,7 @@ import {
   IMAGE_TEXT_LIMIT,
   imageModelUse,
   newMessage,
+  planCompact,
   planRegenerate,
   planTurn,
   relayReply,
@@ -31,11 +32,14 @@ import {
   type MuseNotePlan,
   type Reply,
 } from "../conversations/turn.ts";
-import type { Brain, ChatRequest, Conversation, LedgerMessage, MessageVersion, RetryRequest, Usage } from "../conversations/types.ts";
-import { IMAGE_STOP_NOTE, isMuse, MUSE_NAME, reasoningRefusedHint, STOP_BILL_NOTE } from "../conversations/wording.ts";
+import { textModelOf, type Brain, type ChatRequest, type Conversation, type LedgerMessage, type MessageVersion, type RetryRequest, type Usage } from "../conversations/types.ts";
+import { ESTIMATE_NOTE, IMAGE_STOP_NOTE, isMuse, MUSE_NAME, reasoningRefusedHint, STOP_BILL_NOTE } from "../conversations/wording.ts";
 import { badRequest, CommandError, notFound } from "../lib/errors.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { activeVersion } from "../conversations/prompt.ts";
+import { lastCount, type PromptSizes } from "../conversations/size.ts";
+import { compactionCut } from "../conversations/compaction.ts";
+import { table } from "../lib/text.ts";
 import { command, streamCommand, type Ctx, type StreamEvent } from "../registry.ts";
 import { closeVault, forkVault, type Vault } from "../storage/vault.ts";
 import { openChatStream, type ChatEvent } from "../venice/chat.ts";
@@ -80,9 +84,12 @@ With --content, it shows what turn --content would send (your message included).
 would send: the die isn't rolled until you send, so the roll's line has {{roll}} where the number will go (the
 only difference), and a note says so. With --regenerate (plus --message, and --steer or --thought [--wrap]), it
 shows what message.regenerate would send instead (a fresh take's body has the Muse's note in place, which the
-send saves). Nothing is saved, rolled or sent.
+send saves). With --compact (plus --message, and --brain for the compaction brain), what message.compact would send
+(T20). Nothing is saved, rolled or sent.
 --json prints the body byte for byte as it would go to Venice (minus the auth header), plus notes on text the
-provider adds that we can't show (reasoning on), and the reason the send would be refused, if it would.
+provider adds that we can't show (reasoning on), and the reason the send would be refused, if it would. It also says
+roughly how big the request is (an estimate, which says so) and the brain's last real count from Venice (T20), and,
+when a compaction cut the ledger, where the request starts.
 For an image brain it also shows the /image/generate request its prompt goes into: every field but the prompt,
 which is the one its generate_image call writes, word for word.`,
   args: z.object({
@@ -91,7 +98,8 @@ which is the one its generate_image call writes, word for word.`,
     content,
     roll,
     regenerate: z.boolean().optional().describe("Preview message.regenerate instead of turn (the message's own brain answers)"),
-    message: regenerateTarget,
+    compact: z.boolean().optional().describe("Preview message.compact instead of turn (T20): --message is the message to compact through (default: the last), --brain the compaction brain (default: the only one)"),
+    message: regenerateTarget.describe("With --regenerate: the message to regenerate (the last one, by a brain). With --compact: the message to compact through (default: the last)"),
     steer,
     thought,
     wrap,
@@ -103,20 +111,31 @@ which is the one its generate_image call writes, word for word.`,
     './sst prompt.preview --conversation c_k3j9x0q2ma --brain "Game Master" --roll',
     './sst prompt.preview --conversation c_k3j9x0q2ma --regenerate --steer "Make it iambic pentameter."',
     './sst prompt.preview --conversation c_k3j9x0q2ma --regenerate --thought "Subvert it: three goblins in a trench coat." --wrap',
+    "./sst prompt.preview --conversation c_k3j9x0q2ma --compact --message m_7f2k9d0x1a   # what message.compact would send",
   ],
   handler: async (args, ctx): Promise<Preview> => {
-    if (!args.regenerate && (args.message !== undefined || args.steer !== undefined || args.thought !== undefined || args.wrap)) {
-      throw badRequest("message, steer, thought and wrap only apply to a regenerate preview: add regenerate (--regenerate).");
+    if (args.regenerate && args.compact) throw badRequest("Preview a regenerate (--regenerate) or a compaction (--compact), not both.");
+    if (!args.regenerate && (args.steer !== undefined || args.thought !== undefined || args.wrap)) {
+      throw badRequest("steer, thought and wrap only apply to a regenerate preview: add regenerate (--regenerate).");
+    }
+    if (!args.regenerate && !args.compact && args.message !== undefined) {
+      throw badRequest("message only applies to a regenerate preview (--regenerate) or a compaction preview (--compact).");
     }
     if (args.regenerate && (args.content !== undefined || args.brain !== undefined || args.roll)) {
       throw badRequest("A regenerate preview takes no content, roll or brain: the message's own brain answers the messages as they are.");
+    }
+    if (args.compact && (args.content !== undefined || args.roll)) {
+      throw badRequest("A compaction preview takes no content or roll: the compaction brain answers the ledger through the message as it is.");
     }
     const conv = await loadConversation(ctx.requireSession().vault, args.conversation);
     // T18: the plan looks up the model of the brain that answers (its own, or the conversation's).
     const models = await textModels(ctx.deps.venice);
     const plan = args.regenerate
       ? planRegenerate(conv, { message: args.message, steer: args.steer, thought: args.thought, wrap: args.wrap }, models)
-      : planTurn(conv, { brain: args.brain, content: args.content, roll: args.roll ? "unrolled" : undefined }, models);
+      : args.compact
+        ? planCompact(conv, { message: args.message, brain: args.brain }, models)
+        : planTurn(conv, { brain: args.brain, content: args.content, roll: args.roll ? "unrolled" : undefined }, models);
+    const last = lastCount(conv, plan.brain.id);
     const preview: Preview = {
       conversationId: conv.id,
       brainId: plan.brain.id,
@@ -124,9 +143,15 @@ which is the one its generate_image call writes, word for word.`,
       models: { text: textModelUse(conv, plan.brain, plan.model) },
       body: plan.body,
       notes: plan.notes,
+      // T20: how big it is before it is sent (an estimate), beside the brain's last real count from Venice.
+      size: { ...plan.size, ...(last ? { last } : {}), ...(plan.model.contextLength ? { contextLength: plan.model.contextLength } : {}) },
     };
     if (plan.pinned.length) preview.pinned = plan.pinned;
+    if (plan.cut) preview.cut = plan.cut;
     if (plan.refusal) preview.refusal = plan.refusal;
+    if ("through" in plan) {
+      preview.compact = { through: plan.through.id, after: plan.after, ...(plan.into.kind === "version" ? { messageId: plan.into.message.id, newVersion: plan.into.message.versions.length + 1 } : {}) };
+    }
     if (plan.brain.kind === "image") {
       const painter = await painterFor(ctx.deps.venice, conv, plan.brain);
       const { body, notes } = painter.plan("");
@@ -147,6 +172,53 @@ which is the one its generate_image call writes, word for word.`,
     return preview;
   },
   format: formatPreview,
+});
+
+export const promptSize = command({
+  name: "prompt.size",
+  description: `How big each brain's prompt is right now: its last real count from Venice, and an estimate of its next.
+T20. The real count is Venice's for the brain's newest reply (prompt tokens, cached ones included, and how many
+messages ago that was); the estimate is of the request it would be sent if it took a turn now. Each brain has its own size: its own system prompt, reminder and pins, and its own
+lines as assistant. The estimate counts characters (it says so: Venice counts only once a request is sent).
+This is what tells you when to compact (message.compact): every request carries everything from the newest
+compaction on. prompt.preview shows the same estimate for one request, with the body.`,
+  args: z.object({ conversation: conversationId }),
+  examples: ["./sst prompt.size --conversation c_k3j9x0q2ma"],
+  handler: async (args, ctx): Promise<PromptSizes> => {
+    const conv = await loadConversation(ctx.requireSession().vault, args.conversation);
+    const models = await textModels(ctx.deps.venice);
+    const at = compactionCut(conv, conv.messages);
+    const brains = conv.brains.map((b) => {
+      const row: PromptSizes["brains"][number] = { brainId: b.id, name: b.name, kind: b.kind, model: textModelOf(conv, b) };
+      const last = lastCount(conv, b.id);
+      if (last) row.last = last;
+      try {
+        const plan = planTurn(conv, { brain: b.id }, models);
+        row.now = plan.size;
+        if (plan.model.contextLength) row.contextLength = plan.model.contextLength;
+      } catch (err) {
+        row.error = err instanceof Error ? err.message : String(err);
+      }
+      return row;
+    });
+    return {
+      conversationId: conv.id,
+      title: conv.title,
+      messageCount: conv.messages.length,
+      ...(at >= 0 ? { cut: { messageId: conv.messages[at]!.id, before: at } } : {}),
+      brains,
+    };
+  },
+  format: (r: PromptSizes) => {
+    const n = (x: number) => x.toLocaleString("en-US");
+    const head = `Prompt sizes in "${r.title}" (${r.conversationId}): ${r.messageCount} message${r.messageCount === 1 ? "" : "s"}${r.cut ? `, compacted at ${r.cut.messageId} (the ${r.cut.before} before it are left out of every request)` : ", no compaction yet"}.`;
+    const rows = r.brains.map((b) => [
+      b.name,
+      b.last ? lastCountLine(b.last) : "no reply counted yet",
+      b.error ? `can't build: ${b.error}` : b.now ? `~${n(b.now.tokens)}${b.contextLength ? ` of ${n(b.contextLength)}` : ""}` : "",
+    ]);
+    return [head, "", table(["BRAIN", "LAST REAL COUNT (VENICE: PROMPT TOKENS)", "NOW (ESTIMATE)"], rows), "", `NOW: the request each brain would be sent for a turn with no new message. ${ESTIMATE_NOTE}`].join("\n");
+  },
 });
 
 const turnArgs = z.object({ conversation: conversationId, content, brain: brainRef.optional(), roll });
@@ -353,6 +425,92 @@ async function* regenerateEvents(args: z.output<typeof regenerateArgs>, ctx: Ctx
     return { messageId: id, version: message.activeVersion };
   });
   yield { type: "done", message, note: replyNote(head, reply, plan.body.stop), spentUsd };
+}
+
+const compactArgs = z.object({
+  conversation: conversationId,
+  message: messageId.optional().describe("The message to compact through (default: the last). The compaction goes in right after it"),
+  brain: brainRef.optional().describe("The compaction brain (a brain with --compacts; default: the only one)"),
+});
+
+export const messageCompact = streamCommand({
+  name: "message.compact",
+  description: `Compact the story through a message: a summary that every request carries instead of the turns before it.
+T20. The compaction brain (a brain whose messages are compactions, brain.update --compacts; the Tabletop RPG preset's
+Chronicler) answers the ledger up to and including that message, and its reply goes in right after it. From then on every brain's request takes the ledger from the
+newest compaction on: its system prompt, the setup, its pinned messages (a pin from before the compaction too),
+the compaction, then the messages after it, verbatim. Nothing is deleted: the earlier messages stay in the ledger,
+left out of requests, and deleting the compaction brings them back. A compaction is an ordinary message: edit it,
+delete it, regenerate it while it is the last one. Its brain sees only what its own request holds, so a second
+compaction summarizes the first plus what came after it.
+--message defaults to the last message (then this is just a turn by the compaction brain). A message that is a
+compaction itself, or one above the newest compaction, is refused; compacting the message right before your own
+newest compaction again gives that compaction a new version (a re-roll of a compaction that isn't the last).
+A {{count}} in the compaction brain's final reminder is sent as the number of messages so far, compactions not
+counted (see prompt.preview). prompt.preview --compact shows the exact request first. One reply at a time per
+conversation (409 if busy); generation.follow watches it, generation.stop stops it (what had arrived is saved, and
+cuts like any compaction: regenerate, compact again or delete it).`,
+  args: compactArgs,
+  examples: [
+    "./sst message.compact --conversation c_k3j9x0q2ma   # through the last message",
+    "./sst message.compact --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a   # the messages after it stay verbatim",
+    "./sst prompt.preview --conversation c_k3j9x0q2ma --compact --message m_7f2k9d0x1a   # the exact request first",
+  ],
+  async *handler(args, ctx) {
+    const gen = beginGeneration(ctx.requireSession().vault, args.conversation); // 409 before any event
+    try {
+      yield* gen.relay(compactEvents(args, ctx, gen));
+    } finally {
+      gen.release();
+    }
+  },
+});
+
+async function* compactEvents(args: z.output<typeof compactArgs>, ctx: Ctx, gen: GenerationHandle): AsyncGenerator<StreamEvent, void, undefined> {
+  const { vault } = ctx.requireSession();
+  const conv = await gen.load(); // through the write queue (T03 QA-1)
+  const plan = planCompact(conv, { message: args.message, brain: args.brain }, await textModels(ctx.deps.venice));
+  gen.forBrain(plan.brain.id);
+  if (plan.refusal) throw new CommandError(400, "nothing_to_answer", plan.refusal);
+  const through = plan.through.id;
+  const existing = plan.into.kind === "version" ? plan.into.message : null;
+  const id = existing?.id ?? newId("m");
+  const upstream = await openUpstream(ctx, { conv, body: plan.body, brain: plan.brain, model: plan.model }, gen, `Stopped before the compaction started. ${existing ? `${existing.id} keeps its current version.` : "Nothing was saved."}`);
+  const start: StreamEvent = { type: "start", brainId: plan.brain.id, brainName: plan.brain.name, messageId: id, kind: "text", compact: { through }, ...modelOf(plan), conversationTitle: conv.title };
+  if (existing) start.regenerate = true;
+  yield start;
+  const say: Say = {
+    kept: existing ? `No new version was saved; ${existing.id} keeps its current version.` : "No compaction was saved, so requests start where they did.",
+    retry: "To retry, compact again (the same command).",
+    again: { command: "message.compact", args: { conversation: conv.id, message: through, brain: plan.brain.id } },
+  };
+  const reply = yield* collectReply(vault, conv.id, upstream, gen, say);
+  const n = existing ? existing.versions.length + 1 : 1;
+  const head = `${plan.brain.name} · compaction through ${through}${existing ? ` · version ${n}/${n}` : ""}`;
+  const version = generatedVersion(reply, plan.body.model);
+  let message!: LedgerMessage;
+  let made = null as Brain | null; // set inside the save
+  const spentUsd = await saveReply(vault, conv.id, reply, (c) => {
+    // Ledger edits are refused while this runs, so the message (and the compaction after it) are where the plan saw them.
+    const at = c.messages.findIndex((m) => m.id === through);
+    if (at < 0) throw new CommandError(409, "conflict", `${through} was deleted while its compaction was being written, so the compaction wasn't saved.`);
+    if (existing) {
+      const m = c.messages.find((x) => x.id === existing.id);
+      if (!m) throw new CommandError(409, "conflict", `${existing.id} was deleted while its new version was being written, so the new version wasn't saved.`);
+      m.versions.push(version);
+      m.activeVersion = m.versions.length - 1;
+      m.updatedAt = nowIso(); // stamped in the write queue (the browser keeps the newer copy)
+      message = m;
+      return { messageId: m.id, version: m.activeVersion };
+    }
+    message = newMessage({ type: "brain", brainId: plan.brain.id }, "text", version, id);
+    made = insertMessage(c, message, at + 1); // T16: a compaction brain that makes brains makes one, as for any new message
+    return { messageId: id, version: 0 };
+  });
+  if (made) yield brainMade(made, message.id);
+  // A stopped compaction is saved like any stopped reply, and cuts like any compaction: say how to redo it.
+  const redo = reply.stopped ? ` · requests start at this cut-short compaction now: compact through ${through} again for a new version, or delete ${message.id}` : "";
+  yield { type: "done", message, note: replyNote(head, reply, plan.body.stop) + redo, spentUsd };
 }
 
 /**
@@ -773,4 +931,4 @@ function replyNote(head: string, reply: Reply, stops?: string[]): string {
   return note.join(" · ");
 }
 
-export default [promptPreview, turn, messageRegenerate, generationFollow, generationStop];
+export default [promptPreview, promptSize, turn, messageRegenerate, messageCompact, generationFollow, generationStop];

@@ -62,11 +62,12 @@ You've heard a thousand lies in a hundred taverns, and every one of them had a g
 
 **Start with the tavern.** The app ships with a ready-made campaign, *The Gilded Goat*: a quiet D&D 5e evening in a village tavern, with a World Bible, an opening scene and five brains (Game Master, Dice Master, Joke Teller, Scene Painter, Character Portraitist). A hooded figure sits in the corner booth. One click (or `./sst conversation.import --example dnd-tavern`) and you're playing.
 
-- **Several brains, one story.** A conversation holds any number of named AI personas. Each has its own system prompt, reminder and model, and they all read one shared ledger: a brain sees its own past replies as its own and everyone else's framed as `<!-- from: Dice Master -->`. You can add or edit brains mid-game. The *Tabletop RPG* preset gives you six genre-free brains, among them a Character Creator: every character sheet it writes becomes a new brain that plays that person.
+- **Several brains, one story.** A conversation holds any number of named AI personas. Each has its own system prompt, reminder and model, and they all read one shared ledger: a brain sees its own past replies as its own and everyone else's framed as `<!-- from: Dice Master -->`. You can add or edit brains mid-game. The *Tabletop RPG* preset gives you seven genre-free brains, among them a Character Creator: every character sheet it writes becomes a new brain that plays that person.
 - **Steered regeneration.** Regenerate the last reply with a one-off direction ("make her more nervous"). The direction is sent once and never again. Or take a *fresh take*: your idea goes in as a hidden note from a helper brain called the Muse, and the brain answers it without ever seeing the reply you didn't like. Every version is kept, with a pager.
 - **Edit or delete anything**, at any depth, yours or a brain's. An edit becomes what the history always was.
 - **Image brains.** An image brain answers with a forced `generate_image(prompt)` tool call. The prompt goes to the conversation's image model and the picture appears in the chat. Every other brain reads the exact prompt, so the story stays consistent with the picture. **Image brains start with Venice's safe mode on**, which blurs adult content.
 - **Dice and hidden notes.** The server rolls real d20s (never a model). Brains can keep secrets, such as character sheets or the GM's plans, in hidden notes: every brain reads them, and you see them folded.
+- **Compaction and a token counter.** When a long story gets expensive, a brain sums it up, and from then on every request carries the summary instead of the turns before it (nothing is deleted: delete the summary and they come back). `./sst prompt.size` shows each brain's prompt size, and the payload view estimates a request's size before it is sent.
 - **The payload view.** Every word sent to a model is visible and editable: system prompts, the World Bible, the framing templates, reminders, tool descriptions, steer text. The **Payload** button (and `./sst prompt.preview`) shows the literal request body, built by the same function as the real send.
 
 ## How it was built
@@ -164,7 +165,7 @@ The Game Master's system prompt holds the evening's secrets, so the Payload view
 
 ### Start from a preset
 
-A **preset** is a kit of brains with good instructions and no world: no World Bible and no story. The first one, **Tabletop RPG**, is six genre-free brains for one player, plus a brain of their own for every character you meet:
+A **preset** is a kit of brains with good instructions and no world: no World Bible and no story. The first one, **Tabletop RPG**, is seven genre-free brains for one player, plus a brain of their own for every character you meet:
 
 - **Game Master** (the default): narrates in the second person ("You step into the rain") up to your next choice, then stops. When you try something uncertain, it stops just before the outcome with *(That's a roll.)*.
 - **Co-GM**: answers your questions about the scene ("How far is the drop?") without moving the story.
@@ -172,16 +173,17 @@ A **preset** is a kit of brains with good instructions and no world: no World Bi
 - **Character Creator**: writes the full sheet of the person your note names or, with nothing typed, the newest person who has none yet (never a second sheet for someone who has one), as a hidden note, folded on your screen. Every brain reads it. **Each sheet makes that person a brain of their own**, named **Character 1**, **Character 2**, …, with the sheet pinned at the top of everything it reads.
 - **Character 1, 2, …** (made by the Creator): each one is one person, speaking in the first person, from their own sheet. Talk to the hooded figure with her brain, the barkeep with his: each keeps its own lines and its own sheet, so going back to someone fifty messages later still works. They think before they speak (reasoning on, which adds a small hidden instruction from the provider; switch it off in a brain's settings, or in the Creator's blueprint for the ones to come). Rename one once you know who they are ("Character 1" → "Hooded Figure"): every brain sees the new name from then on.
 - **Scene Painter** and **Character Portraitist**: paint the moment, or the newest character, from the sheets. The prompt is the picture's caption, so they keep the sheets' secrets out of it.
+- **Chronicler**: when the story gets long, sums up all of it in one hidden note (everyone in it, their looks and secrets, the plot, what changed, open threads, the painters' style line) that then stands in for everything before it. See **Compact a long campaign** below.
 
 Every brain reads every sheet, so a secret can slip out now and then; the prompts are written to keep that rare.
 
-In the browser: **New conversation** → **From a preset**. The Tabletop RPG card shows its six brains (**What each brain does** lists their jobs). Type a title ("Chinatown") and press **Start from this preset**. The new conversation opens on **Write the World Bible first**: press **Write the World Bible**, and the Setup tab opens on it with the cursor ready. Say what kind of story it is, who you play and where tonight begins (three lines is plenty), then **Save** (⌘ Enter). Then play: type "I approach the hooded figure" and press Enter for the Game Master, or press **Send** with nothing typed and the Game Master opens the scene. The other brains are the chips beside Send (see **Play** below).
+In the browser: **New conversation** → **From a preset**. The Tabletop RPG card shows its seven brains (**What each brain does** lists their jobs). Type a title ("Chinatown") and press **Start from this preset**. The new conversation opens on **Write the World Bible first**: press **Write the World Bible**, and the Setup tab opens on it with the cursor ready. Say what kind of story it is, who you play and where tonight begins (three lines is plenty), then **Save** (⌘ Enter). Then play: type "I approach the hooded figure" and press Enter for the Game Master, or press **Send** with nothing typed and the Game Master opens the scene. The other brains are the chips beside Send (see **Play** below).
 
 From the terminal:
 
 ```bash
 ./sst presets.list                                                   # the presets, and what each brain does
-./sst conversation.import --preset tabletop-rpg --title "Chinatown"  # six brains, no World Bible, no story
+./sst conversation.import --preset tabletop-rpg --title "Chinatown"  # seven brains, no World Bible, no story
 export SST_CONVERSATION=c_...
 ./sst setup.add --content @world.md                                  # your World Bible: the world, the tone, who you play
 ./sst turn --content "I approach the hooded figure."
@@ -230,6 +232,16 @@ In the browser:
 **Compare models at one point of the story:** under any message, **Clone from here** (the branch icon) makes a new conversation with the story up to and including that message, images and all. The title is filled in as "Tavern - " with the cursor after it: type the rest (or nothing, and it's named after the model), pick the text model, press Enter, and the copy opens, ready for the next turn. Cloning from the last message brings your unsent text along, so you can type the next action once, then clone, clone, clone and send it under each model. The copies and the original never touch each other. Characters made from later messages stay behind. From the terminal: `./sst conversation.clone --id c_... --through m_... --title "Tavern - Gemma" --text-model google-gemma-4-31b-it` (`./sst conversation.get --id c_... --json` shows the message ids).
 
 **A model per brain:** the conversation's text and image models are the defaults, and any brain can have its own instead: say the table on DeepSeek V4.1 Flash and the Co-GM on Gemma 4 31B, or one painter on another image model. A brain without its own follows the conversation's model when you change it; one with its own keeps it (in a clone under another model too). In the browser: Settings → Brains → the brain → **Text model** (and **Image model** for a painter); "Conversation default" puts it back, and its reasoning switch and prices follow the model you pick. The chat header says when some brains are on their own, and the Payload view says which model a brain's request uses, and whose. From the terminal: `./sst brain.update --brain "Co-GM" --text-model google-gemma-4-31b-it`, `--image-model hunyuan-image-v3` on an image brain, and `--text-model null` to put a brain back on the conversation's. `./sst brain.list` names each brain's model. Some models always reason (GLM 5.3, if you enable it, refuses reasoning off): the brain's card and the Payload view say so.
+
+**Compact a long campaign.** Every request carries the whole story, so a long campaign gets slow and expensive. `./sst prompt.size` shows how big each brain's prompt is: Venice's real count from its last reply (cached tokens included) and an estimate of its next request (an estimate: about 4.4 characters a token). When it gets big, compact: a **compaction brain** (a brain whose messages are compactions; the preset's **Chronicler**) sums up everything so far, and from then on every brain reads, in order, its own instructions, the World Bible, its own pinned messages (a character's sheet stays at the top of what its brain reads), the summary, then what came after it. Nothing is deleted: the messages above the summary stay in the conversation, left out of requests, and deleting the summary brings them back. Compact through any message, and the messages after it stay word for word below the summary; a second compaction sums up the first plus what came after. The summary says how many messages it covers: the app counts them (a `{{count}}` in the compaction brain's reminder), since a model miscounts. Edit the summary like any message, or regenerate it while it's the last one. From the terminal:
+
+```bash
+./sst prompt.size                                        # each brain's prompt: the last real count, and the estimate now
+./sst prompt.preview --compact                           # the exact request the Chronicler would be sent
+./sst message.compact                                    # compact through the last message
+./sst message.compact --message m_...                    # through an earlier one: the messages after it stay as they are
+./sst brain.import --preset tabletop-rpg --brain Chronicler   # a conversation without one (any brain can be one: brain.update --compacts)
+```
 
 ### From the terminal
 

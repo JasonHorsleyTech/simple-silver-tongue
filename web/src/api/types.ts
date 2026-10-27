@@ -28,6 +28,7 @@ import type {
   Templates,
 } from "../../../src/conversations/types.ts";
 import type { ModelInfo } from "../../../src/venice/models.ts";
+import type { LastCount, PromptSizes } from "../../../src/conversations/size.ts";
 
 export type { Brain, BrainBlueprint, BrainMaker, BrainTool, ChatMessage, ChatRequest, Conversation, ImageRecord, ImageRequest, ImageShape, LedgerMessage, MessageVersion, ModelInfo, Pin, PinRole, RetryRequest, Roll, SetupMessage, SetupRole, Templates };
 
@@ -42,6 +43,10 @@ export { DEFAULT_PIN_AS, PIN_ROLES } from "../../../src/conversations/types.ts";
 
 /** T18: the model a brain uses, the server's own rule: its own, or the conversation's. */
 export { imageModelOf, textModelOf } from "../../../src/conversations/types.ts";
+/** T20: where every request starts (the newest compaction), which messages are compactions, and the count a {{count}} gets. */
+export { compactionCut, COUNT_PLACEHOLDER, isCompaction, isCompactor, messageCount } from "../../../src/conversations/compaction.ts";
+/** T20: the token counter: a body's size estimate and a brain's last real count (prompt.size, prompt.preview's `size`). */
+export { estimateSize, lastCount, type LastCount, type PromptSizes } from "../../../src/conversations/size.ts";
 
 /**
  * T16: how a maker names the brains it makes, the server's own rule: the name the next one gets (`freeMadeName`, which
@@ -84,6 +89,12 @@ export {
   pinnedNote,
   makesNote,
   MAKES_NUMBER,
+  /** T20: the payload view's compaction notes, and the words that say a size estimate is one. */
+  compactNote,
+  compactsNote,
+  countNote,
+  cutNote,
+  ESTIMATE_NOTE,
 } from "../../../src/conversations/wording.ts";
 
 /**
@@ -189,6 +200,18 @@ export type Preview = {
    * right after the setup) and how it is sent. Absent without pins. `notes` says the same in words.
    */
   pinned?: Array<{ index: number; messageId: string; as: PinRole }>;
+  /**
+   * T20: the request's size before it is sent: `chars`, and `tokens`, an estimate (say so: ESTIMATE_NOTE). `last`: the
+   * brain's last real count from Venice (prompt tokens, cached ones included); `contextLength`: its model's.
+   */
+  size: { chars: number; tokens: number; last?: LastCount; contextLength?: number };
+  /** T20: the compaction this request starts at, and how many ledger messages before it are left out. Absent: no cut. */
+  cut?: { messageId: string; before: number };
+  /**
+   * T20, prompt.preview with compact: the message compacted through, how many after it stay verbatim, and, when the
+   * compaction right after it gets a new version instead, which (`messageId`, `newVersion` 1-based).
+   */
+  compact?: { through: string; after: number; messageId?: string; newVersion?: number };
 };
 
 /** message.get, .edit and .select-version: the message, with every version, and who wrote it. */
@@ -392,9 +415,11 @@ export type Commands = {
   "message.roll": { args: { conversation: string }; result: MessageView };
   /** T09: `roll` previews turn --roll; the roll's line keeps {{roll}} where the number will go (ROLL_PREVIEW_NOTE). */
   "prompt.preview": {
-    args: { conversation: string; brain?: string; content?: string; roll?: boolean; regenerate?: boolean; message?: string; steer?: string; thought?: string };
+    args: { conversation: string; brain?: string; content?: string; roll?: boolean; regenerate?: boolean; compact?: boolean; message?: string; steer?: string; thought?: string };
     result: Preview;
   };
+  /** T20: each brain's last real count from Venice and an estimate of its request now (the token counter). */
+  "prompt.size": { args: { conversation: string }; result: PromptSizes };
   /**
    * Any message, any depth: the active version's text, in place. 409 while a reply is being generated. An image
    * message's text is its prompt: a new one answers at once with `painting`, and its image follows (image.follow);
@@ -447,6 +472,12 @@ export type StreamCommands = {
    */
   "message.regenerate": { args: { conversation: string; message?: string; steer?: string; thought?: string } };
   /**
+   * T20: compact through a message (default: the last): the compaction brain (`brain`, default the only one) answers
+   * the ledger up to it, and its reply goes in right after it (or, right before its own newest compaction, becomes a
+   * new version of that). From then on every request starts at the newest compaction (`compactionCut`).
+   */
+  "message.compact": { args: { conversation: string; message?: string; brain?: string } };
+  /**
    * T05: paint an image message's active prompt again. A failed, interrupted or blurred image is replaced; a
    * finished one is kept, and the retry becomes a new version with the same prompt (`repaintOf`). 409 while
    * that version's image is still being made.
@@ -488,6 +519,8 @@ export type StreamEvent =
       /** T18: the text model the reply is written with (turn, message.regenerate); `ownModel`: the brain's own, not the conversation's. */
       model?: string;
       ownModel?: true;
+      /** T20, message.compact: the message it compacts through (the reply goes right after it; with `regenerate`, a new version of messageId). */
+      compact?: { through: string };
     }
   | { type: "reasoning"; delta: string }
   | { type: "delta"; delta: string }

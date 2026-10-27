@@ -190,3 +190,36 @@ export const makesNote = (brain: string, name: string) =>
 
 /** T16: where the number goes in a maker's name pattern ("Character {{n}}"). */
 export const MAKES_NUMBER = "{{n}}";
+
+/**
+ * T20: the payload view's line for a request that starts at a compaction (the cut): what is left out, and that nothing
+ * is gone. `author` is the compaction's brain; `before` the messages before it in this request's ledger.
+ */
+export const cutNote = (o: { messageId: string; author: string; before: number; pinnedAbove: number }) =>
+  `Compacted: this request starts at ${o.messageId}, ${o.author}'s compaction, and the ${o.before === 1 ? "message" : `${o.before} messages`} before it ${o.before === 1 ? "is" : "are"} left out (still in the ledger: delete the compaction to bring ${o.before === 1 ? "it" : "them"} back).${o.pinnedAbove ? ` ${o.pinnedAbove === 1 ? "One of them is" : `${o.pinnedAbove} of them are`} pinned to this brain, so ${o.pinnedAbove === 1 ? "it is" : "they are"} still sent, right after the setup.` : ""}`;
+
+/** T20: the payload view's line when the final reminder has a {{count}}: the number it was sent as, and what it counts. */
+export const countNote = (count: number) =>
+  `The final reminder's {{count}} is sent as ${count}: the messages from the start of the conversation through the last one this request holds, compactions not counted. The app counts them each time; a model would miscount.`;
+
+/** T20: the payload view's line for a turn to a compaction brain: its reply is a compaction, which moves the cut. */
+export const compactsNote = (brain: string) =>
+  `${brain}'s messages are compactions: once this reply is saved, every brain's request starts at it, and the messages before it are left out of requests (not deleted: delete the compaction to bring them back).`;
+
+/**
+ * T20: the payload view's line for message.compact: who compacts through which message, where the reply goes, and what
+ * stays verbatim after it. `version`: the compaction right after the message gets a new version instead (1-based).
+ */
+export const compactNote = (o: { brain: string; through: string; after: number; version?: { messageId: string; n: number } }) =>
+  `A compaction through ${o.through}: ${o.brain} answers the ledger up to and including it, and ${o.version ? `its reply becomes version ${o.version.n} of the compaction right after it (${o.version.messageId})` : "its reply goes in right after it"}. From then on every brain's request starts at the compaction${o.after ? `; the ${o.after === 1 ? "message" : `${o.after} messages`} after ${o.through} stay${o.after === 1 ? "s" : ""} as ${o.after === 1 ? "it is" : "they are"}, below it` : ""}. Nothing is deleted: delete the compaction to bring the earlier messages back.`;
+
+/**
+ * T20: a request's size before it is sent, as an estimate: characters over this many per token. Measured on DeepSeek V4.1
+ * Flash and English text (T18: the preset GM's ~5,200-character body counted 1,185 prompt tokens), plus a few tokens per
+ * message for the chat template. Other models and languages count differently; Venice's count comes with the reply.
+ */
+export const CHARS_PER_TOKEN = 4.4;
+export const TOKENS_PER_MESSAGE = 4;
+
+/** T20: the words that say an estimate is one, wherever it is shown. */
+export const ESTIMATE_NOTE = `An estimate: about ${CHARS_PER_TOKEN} characters a token (measured on DeepSeek, English) plus ${TOKENS_PER_MESSAGE} a message. Venice's own count comes with each reply.`;

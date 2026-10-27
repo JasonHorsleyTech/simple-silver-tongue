@@ -2,8 +2,10 @@ import { table } from "../lib/text.ts";
 import type { FormatOpts } from "../registry.ts";
 import { usd } from "../venice/models.ts";
 import { foldHidden, revealHint } from "./hidden.ts";
-import { PIN_AS_WORDS, rollLabel } from "./wording.ts";
-import { activeVersion, type PinnedAt } from "./prompt.ts";
+import { ESTIMATE_NOTE, PIN_AS_WORDS, rollLabel } from "./wording.ts";
+import { activeVersion, type CutAt, type PinnedAt } from "./prompt.ts";
+import type { LastCount } from "./size.ts";
+import { compactionCut, isCompaction } from "./compaction.ts";
 import { totalCost, type ModelUse } from "./turn.ts";
 import type { ChatRequest, Conversation, ImageRecord, ImageRequest, LedgerMessage, MessageVersion } from "./types.ts";
 
@@ -76,7 +78,7 @@ export function formatConversation(c: Conversation, opts?: FormatOpts): string {
         const reminder = b.finalReminder.enabled && b.finalReminder.content.trim() ? ", reminder" : "";
         // T16: what brain.list shows in full, in a word: its pins, and the brains it makes.
         const pins = b.pins?.length ? `, ${b.pins.length} pinned` : "";
-        const makes = b.makes?.enabled ? `, makes "${b.makes.name}"` : "";
+        const makes = (b.makes?.enabled ? `, makes "${b.makes.name}"` : "") + (b.compacts ? ", compacts" : "");
         // T18: a brain on a model of its own says so; the others use the one in the header.
         const own = [b.textModel ? `own model ${b.textModel}` : "", b.kind === "image" && b.imageModel ? `own image model ${b.imageModel}` : ""].filter(Boolean).map((x) => `, ${x}`).join("");
         return `${b.name}${b.id === c.defaultBrainId ? " (default)" : ""} [${b.id}, ${b.kind}, reasoning ${b.reasoning.enabled ? b.reasoning.effort : "off"}${reminder}${pins}${makes}${own}]`;
@@ -85,10 +87,16 @@ export function formatConversation(c: Conversation, opts?: FormatOpts): string {
   ];
   if (c.setup.length) out.push(`Setup messages: ${c.setup.map((s) => `${s.label} (${s.id}${s.role === "user" ? "" : `, ${s.role}`})`).join(", ")} (setup.list shows them)`);
   if (!c.messages.length) out.push("", `(no messages yet: ./sst turn --conversation ${c.id} --content "...")`);
-  for (const m of c.messages) {
+  // T20: the newest compaction is where every request starts; the messages above it are kept, left out of requests.
+  const cut = compactionCut(c, c.messages);
+  if (cut > 0) out.push(`Compacted at ${c.messages[cut]!.id}: every request starts there, and the ${cut === 1 ? "message" : `${cut} messages`} above it ${cut === 1 ? "is" : "are"} left out (kept here; delete the compaction to bring ${cut === 1 ? "it" : "them"} back).`);
+  for (const [i, m] of c.messages.entries()) {
     const v = activeVersion(m);
     const who = m.author.type === "player" ? "you" : (brainName.get(m.author.brainId) ?? m.author.brainId);
     const bits = [who, m.id];
+    if (i === cut) bits.push("compaction: every request starts here");
+    else if (isCompaction(c, m)) bits.push("compaction (an older one, above the newest)");
+    if (i < cut) bits.push("compacted: left out of requests");
     if (m.versions.length > 1) bits.push(`version ${m.activeVersion + 1}/${m.versions.length} (message.get shows all)`);
     if (m.author.type === "brain" && v.source === "authored") bits.push("written by you");
     out.push("", `── ${[...bits, ...versionBits(v, m.kind)].join(" · ")} ──`, shown(v.content, m.kind, opts, count));
@@ -187,6 +195,18 @@ export type Preview = {
     note?: { messageId?: string; version: number; isNew: boolean; same: boolean; muse: string; museCreated: boolean };
   };
   /**
+   * T20: the request's size before it is sent: `chars`, and `tokens`, an estimate (ESTIMATE_NOTE says how it is made).
+   * `last`: this brain's last real count from Venice (prompt tokens, cached ones included); `contextLength`: its model's.
+   */
+  size: { chars: number; tokens: number; last?: LastCount; contextLength?: number };
+  /** T20: the compaction this request starts at, and how many messages before it are left out. Absent: no cut. */
+  cut?: CutAt;
+  /**
+   * T20, prompt.preview --compact: the message compacted through, how many messages after it stay as they are, and,
+   * when the compaction right after it gets a new version instead of a new message, which (`messageId`, `newVersion` 1-based).
+   */
+  compact?: { through: string; after: number; messageId?: string; newVersion?: number };
+  /**
    * Image brains (T05): the /image/generate request their prompt goes into. `params` is the exact body except
    * `prompt`, which is the prompt the generate_image call writes, word for word. `notes` say which image settings
    * this model can't take and so are left out.
@@ -198,6 +218,21 @@ export type Preview = {
 export function modelLine(what: string, u: ModelUse): string {
   const named = u.name && u.name !== u.id ? `${u.name} (${u.id})` : u.id;
   return `${what}: ${named}, ${u.own ? `the brain's own; the conversation's is ${u.conversation}` : "the conversation's"}.`;
+}
+
+const n = (x: number) => x.toLocaleString("en-US");
+
+/** T20: a last real count in words: "11,980 in (10,240 cached) · m_…, 3 messages ago". */
+export function lastCountLine(l: LastCount): string {
+  const ago = l.messagesAgo === 0 ? "the newest message" : `${l.messagesAgo} message${l.messagesAgo === 1 ? "" : "s"} ago`;
+  return `${n(l.promptTokens)} in${l.cachedTokens ? ` (${n(l.cachedTokens)} cached)` : ""} · ${l.messageId}, ${ago}${l.beforeCut ? " · before the newest compaction, so its next request is cut" : ""}`;
+}
+
+/** T20: the payload view's size line: the estimate, which says it is one, and the brain's last real count. */
+function sizeLine(brain: string, s: Preview["size"]): string {
+  const of = s.contextLength ? ` of the model's ${n(s.contextLength)}` : "";
+  const last = s.last ? ` ${brain}'s last real count from Venice: ${lastCountLine(s.last)}.` : ` ${brain} has no reply Venice counted yet.`;
+  return `Size: about ${n(s.tokens)} prompt tokens${of} (${n(s.chars)} characters). ${ESTIMATE_NOTE}${last}`;
 }
 
 /** The exact body: every non-message field as JSON, then each message's content verbatim. */
@@ -218,6 +253,7 @@ export function formatPreview(p: Preview): string {
         ]
       : []),
     ...p.notes.map((n) => `Note: ${n}`),
+    sizeLine(p.brainName, p.size),
     JSON.stringify(rest),
     `${messages.length} messages:`,
   ];
@@ -234,6 +270,6 @@ export function formatPreview(p: Preview): string {
     out.push(...p.image.notes.map((n) => `Note: ${n}`));
   }
   out.push("", "(--json prints the body exactly as it is sent.)");
-  if (p.refusal) out.push(`Note: ${r ? "message.regenerate" : "turn"} would not send this as it stands. ${p.refusal}`);
+  if (p.refusal) out.push(`Note: ${r ? "message.regenerate" : p.compact ? "message.compact" : "turn"} would not send this as it stands. ${p.refusal}`);
   return out.join("\n");
 }

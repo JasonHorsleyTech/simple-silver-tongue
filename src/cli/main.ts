@@ -405,7 +405,9 @@ ${foldHidden(text).text}
         if (typeof ev.messageId === "string") messageId = ev.messageId;
         // T18: a brain on a model of its own says so (the others use the conversation's, as conversation.get shows).
         const own = ev.ownModel && typeof ev.model === "string" ? ` · own model ${ev.model}` : "";
-        errOut(dim(`[${ev.brainName ?? ev.brainId ?? "start"}${own}${where}]\n`));
+        // T20: a compaction says what it compacts through, and where its reply goes.
+        const compact = typeof ev.compact?.through === "string" ? ` · compacting through ${ev.compact.through}${ev.regenerate ? `, a new version of ${ev.messageId}` : ""}` : "";
+        errOut(dim(`[${ev.brainName ?? ev.brainId ?? "start"}${own}${compact}${where}]\n`));
         break;
       }
       case "brain_made":

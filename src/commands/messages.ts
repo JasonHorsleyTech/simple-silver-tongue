@@ -10,6 +10,7 @@ import { addSpend, newMessage, rollMessage } from "../conversations/turn.ts";
 import type { Author, Brain, Conversation, LedgerMessage } from "../conversations/types.ts";
 import { appendMessage, forgetMessage, type Forgotten } from "../conversations/makers.ts";
 import { isMuse, rollLabel } from "../conversations/wording.ts";
+import { compactionCut } from "../conversations/compaction.ts";
 import { newMuse } from "../conversations/defaults.ts";
 import { badRequest, CommandError, conflict, notFound } from "../lib/errors.ts";
 import { nowIso } from "../lib/ids.ts";
@@ -76,6 +77,21 @@ function paintingLine(r: ImageMessageView): string {
 }
 
 const target = { conversation: conversationId, message: messageId };
+
+/**
+ * T20: where every request starts (the newest compaction's id), or null. A delete or a change of author can move it;
+ * the answer then says so (`cutMoved`), since every brain's next request changes with it.
+ */
+const cutAt = (c: Conversation): string | null => {
+  const at = compactionCut(c, c.messages);
+  return at >= 0 ? c.messages[at]!.id : null;
+};
+export type CutMoved = { from: string | null; to: string | null };
+const moved = (from: string | null, to: string | null): { cutMoved?: CutMoved } => (from === to ? {} : { cutMoved: { from, to } });
+const cutLine = (m: CutMoved) =>
+  m.to === null
+    ? "No compaction is left, so every brain's request holds the whole ledger again."
+    : `Every brain's request now starts at the compaction ${m.to}${m.from === null ? ", and the messages before it are left out (kept in the ledger)" : ` (it started at ${m.from})`}.`;
 
 const messageText = (blank: string, describe: string) =>
   z
@@ -221,6 +237,8 @@ export const messageDelete = command({
 From the next request on, it is as if it was never there. What it cost stays in the conversation's total.
 T16: every pin of it goes too, and a brain made from it (brain.update --makes, brain.make) is deleted with it while
 that brain has never spoken; one that has spoken stays and only loses the pin. The answer says which brain lost what.
+T20: deleting the newest compaction brings back the messages before it (requests start at the one before, or at the
+start); the answer says where requests start now.
 An image message's image files (every version's) are deleted with it. Refused while a reply is being generated,
 and while any of the message's images is still being made (Venice is making and billing it: wait for it to land).`,
   args: z.object(target),
@@ -232,9 +250,11 @@ and while any of the message's images is still being made (Venice is making and 
       const m = findMessage(c, args.message);
       assertImageIdle(vault, m, "all", "delete");
       addSpend(c); // pin the running total first: the money is spent, even when the message goes (T03 QA-2)
+      const from = cutAt(c);
       c.messages.splice(c.messages.indexOf(m), 1);
       // T16: its pins go, and a brain made from it goes too while it has never spoken. In the same write.
-      return { gone: m, forgotten: forgetMessage(c, m.id) };
+      const forgotten = forgetMessage(c, m.id);
+      return { gone: m, forgotten, ...moved(from, cutAt(c)) }; // T20: deleting a compaction brings the messages before it back
     });
     // After the save: a failed removal leaves an unreferenced file, never a message whose image is missing.
     const images = imageIdsOf([result.gone]);
@@ -247,6 +267,7 @@ and while any of the message's images is still being made (Venice is making and 
       ...(images.length ? { imagesDeleted: images } : {}),
       ...(brainsDeleted.length ? { brainsDeleted } : {}),
       ...(unpinned.length ? { unpinned } : {}),
+      ...(result.cutMoved ? { cutMoved: result.cutMoved } : {}),
     };
   },
   format: (r: MessageDeleted) => {
@@ -261,12 +282,13 @@ and while any of the message's images is still being made (Venice is making and 
           : `${b.name} (${b.brainId}) had it pinned; the pin is gone.`,
       );
     }
+    if (r.cutMoved) out.push(cutLine(r.cutMoved));
     return out.join("\n");
   },
 });
 
 /** What message.delete answers. T16: the brains it deleted with the message, and the brains that lost their pin of it. */
-export type MessageDeleted = { conversationId: string; deleted: string; messageCount: number; imagesDeleted?: string[] } & Partial<Forgotten>;
+export type MessageDeleted = { conversationId: string; deleted: string; messageCount: number; imagesDeleted?: string[]; cutMoved?: CutMoved } & Partial<Forgotten>;
 
 export const messageSelectVersion = command({
   name: "message.select-version",
@@ -312,8 +334,9 @@ An edit like any other: from the next request on, history "always was" that way.
 as its own words (assistant), and every other brain sees it framed with the new name. A text message can go to any
 text brain or to you ("player"); an image prompt only to another image brain. A brain's message comes to you only
 with a single version (yours have one), and a roll the server made stays yours. Its versions, pins and the brain it
-made (if any) stay as they are, and it makes no new brain (brain.make does that by hand). Refused while a reply is
-being generated.`,
+made (if any) stay as they are, and it makes no new brain (brain.make does that by hand). T20: moved to a brain whose
+messages are compactions, it becomes one (and away from one, it stops being one), so requests may start elsewhere:
+the answer says so. Refused while a reply is being generated.`,
   args: z.object({
     ...target,
     as: authorRef.describe(`Who said it now: "${PLAYER}" (you), or a brain's name or id`),
@@ -322,7 +345,7 @@ being generated.`,
     './sst message.set-author --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --as "Character 2"',
     "./sst message.set-author --conversation c_k3j9x0q2ma --message m_7f2k9d0x1a --as player",
   ],
-  handler: async (args, ctx): Promise<MessageView & { from: string; changed: boolean; museAdded?: Brain }> => {
+  handler: async (args, ctx): Promise<MessageView & { from: string; changed: boolean; museAdded?: Brain; cutMoved?: CutMoved }> => {
     const { vault } = ctx.requireSession();
     const { conv, result } = await mutateConversation(vault, args.conversation, (c) => {
       assertLedgerIdle(vault, c.id);
@@ -346,16 +369,19 @@ being generated.`,
         }
         if (m.versions.some((v) => v.roll)) throw badRequest(`${m.id} is a roll the server made for you, so it stays yours. Edit or delete it instead.`);
       }
+      const cutFrom = cutAt(c);
       m.author = to;
       m.updatedAt = nowIso(); // stamped in the write queue (the browser keeps the newer copy)
-      return { m, from, changed: true, museAdded: found?.museAdded ?? null };
+      // T20: to or from a brain whose messages are compactions, the message becomes one, or stops being one.
+      return { m, from, changed: true, museAdded: found?.museAdded ?? null, ...moved(cutFrom, cutAt(c)) };
     });
-    return { ...viewOf(conv, result.m), from: result.from, changed: result.changed, ...(result.museAdded ? { museAdded: result.museAdded } : {}) };
+    const cut = "cutMoved" in result && result.cutMoved ? { cutMoved: result.cutMoved } : {};
+    return { ...viewOf(conv, result.m), from: result.from, changed: result.changed, ...(result.museAdded ? { museAdded: result.museAdded } : {}), ...cut };
   },
-  format: (r: MessageView & { from: string; changed: boolean; museAdded?: Brain }) =>
+  format: (r: MessageView & { from: string; changed: boolean; museAdded?: Brain; cutMoved?: CutMoved }) =>
     (r.changed
       ? `${r.message.id} is now said by ${r.author} (was ${r.from}). Every brain sees it that way from the next request: ${r.author === "you" ? "framed as yours" : `${r.author} reads it as its own words, and the other brains see it framed with that name`}.`
-      : `${r.message.id} is already said by ${r.author}. Nothing changed.`) + (r.museAdded ? `\n${museLine(r.museAdded)}` : ""),
+      : `${r.message.id} is already said by ${r.author}. Nothing changed.`) + (r.museAdded ? `\n${museLine(r.museAdded)}` : "") + (r.cutMoved ? `\n${cutLine(r.cutMoved)}` : ""),
 });
 
 export default [messageAdd, messageRoll, messageGet, messageEdit, messageDelete, messageSelectVersion, messageSetAuthor];

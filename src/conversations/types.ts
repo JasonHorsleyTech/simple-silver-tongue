@@ -133,6 +133,12 @@ export type Brain = {
   textModel?: string;
   /** T18, image brains only: its own image model, which paints its prompts instead of the conversation's. Absent: the conversation's. */
   imageModel?: string;
+  /**
+   * T20: "Its messages are compactions" (text brains only). Every brain's request takes the ledger from the newest
+   * compaction on (the cut; compaction.ts); the messages before it stay in the ledger, left out of requests. Pins still
+   * reach their brain. Absent or false: an ordinary brain. See design.md, "Compaction".
+   */
+  compacts?: boolean;
 };
 
 /** T18: the text model a brain's requests use: its own, or the conversation's. The one rule; the browser imports it too. */
@@ -337,7 +343,9 @@ export type RetryRequest =
   | { command: "turn"; args: { conversation: string; brain: string } }
   | { command: "message.regenerate"; args: { conversation: string; message: string; steer?: string; thought?: string } }
   /** A failed image (T05): paint the active version's prompt again. Rides on image_error events as `retry`. */
-  | { command: "image.retry"; args: { conversation: string; message: string } };
+  | { command: "image.retry"; args: { conversation: string; message: string } }
+  /** T20: a compaction whose reply broke: the same compaction brain, through the same message. */
+  | { command: "message.compact"; args: { conversation: string; message: string; brain: string } };
 
 /**
  * The exact /image/generate body (T05), minus the auth header. buildImageRequest (src/images/request.ts) makes

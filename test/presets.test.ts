@@ -9,11 +9,11 @@ import { startTestServer } from "./helpers.ts";
 const FAST_KDF = { N: 2 ** 10, r: 8, p: 1 };
 const PRESET = JSON.parse(readFileSync(new URL("../presets/tabletop-rpg.json", import.meta.url), "utf8"));
 const EXAMPLE = JSON.parse(readFileSync(new URL("../examples/dnd-tavern.json", import.meta.url), "utf8"));
-/** T16: the Character Actor went; each character the Creator writes gets a brain of their own instead. */
-const SIX = ["Game Master", "Co-GM", "Show Me the Odds", "Character Creator", "Scene Painter", "Character Portraitist"];
+/** T16: the Character Actor went; each character the Creator writes gets a brain of their own instead. T20: the Chronicler. */
+const SEVEN = ["Game Master", "Co-GM", "Show Me the Odds", "Character Creator", "Scene Painter", "Character Portraitist", "Chronicler"];
 
 /** What brain.import must bring over: the whole brain as its file has it (T10). */
-const brainOf = (b: Brain) => ({ kind: b.kind, systemPrompt: b.systemPrompt, finalReminder: b.finalReminder, reasoning: b.reasoning, stop: b.stop, safeMode: b.safeMode, tool: b.tool, makes: b.makes });
+const brainOf = (b: Brain) => ({ kind: b.kind, systemPrompt: b.systemPrompt, finalReminder: b.finalReminder, reasoning: b.reasoning, stop: b.stop, safeMode: b.safeMode, tool: b.tool, makes: b.makes, compacts: b.compacts });
 const fileBrain = (b: Record<string, unknown>) => ({
   kind: b.kind,
   systemPrompt: b.systemPrompt,
@@ -24,6 +24,7 @@ const fileBrain = (b: Record<string, unknown>) => ({
   tool: b.tool,
   // T16: the maker setting comes whole; a file that doesn't say otherwise counts from 1.
   makes: b.makes ? { next: 1, ...(b.makes as object) } : undefined,
+  compacts: b.compacts, // T20
 });
 
 describe("presets: list, start one, add one of its brains (T10)", () => {
@@ -54,8 +55,8 @@ describe("presets: list, start one, add one of its brains (T10)", () => {
     assert.ok(p, "tabletop-rpg is listed");
     assert.equal(p.error, undefined);
     assert.equal(p.title, "Tabletop RPG");
-    assert.deepEqual(p.brains.map((b: { name: string }) => b.name), SIX);
-    assert.deepEqual(p.brains.map((b: { kind: string }) => b.kind), ["text", "text", "text", "text", "image", "image"]);
+    assert.deepEqual(p.brains.map((b: { name: string }) => b.name), SEVEN);
+    assert.deepEqual(p.brains.map((b: { kind: string }) => b.kind), ["text", "text", "text", "text", "image", "image", "text"]);
     assert.ok(p.brains.every((b: { about?: string; color?: string }) => b.about && /^#[0-9a-f]{6}$/i.test(b.color ?? "")), "a line on each brain's job, and its badge color");
     // Reasoning is a labeled opt-in: the list says which brain the preset switches it on for (T10 frontend: the badges).
     // T16: none; the brains the Creator makes think first (its blueprint), and the list says it makes them.
@@ -74,7 +75,7 @@ describe("presets: list, start one, add one of its brains (T10)", () => {
     assert.ok(examples.find((e: { name: string }) => e.name === "dnd-tavern").brains.every((b: { about?: string }) => b.about));
   });
 
-  test('"Chinatown" from the preset: six brains as the file has them, no setup, no messages, then a World Bible', async () => {
+  test('"Chinatown" from the preset: seven brains as the file has them, no setup, no messages, then a World Bible', async () => {
     await login();
     const started = await ok(["conversation.import", "--preset", "tabletop-rpg", "--title", "Chinatown"]);
     assert.match(started.stdout, /Setup: none · 0 messages/);
@@ -82,7 +83,7 @@ describe("presets: list, start one, add one of its brains (T10)", () => {
     const id = started.stdout.match(/Imported (c_[a-z0-9]+)/)![1]!;
     const conv = await get(id);
     assert.equal(conv.title, "Chinatown");
-    assert.deepEqual(conv.brains.map((b) => b.name), SIX);
+    assert.deepEqual(conv.brains.map((b) => b.name), SEVEN);
     assert.equal(conv.setup.length, 0);
     assert.equal(conv.messages.length, 0);
     assert.equal(conv.brains.find((b) => b.id === conv.defaultBrainId)!.name, "Game Master");
@@ -110,6 +111,14 @@ describe("presets: list, start one, add one of its brains (T10)", () => {
     assert.deepEqual(blueprint.reasoning, { enabled: true, effort: "low" }, "a character's brain thinks first, as the Actor did (live evidence: reports/T10-engineer.md)");
     assert.ok(conv.brains.every((b) => !b.reasoning.enabled), "every brain of the preset itself: reasoning off");
     assert.equal(conv.brains.find((b) => b.name === "Character Creator")!.makes!.name, "Character {{n}}");
+    // T20: the Chronicler writes compactions, its reminder has the count the app fills in, and every brain (the
+    // characters to come too) knows what a compaction is: the summary is all that is left of the story before it.
+    const chronicler = conv.brains.find((b) => b.name === "Chronicler")!;
+    assert.equal(chronicler.compacts, true);
+    assert.equal(conv.brains.filter((b) => b.compacts).length, 1, "only the Chronicler compacts");
+    assert.match(chronicler.finalReminder.content, /\{\{count\}\} messages/);
+    for (const b of [...conv.brains, { ...blueprint, name: "the Creator's blueprint" } as Brain]) assert.match(b.systemPrompt, /Chronicler/, `${b.name} knows what a compaction is`);
+    assert.match(conv.brains.find((b) => b.name === "Character Creator")!.finalReminder.content, /the Chronicler's summary says has a sheet/);
 
     // Write the World Bible, and every brain reads it right after its system prompt.
     await ok(["setup.add", "--conversation", id, "--content", "<!-- This is the World Bible. -->\nLos Angeles, 1938."]);
@@ -191,7 +200,7 @@ describe("presets: list, start one, add one of its brains (T10)", () => {
     await fails(["brain.import", "--conversation", c, "--preset", "tabletop-rpg", "--example", "dnd-tavern", "--brain", "Co-GM"], /Pass one of --preset/);
     await fails(["brain.import", "--conversation", c, "--preset", "tabletop-rpg", "--brain", "Co-GM", "--name", "player"], /reserved/);
     await fails(["conversation.import", "--preset", "tabletop-rpg", "--example", "dnd-tavern"], /Pass one of --example/);
-    assert.equal((await get(c)).brains.length, 6);
+    assert.equal((await get(c)).brains.length, 7);
     // Into a conversation of the same preset: same templates, and every brain knows hidden notes, so nothing to say.
     const spare = await json(["brain.import", "--conversation", c, "--preset", "tabletop-rpg", "--brain", "Co-GM", "--name", "Spare Co-GM"]);
     assert.deepEqual(spare.notes, []);

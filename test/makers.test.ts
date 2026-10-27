@@ -281,7 +281,8 @@ describe("brains that make brains, pinned messages, and who said what (T16): CLI
     assert.equal(bareImport.brains.some((b) => b.name === "Character 1"), false);
     const bad = structuredClone(src) as unknown as { brains: Array<{ pins: Array<{ messageId: string }> }> };
     bad.brains.at(-1)!.pins[0]!.messageId = "m_nowhere";
-    await fails(["conversation.import", "--campaign", JSON.stringify(bad)], /brains\.6\.pins\.0\.messageId: no message has the id m_nowhere/);
+    // T20: the preset's seven brains (the Chronicler last), then Character 1.
+    await fails(["conversation.import", "--campaign", JSON.stringify(bad)], /brains\.7\.pins\.0\.messageId: no message has the id m_nowhere/);
 
     const other = (await json(["conversation.create", "--title", "Elsewhere", "--system-prompt", "x"])) as Conversation;
     const imp = await json(["brain.import", "--conversation", other.id, "--preset", "tabletop-rpg", "--brain", "Character Creator"]);

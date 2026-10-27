@@ -123,6 +123,8 @@ const campaignSchema = z.object({
         makes: makes.optional(),
         /** T16: the message (its `id` in this file) the brain was made from. */
         madeFrom: z.string().min(1).optional(),
+        /** T20: its messages are compactions (text brains only). The cut follows the messages, as in the app. */
+        compacts: z.boolean().optional(),
         /** T18: the brain's own models (absent or null: the conversation's). Checked against Venice's list, as the settings' are. */
         textModel: textModel.optional(),
         imageModel: imageModel.optional(),
@@ -196,6 +198,11 @@ function toConversation(doc: Campaign, where: string): Conversation {
       } catch (err) {
         throw bad(`brains.${i}.makes: ${(err as Error).message}`);
       }
+    }
+    // T20: refused on an image brain, which the app never writes (brain.update refuses it).
+    if (b.compacts) {
+      if (brain.kind !== "text") throw bad(`brains.${i}.compacts: only a text brain writes compactions, and ${b.name} is an image brain.`);
+      brain.compacts = true;
     }
     if (b.id) {
       if (byId.has(b.id)) throw bad(`brains.${i}.id: two brains have the id ${b.id}.`);
@@ -326,7 +333,8 @@ async function readCampaign(lib: Library, name: string): Promise<{ doc: Campaign
  */
 /** `makes` (T16): the name pattern of a brain that makes brains ("Character {{n}}"), when its setting is on. */
 /** `textModel` / `imageModel` (T18): the brain's own models, when the file gives it some (else it uses the conversation's). */
-type BrainInfo = { name: string; kind: string; color?: string; about?: string; reasoning?: string; makes?: string; textModel?: string; imageModel?: string };
+/** `compacts` (T20): its messages are compactions. */
+type BrainInfo = { name: string; kind: string; color?: string; about?: string; reasoning?: string; makes?: string; textModel?: string; imageModel?: string; compacts?: true };
 type ExampleInfo = { name: string; title: string; about?: string; brains: BrainInfo[]; setup: string[]; messages: number; error?: string };
 type PresetInfo = { name: string; title: string; about?: string; brains: BrainInfo[]; error?: string };
 
@@ -350,6 +358,7 @@ async function listLibrary(lib: Library): Promise<ExampleInfo[]> {
           ...(doc.brains[i]?.about ? { about: doc.brains[i]!.about } : {}),
           ...(b.reasoning.enabled ? { reasoning: b.reasoning.effort } : {}),
           ...(b.makes?.enabled ? { makes: b.makes.name } : {}),
+          ...(b.compacts ? { compacts: true as const } : {}),
           ...(b.textModel ? { textModel: b.textModel } : {}),
           ...(b.kind === "image" && b.imageModel ? { imageModel: b.imageModel } : {}),
         })),
@@ -365,7 +374,7 @@ async function listLibrary(lib: Library): Promise<ExampleInfo[]> {
 
 /** T18: a library brain's own models, as the lists print them. */
 const ownModelBits = (b: BrainInfo) => `${b.textModel ? ` (its own model ${b.textModel})` : ""}${b.imageModel ? ` (its own image model ${b.imageModel})` : ""}`;
-const brainNames = (brains: BrainInfo[]) => brains.map((b) => `${b.name}${b.kind === "image" ? " (image)" : ""}${b.reasoning ? ` (reasoning ${b.reasoning})` : ""}${ownModelBits(b)}`).join(", ");
+const brainNames = (brains: BrainInfo[]) => brains.map((b) => `${b.name}${b.kind === "image" ? " (image)" : ""}${b.reasoning ? ` (reasoning ${b.reasoning})` : ""}${ownModelBits(b)}${b.compacts ? " (compacts)" : ""}`).join(", ");
 
 export const examplesList = command({
   name: "examples.list",
@@ -415,7 +424,7 @@ already have: ./sst brain.import --preset <name> --brain <brain>. Nothing here i
               : [
                   `${p.name}: ${p.title}`,
                   p.about ? `  ${p.about}` : "",
-                  ...p.brains.map((b) => `  · ${b.name}${b.kind === "image" ? " (image)" : ""}${b.reasoning ? ` (reasoning ${b.reasoning})` : ""}${ownModelBits(b)}${b.makes ? ` (makes "${b.makes}" brains)` : ""}${b.about ? `: ${b.about}` : ""}`),
+                  ...p.brains.map((b) => `  · ${b.name}${b.kind === "image" ? " (image)" : ""}${b.reasoning ? ` (reasoning ${b.reasoning})` : ""}${ownModelBits(b)}${b.makes ? ` (makes "${b.makes}" brains)` : ""}${b.compacts ? " (compacts)" : ""}${b.about ? `: ${b.about}` : ""}`),
                   `  Start one: ./sst conversation.import --preset ${p.name} --title "..."`,
                   `  Add one brain: ./sst brain.import --conversation c_... --preset ${p.name} --brain "${p.brains[0]?.name ?? "..."}"`,
                 ]
@@ -567,6 +576,7 @@ learns secrets from hidden notes, never from another brain's system prompt: the 
       const flags = [result.textModel ? "--text-model null" : "", result.kind === "image" && result.imageModel ? "--image-model null" : ""].filter(Boolean).join(" ");
       notes.push(`${result.name} came with its own ${own}, not this conversation's: brain.update --brain "${result.name}" ${flags} puts it on this conversation's.`);
     }
+    if (result.compacts) notes.push(`${result.name}'s messages are compactions: once it has written one (message.compact --brain "${result.name}"), every brain's request starts there, the messages before it kept but left out. Delete the compaction to bring them back.`);
     if (result.makes?.enabled) notes.push(`${result.name} makes a brain from each new message ("${result.makes.name}", from ${result.makes.next}): brain.list shows the blueprint, and brain.update --no-makes.enabled stops it.`);
     // T10 QA-3: a preset brain learns secrets from hidden notes. A brain whose prompt doesn't know the convention
     // (the Gilded Goat's GM) may keep its secrets in that prompt, which no other brain reads.

@@ -4,12 +4,14 @@ import type { StreamEvent } from "../registry.ts";
 import type { ChatEvent } from "../venice/chat.ts";
 import type { VeniceClient } from "../venice/client.ts";
 import type { ModelInfo } from "../venice/models.ts";
-import { activeVersion, assembleRequest, capsFor, nothingToAnswer, REASONING_NOTE, reasoningOn, render, resolveBrain, templateProblem, type ModelBook, type ModelCaps, type PinnedAt } from "./prompt.ts";
+import { activeVersion, assembleRequest, capsFor, nothingToAnswer, REASONING_NOTE, reasoningOn, render, resolveBrain, templateProblem, type Assembled, type CutAt, type ModelBook, type ModelCaps, type PinnedAt } from "./prompt.ts";
+import { COUNT_PLACEHOLDER, compactionCut, isCompaction, isCompactor } from "./compaction.ts";
+import { estimateSize } from "./size.ts";
 import { newMuse } from "./defaults.ts";
 import { nextMadeName } from "./makers.ts";
 import { partialPrompt, type ToolCallParts } from "./tool-call.ts";
 import { findHidden, isAllHidden } from "./hidden.ts";
-import { alwaysReasonsNote, effortNote, freshTakeNote, isMuse, makesNote, MUSE_NAME, museMakesNote, PIN_AS_WORDS, pinnedNote, ROLL_PREVIEW_NOTE, STOP_REASONING_NOTE, stopNote } from "./wording.ts";
+import { alwaysReasonsNote, compactNote, compactsNote, countNote, cutNote, effortNote, freshTakeNote, isMuse, makesNote, MUSE_NAME, museMakesNote, PIN_AS_WORDS, pinnedNote, ROLL_PREVIEW_NOTE, STOP_REASONING_NOTE, stopNote } from "./wording.ts";
 import { imageModelOf, textModelOf, type Brain, type ChatRequest, type Conversation, type LedgerMessage, type MessageVersion, type Roll, type Usage } from "./types.ts";
 
 /**
@@ -38,6 +40,10 @@ export type BodyReview = {
   notes: string[];
   /** T16: where the messages pinned to this brain went in the body (right after the setup). Empty without pins. */
   pinned: PinnedAt[];
+  /** T20: the compaction this request starts at, and how many messages before it are left out. Absent: no cut. */
+  cut?: CutAt;
+  /** T20: the body's size before it is sent: its characters, and an estimate in tokens (estimateSize; it says it is one). */
+  size: { chars: number; tokens: number };
 };
 
 /**
@@ -55,11 +61,14 @@ export function planTurn<M extends ModelCaps>(conv: Conversation, opts: { brain?
   const roll = opts.roll ? rollMessage(conv, opts.roll === "unrolled" ? null : opts.roll, createdAt) : null;
   const added = [player, roll].filter((m): m is LedgerMessage => m !== null);
   const view = added.length ? { ...conv, messages: [...conv.messages, ...added] } : conv;
-  const { body, pinned } = assembleRequest(view, brain.id, { model });
-  const review = reviewBody(brain, body, model, { conv, pinned });
+  const built = assembleRequest(view, brain.id, { model });
+  const { body } = built;
+  const review = reviewBody(brain, body, model, { conv: view, ...built });
   if (opts.roll === "unrolled") review.notes.unshift(ROLL_PREVIEW_NOTE);
   // T16: sending to a brain that makes brains has a side effect, so the payload view says what it will make.
   if (brain.makes?.enabled) review.notes.push(makesNote(brain.name, nextMadeName(conv, brain.makes).name));
+  // T20: so does sending to a brain whose messages are compactions: its reply moves every brain's cut.
+  if (isCompactor(brain)) review.notes.push(compactsNote(brain.name));
   return { brain, model, player, roll, body, ...review };
 }
 
@@ -171,10 +180,11 @@ export function planRegenerate<M extends ModelCaps>(
 
   const steer = opts.steer?.trim() || undefined;
   const fresh = thought !== undefined ? planMuseNote(conv, message, brain, thought) : null;
-  const { body, pinned } = steer
+  const built = steer
     ? assembleRequest(conv, brain.id, { model, steer })
     : assembleRequest(fresh?.view ?? conv, brain.id, { model, excludeFromMessageId: message.id });
-  const review = reviewBody(brain, body, model, { conv: fresh?.view ?? conv, pinned });
+  const { body, pinned } = built;
+  const review = reviewBody(brain, body, model, { conv: fresh?.view ?? conv, ...built });
   if (review.refusal && !steer && !fresh && body.messages.at(-1)?.role === "assistant" && !endsOnPin(body, pinned)) {
     // A plain re-roll whose message comes right after the same brain's own reply. When nothing comes before
     // it at all, nothingToAnswer's "only its system prompt" already says why (T03 QA-4).
@@ -245,6 +255,89 @@ export function planMuseNote(conv: Conversation, message: LedgerMessage, brain: 
 }
 
 /**
+ * T20: what a compaction will send and where its reply goes (design.md, "Compaction"). message.compact sends plan.body
+ * and prompt.preview --compact returns it, so the two can't differ.
+ */
+export type CompactPlan<M extends ModelCaps = ModelCaps> = {
+  /** The compaction brain: its messages are compactions (`compacts`). */
+  brain: Brain;
+  model: M;
+  /** The message it compacts through: the request's ledger ends with it, and the reply goes in right after it. */
+  through: LedgerMessage;
+  /**
+   * Where the reply goes: a new message right after `through`, or (when the message right after it is already this
+   * brain's compaction, the newest) a new version of that compaction, as a re-roll of it.
+   */
+  into: { kind: "new" } | { kind: "version"; message: LedgerMessage };
+  /** How many messages after `through` stay as they are, below the compaction. */
+  after: number;
+  body: ChatRequest;
+} & BodyReview;
+
+/**
+ * T20: compact through a message (the last by default): the compaction brain answers the ledger up to and including
+ * it, from its own point of view (which itself starts at the previous compaction, so a second compaction summarizes
+ * the first plus what came after), and its reply goes in right after it. Compacting the last message is just a turn
+ * by the compaction brain. `brain` picks the compaction brain (default: the only one). Refused for a message that is a
+ * compaction itself, or one above the newest compaction (a compaction there would be cut out of every request at
+ * once), except right before it when that compaction is this brain's: then the reply is its new version.
+ */
+export function planCompact<M extends ModelCaps>(conv: Conversation, opts: { message?: string; brain?: string }, models: ModelBook<M>): CompactPlan<M> {
+  const brain = compactorFor(conv, opts.brain);
+  const model = capsFor(models, conv, brain);
+  if (!conv.messages.length) throw new CommandError(400, "nothing_to_compact", "This conversation has no messages yet, so there is nothing to compact.");
+  const through = opts.message ? conv.messages.find((m) => m.id === opts.message) : conv.messages.at(-1)!;
+  if (!through) throw notFound(`No message ${opts.message} in this conversation.`);
+  const at = conv.messages.indexOf(through);
+  if (isCompaction(conv, through)) {
+    throw new CommandError(400, "nothing_to_compact", `${through.id} is a compaction itself, so there is nothing new to compact through it. Compact a later message, or regenerate or edit this one.`);
+  }
+  const cut = compactionCut(conv, conv.messages);
+  let into: CompactPlan["into"] = { kind: "new" };
+  if (cut > at) {
+    const newest = conv.messages[cut]!;
+    const mine = cut === at + 1 && newest.author.type === "brain" && newest.author.brainId === brain.id;
+    if (!mine) {
+      throw new CommandError(
+        400,
+        "above_compaction",
+        `${through.id} is above the newest compaction, ${newest.id}, which already covers it: a compaction here would be left out of every request at once. Compact a message after ${newest.id}, or delete ${newest.id} first to compact from here.`,
+      );
+    }
+    into = { kind: "version", message: newest };
+  }
+  const view = { ...conv, messages: conv.messages.slice(0, at + 1) };
+  const built = assembleRequest(view, brain.id, { model });
+  const review = reviewBody(brain, built.body, model, { conv: view, ...built });
+  const after = conv.messages.length - (at + 1) - (into.kind === "version" ? 1 : 0);
+  const version = into.kind === "version" ? { messageId: into.message.id, n: into.message.versions.length + 1 } : undefined;
+  review.notes.unshift(compactNote({ brain: brain.name, through: through.id, after, ...(version ? { version } : {}) }));
+  if (into.kind === "new" && brain.makes?.enabled) review.notes.push(makesNote(brain.name, nextMadeName(conv, brain.makes).name));
+  return { brain, model, through, into, after, body: built.body, ...review };
+}
+
+/** T20: the compaction brain a compaction uses: the one named (it must compact), or the only one there is. */
+export function compactorFor(conv: Conversation, ref?: string): Brain {
+  if (ref?.trim()) {
+    const brain = resolveBrain(conv, ref);
+    if (isCompactor(brain)) return brain;
+    throw badRequest(
+      brain.kind === "image"
+        ? `${brain.name} is an image brain, and only a text brain writes compactions.`
+        : `${brain.name}'s messages aren't compactions. Give it the setting first (brain.update --brain "${brain.name}" --compacts), or pick a brain that has it.`,
+    );
+  }
+  const all = conv.brains.filter(isCompactor);
+  if (all.length === 1) return all[0]!;
+  if (all.length > 1) throw badRequest(`This conversation has ${all.length} compaction brains (${all.map((b) => b.name).join(", ")}): say which with --brain.`);
+  throw new CommandError(
+    400,
+    "no_compactor",
+    `No brain here writes compactions. Add the Tabletop RPG preset's (./sst brain.import --conversation ${conv.id} --preset tabletop-rpg --brain Chronicler), or give one the setting (brain.update --brain <name> --compacts).`,
+  );
+}
+
+/**
  * T15: `--wrap`: the thought inside the conversation's thought template, where {{thought}} is. T17: {{brain}} is the
  * brain the note is for (the one whose message is being taken afresh).
  */
@@ -262,9 +355,20 @@ export function reviewBody(
   brain: Brain,
   body: ChatRequest,
   model: ModelCaps,
-  pins: { conv: Pick<Conversation, "messages" | "brains">; pinned: PinnedAt[] } = { conv: { messages: [], brains: [] }, pinned: [] },
+  pins: { conv: Pick<Conversation, "messages" | "brains">; pinned: PinnedAt[] } & Partial<Pick<Assembled, "cut" | "count">> = { conv: { messages: [], brains: [] }, pinned: [] },
 ): BodyReview {
-  const review: BodyReview = { notes: [], pinned: pins.pinned };
+  const review: BodyReview = { notes: [], pinned: pins.pinned, size: estimateSize(body) };
+  // T20: where the request starts, when a compaction cut it, and what a {{count}} in the reminder was sent as.
+  if (pins.cut) {
+    const cut = pins.cut;
+    review.cut = cut;
+    const m = pins.conv.messages.find((x) => x.id === cut.messageId);
+    const by = m?.author.type === "brain" ? m.author.brainId : undefined;
+    const before = new Set(pins.conv.messages.slice(0, cut.before).map((x) => x.id));
+    const pinnedAbove = pins.pinned.filter((p) => before.has(p.messageId)).length;
+    review.notes.push(cutNote({ messageId: cut.messageId, author: pins.conv.brains.find((b) => b.id === by)?.name ?? "a brain", before: cut.before, pinnedAbove }));
+  }
+  if (pins.count !== undefined && brain.finalReminder.enabled && brain.finalReminder.content.includes(COUNT_PLACEHOLDER)) review.notes.push(countNote(pins.count));
   if (pins.pinned.length) {
     const author = (id: string) => {
       const m = pins.conv.messages.find((x) => x.id === id);

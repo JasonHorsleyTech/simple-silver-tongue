@@ -43,6 +43,8 @@ import { MOCK_MODELS } from "./mock-models.ts";
  * max_tokens is honored (counted in words, reasoning first): the reply is cut with finish_reason "length".
  * stop is honored, as live: a reply's text ends just before the first stop sequence in it (finish_reason "stop"),
  * except in the echo line itself, which quotes the last message, framing and all.
+ * usage.prompt_tokens_details.cached_tokens (T20) stands in for the provider's prompt cache: the leading messages a chat
+ * request shares with the previous one for the same model count as cached.
  *
  * Rules enforced like a strict Venice: a Bearer token is required, and chat requests must send
  * venice_parameters.include_venice_system_prompt: false and start with a non-empty system message
@@ -78,6 +80,9 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
   const state = { balanceUsd: opts.balanceUsd ?? 10, requests: [] as MockRequest[] };
   let seq = 0;
   const flaky = new Set<string>(); // MOCK_IMAGE_FLAKY prompts that have failed once
+  // T20: a stand-in for the provider's prompt cache, so the token counter has cached tokens to show: the messages a
+  // chat request shares, from the start, with the previous one for the same model count as cached.
+  const lastMessages = new Map<string, string[]>();
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://mock");
@@ -236,6 +241,12 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
     const secondArgs = twoCalls ? JSON.stringify({ prompt: "MOCK second, parallel image prompt" }) : "";
 
     const promptTokens = Math.ceil(messages.reduce((a, m) => a + contentText(m).length, 0) / 4) + 1;
+    const sent = messages.map((m) => JSON.stringify(m));
+    const before = lastMessages.get(model.id) ?? [];
+    lastMessages.set(model.id, sent);
+    let shared = 0;
+    while (shared < sent.length && sent[shared] === before[shared]) shared++;
+    const cachedTokens = Math.min(promptTokens, Math.ceil(messages.slice(0, shared).reduce((a, m) => a + contentText(m).length, 0) / 4));
     const reasoningTokens = Math.ceil(reasoning.length / 4);
     const completionTokens = Math.ceil((content.length + toolArgs.length + secondArgs.length) / 4) + reasoningTokens;
     const pricing = model.model_spec.pricing;
@@ -245,7 +256,7 @@ export async function startMockVenice(opts: MockOptions = {}): Promise<MockVenic
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
       total_tokens: promptTokens + completionTokens,
-      prompt_tokens_details: { cached_tokens: 0 },
+      prompt_tokens_details: { cached_tokens: cachedTokens },
       completion_tokens_details: { reasoning_tokens: reasoningTokens },
     };
     const costObj = { usd: Number(cost.toFixed(8)), diem: 0 };
