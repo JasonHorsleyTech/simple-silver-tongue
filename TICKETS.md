@@ -637,7 +637,7 @@ Jason, 2026-10-21, done directly (no four-pass loop, at his request), as the rep
 
 ---
 
-## T20: Compaction: a summary that replaces the turns before it; a token counter · `qa`
+## T20: Compaction: a summary that replaces the turns before it; a token counter · `triage`
 
 Jason, 2026-10-27. A long campaign gets expensive: at ~100,000 prompt tokens, every turn that misses the cache costs a lot, even on a 1M-context model. He wants to **compact**: a brain summarizes everything so far, and from then on every request carries the summary instead of the turns it covers. As always, the app gets a generic mechanism and the preset gets the craft. Nothing in the code should know what a character or a summary is.
 
