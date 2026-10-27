@@ -637,7 +637,7 @@ Jason, 2026-10-21, done directly (no four-pass loop, at his request), as the rep
 
 ---
 
-## T20: Compaction: a summary that replaces the turns before it; a token counter · `live tuning`
+## T20: Compaction: a summary that replaces the turns before it; a token counter · `done`
 
 Jason, 2026-10-27. A long campaign gets expensive: at ~100,000 prompt tokens, every turn that misses the cache costs a lot, even on a 1M-context model. He wants to **compact**: a brain summarizes everything so far, and from then on every request carries the summary instead of the turns it covers. As always, the app gets a generic mechanism and the preset gets the craft. Nothing in the code should know what a character or a summary is.
 
@@ -684,5 +684,11 @@ Data (schema bump if needed), the cut in `assembleRequest`, the compaction comma
   - QA-5 done: `compacts` in `BrainFields` and on `LibraryBrain`, `cutMoved` on the results of `message.delete`, `message.set-author`, `message.add` and `brain.update` (stripped before the brain is stored).
   - No server change, no new command. `test/web-api.test.ts`: `compactOffer` against `planCompact` on the same ledgers (no compactor, several, a compaction, above, a re-version, another brain's compaction, counts after the cut; mutation-checked), `cutView`, `cutMovedWords`.
   - **Still open, waiting on a Venice top-up:** the live acceptance bullet and the Chronicler's prompt tuning (T20 engineer's "For whoever probes it live"). The browser needs nothing more for them.
+- **From T20 live** (report: `reports/T20-live.md`): the live acceptance bullet, run as Jason asked, as a plumbing test on a tiny hand-written ledger. **4 live calls on `deepseek-v4-1-flash`, no images, $0.0072. The balance was $26.58 before and $26.57 after** (topped up since the engineer pass). The 11 messages were all written with `message.add` and made two Character brains, each with its sheet pinned.
+  - **The Chronicler** (`message.compact`, after `prompt.preview --compact`) wrote one closed ```` ```hidden ```` block and nothing else. It opened with "The story so far, 11 messages" (the `{{count}}`) and had all six sections, both Looks lines word for word, both sheets' secrets, the helpers' names and the open thread.
+  - **After the cut:** the GM's request was system, setup, compaction, the turn since, reminder. A made character's was Jason's order exactly: system, World Bible, its pinned sheet, the compaction, the turns since, reminder.
+  - **The turns after it:** the GM answered from the summary (the barkeep's scar, his glance at the cellar door, no unheard names). Character 2 answered from its sheet (opened "**The hooded figure:**", kept the watch secret). The Creator, with no note, listed both sheeted people from the summary and sheeted the unsheeted dockhand, so it did not re-sheet anyone and the "keep through compaction" flag is still unneeded.
+  - **The counter:** `prompt.size` shows each brain's real count afterwards. The estimate ran 1.5% to 5.7% under Venice's `prompt_tokens`.
+  - **No prompt or code change.** One note: on a ledger this small the summary (7,317 characters) is bigger than the 11 messages it covers (3,059), because it carries the sheets nearly whole on purpose (after the cut it is the GM's only copy). It pays off on the long campaigns it is for.
 
 **Frontend done (2026-10-27):** Jason compacts from any message's footer ("Compact through here": a line on what it does, the payload, the brain to use or the preset's to add), watches the summary stream in right after it, and then sees everything above it folded under one band ("13 earlier messages · left out of every request"), still there to open and edit, with the compaction in a look of its own; a gauge in the header opens every brain's prompt size, Venice's last count with cached tokens beside an estimate of the next. Mock only (balance $1.58). `npm test` 253/253.
